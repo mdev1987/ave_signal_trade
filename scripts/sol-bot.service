@@ -1,0 +1,20 @@
+[Unit]
+Description=Ave signal trade bot (DRY_RUN gated)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mdev/Programming/ave_signal_trade
+ExecStart=/home/mdev/Programming/ave_signal_trade/.venv/bin/python main.py trade
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+# bot.log is written by the bot's own FileHandler; stderr/tracebacks -> journald
+# (journalctl --user -u ave-signal-trade -e)
+StandardOutput=journal
+StandardError=journal
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target
