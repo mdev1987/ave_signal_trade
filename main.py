@@ -62,8 +62,6 @@ HELP_TEXT = (
     f"{SEP} `/help` — this command list"
 )
 
-SHUTDOWN_GRACE_S = 60  # seconds to wait for in-flight trades to finish on /stop
-
 
 def _load_offline(path: Path) -> list:
     """Load a channel_signals.json export (dict with messages, or a list)."""
@@ -112,14 +110,22 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 async def _handle_new_signal(trader: PaperTrader, seen_cas: set[str], sig) -> None:
-    """Dedupe a real-time signal and arm it when it passes the filter."""
+    """Dedupe a real-time signal, arm it when it passes, or send a reject card."""
     if not sig.ca or sig.ca in seen_cas:
         return
     seen_cas.add(sig.ca)
-    ok, _ = filt.check_signal(sig)
-    if ok:
-        logs.journal("signal", ca=sig.ca, name=sig.name)
-        await trader.offer(sig)
+    ok, reasons = filt.check_signal(sig)
+    if not ok:
+        logs.journal("reject", ca=sig.ca, name=sig.name, reasons=reasons)
+        if trader.notifier is not None:
+            await trader.notifier.send_reject(
+                sig.ca, sig.name, reasons,
+                mcap_usd=sig.mcap_usd, liq_usd=sig.liq_usd,
+                dex=sig.dex, sec_score=sig.sec_score, snipes=sig.snipes,
+            )
+        return
+    logs.journal("signal", ca=sig.ca, name=sig.name)
+    await trader.offer(sig)
 
 
 def _format_status(trader: PaperTrader) -> str:
@@ -184,17 +190,26 @@ async def _trade_loop(
     Returns:
         Exit code (0).
     """
-    feed = PriceFeed()
-    trader = PaperTrader(feed, size_sol=0.1, checkpoint=checkpoint,
-                         jupiter=jupiter, notifier=notifier)
+    s = config.load_settings()
+    size_sol = s.position_size_sol
+    feed = PriceFeed(
+        uri=s.pumpapi_wss, reconnect_s=s.pumpapi_reconnect_s,
+        price_timeout_s=s.price_wait_timeout_s,
+    )
+    trader = PaperTrader(
+        feed, size_sol=size_sol, checkpoint=checkpoint,
+        jupiter=jupiter, notifier=notifier,
+        start_balance_sol=s.start_balance_sol,
+        take_profit=s.take_profit, stop_loss=s.stop_loss, timeout_s=s.timeout_s,
+    )
     seen_cas: set[str] = set()
     stop_event = asyncio.Event()
-    logger.info("mode=%s gate=OPEN size=0.1 SOL",
-                "LIVE" if (jupiter is not None and jupiter.live) else "PAPER")
+    logger.info("mode=%s gate=OPEN size=%.4f SOL",
+                "LIVE" if (jupiter is not None and jupiter.live) else "PAPER", size_sol)
 
     # Backfill: arm signals already posted so positions can open immediately.
     try:
-        backfill = await tg.fetch_signals(limit=200)
+        backfill = await tg.fetch_signals(limit=s.backfill_limit)
         for sig in backfill:
             await _handle_new_signal(trader, seen_cas, sig)
         logger.info("backfill: %d signals, %d open, %d closed",
@@ -227,7 +242,7 @@ async def _trade_loop(
 
     # Graceful shutdown: gate is already closed by /stop; wait for in-flight
     # trades to finish (bounded), then stop every consumer and exit 0.
-    deadline = time.monotonic() + SHUTDOWN_GRACE_S
+    deadline = time.monotonic() + s.shutdown_grace_s
     while trader.open and time.monotonic() < deadline:
         await asyncio.sleep(1.0)
     if trader.open:
@@ -258,13 +273,12 @@ def _build_jupiter() -> JupiterSwap | None:
     Returns:
         A JupiterSwap client, or None when JUPITER_API_KEY is unset.
     """
-    env = config.load_env()
-    if not config.get(env, "JUPITER_API_KEY"):
+    s = config.load_settings()
+    if not s.jupiter_api_key:
         logger.info("JUPITER_API_KEY missing — running without jupiter quote gate")
         return None
-    dry_run = config.get(env, "DRY_RUN", "true").strip().lower() not in ("0", "false", "no")
-    logger.info("DRY_RUN=%s", "true" if dry_run else "false")
-    return JupiterSwap(dry_run=dry_run)
+    logger.info("DRY_RUN=%s", "true" if s.dry_run else "false")
+    return JupiterSwap(dry_run=s.dry_run)
 
 
 def cmd_trade(args: argparse.Namespace) -> int:
@@ -314,6 +328,7 @@ def cmd_channels(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI argument parser."""
+    s = config.load_settings()
     ap = argparse.ArgumentParser(description="Ave signal filter + paper trader")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -324,12 +339,12 @@ def build_parser() -> argparse.ArgumentParser:
     scan.set_defaults(func=cmd_scan)
 
     trade = sub.add_parser("trade", help="live paper trading (event-based)")
-    trade.add_argument("--channel", default="@AveSolanaTokenScanner")
-    trade.add_argument("--checkpoint", type=str, default="paper_positions.json")
+    trade.add_argument("--channel", default=s.channel)
+    trade.add_argument("--checkpoint", type=str, default=s.checkpoint_file)
     trade.set_defaults(func=cmd_trade)
 
     ch = sub.add_parser("channels", help="list visible channels/groups")
-    ch.add_argument("--channel", default="@AveSolanaTokenScanner")
+    ch.add_argument("--channel", default=s.channel)
     ch.set_defaults(func=cmd_channels)
     return ap
 

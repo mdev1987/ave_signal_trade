@@ -34,9 +34,13 @@ class PriceFeed:
         self,
         uri: str = "wss://stream.pumpapi.io/",
         on_event: EventCallback | None = None,
+        reconnect_s: float = 3.0,
+        price_timeout_s: float = 30.0,
     ) -> None:
         self.uri = uri
         self.on_event = on_event
+        self.reconnect_s = reconnect_s
+        self.price_timeout_s = price_timeout_s
         self.prices: dict[str, float] = {}
         self._new_trades: dict[str, asyncio.Event] = {}
         self._stop = asyncio.Event()
@@ -90,8 +94,8 @@ class PriceFeed:
                 except (websockets.ConnectionClosed, OSError) as e:
                     if self._stop.is_set():
                         break
-                    logger.warning("connect failed (%s); retrying in 3s", e)
-                    await asyncio.sleep(3)
+                    logger.warning("connect failed (%s); retrying in %.0fs", e, self.reconnect_s)
+                    await asyncio.sleep(self.reconnect_s)
                     continue
             recv_task = asyncio.create_task(ws.recv())
             stop_task = asyncio.create_task(self._stop.wait())
@@ -104,11 +108,11 @@ class PriceFeed:
             try:
                 raw = recv_task.result()
             except (websockets.ConnectionClosed, OSError) as e:
-                logger.warning("feed dropped (%s); reconnecting in 3s", e)
+                logger.warning("feed dropped (%s); reconnecting in %.0fs", e, self.reconnect_s)
                 await ws.close()
                 ws = None
                 if not self._stop.is_set():
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(self.reconnect_s)
                 continue
             try:
                 event = json.loads(raw)
@@ -122,17 +126,20 @@ class PriceFeed:
         """Request the run loop to exit after the current message."""
         self._stop.set()
 
-    async def wait_price(self, mint: str, timeout: float = 30.0) -> float | None:
+    async def wait_price(self, mint: str, timeout: float | None = None) -> float | None:
         """Block until a fresh price for ``mint`` arrives.
 
         Args:
             mint: Token contract address.
-            timeout: Max seconds to wait for a new tick.
+            timeout: Max seconds to wait for a new tick (defaults to the
+                configured ``PRICE_WAIT_TIMEOUT_S``).
 
         Returns:
             The latest price, or the current cached price immediately if one is
             already known; None only on timeout with no cached value.
         """
+        if timeout is None:
+            timeout = self.price_timeout_s
         if mint in self.prices:
             return self.prices[mint]
         ev = self._new_trades.setdefault(mint, asyncio.Event())

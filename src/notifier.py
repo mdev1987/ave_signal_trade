@@ -33,6 +33,7 @@ ICONS = {
     "skip": "⚠️",
     "alert": "⚠️",
     "stop": "🏁",
+    "reject": "⛔",
 }
 
 
@@ -40,13 +41,12 @@ class TelegramNotifier:
     """Sends formatted, markdown-friendly messages to a single chat."""
 
     def __init__(self) -> None:
-        env = config.load_env()
-        token = config.get(env, "BOT_TOKEN").strip()
-        self._chat_id = config.get(env, "CHAT_ID").strip()
-        self._enabled = bool(token and self._chat_id)
+        s = config.load_settings()
+        self._chat_id = s.chat_id
+        self._enabled = bool(s.bot_token and s.chat_id)
         self._bot: Bot | None = None
         if self._enabled:
-            self._bot = Bot(token)
+            self._bot = Bot(s.bot_token)
 
     # ----------------------------------------------------------------- send
     async def _send(self, text: str) -> None:
@@ -125,6 +125,26 @@ class TelegramNotifier:
             f"{ICONS['arm']} **ARMED** `{name}`\n"
             f"{self._short(ca)}\n"
             f"{SEP} Snipes `{snipes}` {SEP} MCap `${mcap_usd:,.0f}`"
+        )
+
+    async def send_reject(
+        self,
+        ca: str,
+        name: str,
+        reasons: list[str],
+        mcap_usd: float,
+        liq_usd: float,
+        dex: str,
+        sec_score: int,
+        snipes: int,
+    ) -> None:
+        """A signal failed the filter; forward a reject card with the why."""
+        await self._send(
+            f"{ICONS['reject']} **REJECTED** `{name}`\n"
+            f"{self._short(ca)}\n"
+            f"{SEP} Dex `{dex or '?'}` {SEP} MCap `${mcap_usd:,.0f}` {SEP} Liq `${liq_usd:,.0f}`\n"
+            f"{SEP} Snipes `{snipes}` {SEP} SecScore `{sec_score}`\n"
+            f"{SEP} *Reasons:* {', '.join(f'`{r}`' for r in reasons) or '`unknown`'}"
         )
 
     async def send_open(self, ca: str, name: str, price: float) -> None:

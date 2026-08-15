@@ -53,6 +53,9 @@ class PaperTrader:
         jupiter: JupiterSwap | None = None,
         notifier=None,
         start_balance_sol: float = 10.0,
+        take_profit: float = 3.0,
+        stop_loss: float = 0.5,
+        timeout_s: float = 3600.0,
     ) -> None:
         self.feed = feed
         self.size_sol = size_sol
@@ -60,6 +63,9 @@ class PaperTrader:
         self.jupiter = jupiter
         self.notifier = notifier
         self.start_balance_sol = start_balance_sol
+        self.take_profit = take_profit
+        self.stop_loss = stop_loss
+        self.timeout_s = timeout_s
         self.gate_open = True
         self.open: dict[str, Position] = {}
         self.closed: list[Position] = []
@@ -149,7 +155,11 @@ class PaperTrader:
                              output_amount=swap.output_amount)
                 logger.info("LIVE BUY %s @ %.12g SOL (sig=%s)",
                             mint, price, swap.signature[:16])
-            pos = Position(ca=mint, name="", signal_time=0.0, size_sol=self.size_sol)
+            pos = Position(
+                ca=mint, name="", signal_time=0.0, size_sol=self.size_sol,
+                take_profit=self.take_profit, stop_loss=self.stop_loss,
+                timeout_s=self.timeout_s,
+            )
             pos.entry_time = now
             pos.entry_px = price
             pos.peak_px = price

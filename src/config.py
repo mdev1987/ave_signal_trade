@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -43,6 +44,162 @@ def load_env(path: Path = ENV_PATH) -> dict[str, str]:
 def get(env: dict[str, str], key: str, default: str = "") -> str:
     """Read a value from the env dict, falling back to the OS environment."""
     return env.get(key, os.environ.get(key, default))
+
+
+def get_float(env: dict[str, str], key: str, default: float) -> float:
+    """Read a float env value, falling back to ``default`` on parse failure."""
+    try:
+        return float(get(env, key, ""))
+    except (TypeError, ValueError):
+        return default
+
+
+def get_int(env: dict[str, str], key: str, default: int) -> int:
+    """Read an int env value, falling back to ``default`` on parse failure."""
+    try:
+        return int(float(get(env, key, "")))
+    except (TypeError, ValueError):
+        return default
+
+
+def get_bool(env: dict[str, str], key: str, default: bool) -> bool:
+    """Read a boolean env value (true/1/yes/on), falling back to default."""
+    raw = get(env, key, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in ("0", "false", "no", "off")
+
+
+def get_csv_ints(env: dict[str, str], key: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    """Read a comma-separated int list, falling back to default on failure."""
+    raw = get(env, key, "").strip()
+    if not raw:
+        return default
+    try:
+        values = tuple(int(float(x.strip())) for x in raw.split(",") if x.strip())
+        return values if values else default
+    except (TypeError, ValueError):
+        return default
+
+
+@dataclass(frozen=True)
+class Settings:
+    """Every tunable knob, defaulted and overridable via ``.env``.
+
+    Instantiate with :func:`load_settings` so a single env parse serves the
+    whole process. All values fall back to sane defaults when unset.
+    """
+
+    # --- trading ---------------------------------------------------------
+    position_size_sol: float = 0.1
+    start_balance_sol: float = 10.0
+    take_profit: float = 3.0
+    stop_loss: float = 0.5
+    timeout_s: float = 3600.0
+    shutdown_grace_s: int = 60
+    channel: str = "@AveSolanaTokenScanner"
+    checkpoint_file: str = "paper_positions.json"
+    backfill_limit: int = 200
+
+    # --- jupiter ---------------------------------------------------------
+    dry_run: bool = True
+    private_key: str = ""
+    jupiter_api_key: str = ""
+    jupiter_base_url: str = "https://api.jup.ag"
+    jupiter_slippage_bps: int = 500
+    jupiter_max_impact_pct: float = 15.0
+    jupiter_quote_retries: int = 3
+    jupiter_quote_cache_s: float = 30.0
+    jupiter_quote_throttle_s: float = 1.0
+    jupiter_quote_retry_delay_s: float = 1.0
+    sell_slippage_escalation: tuple[int, ...] = (200, 300, 500, 1000)
+
+    # --- price feed ------------------------------------------------------
+    pumpapi_wss: str = "wss://stream.pumpapi.io/"
+    pumpapi_reconnect_s: float = 3.0
+    price_wait_timeout_s: float = 30.0
+
+    # --- telegram bot / session ------------------------------------------
+    bot_token: str = ""
+    chat_id: str = ""
+    telegram_api_id: str = ""
+    telegram_api_hash: str = ""
+    telegram_phone: str = ""
+
+    @classmethod
+    def from_env(cls, env: dict[str, str]) -> Settings:
+        """Build settings from a parsed env dict (see :func:`load_settings`)."""
+        return cls(
+            position_size_sol=get_float(env, "POSITION_SIZE_SOL", 0.1),
+            start_balance_sol=get_float(env, "START_BALANCE_SOL", 10.0),
+            take_profit=get_float(env, "TAKE_PROFIT", 3.0),
+            stop_loss=get_float(env, "STOP_LOSS", 0.5),
+            timeout_s=get_float(env, "TIMEOUT_S", 3600.0),
+            shutdown_grace_s=get_int(env, "SHUTDOWN_GRACE_S", 60),
+            channel=get(env, "TELEGRAM_CHANNEL", "@AveSolanaTokenScanner"),
+            checkpoint_file=get(env, "CHECKPOINT_FILE", "paper_positions.json"),
+            backfill_limit=get_int(env, "BACKFILL_LIMIT", 200),
+            dry_run=get_bool(env, "DRY_RUN", True),
+            private_key=get(env, "PRIVATE_KEY", ""),
+            jupiter_api_key=get(env, "JUPITER_API_KEY", ""),
+            jupiter_base_url=get(env, "JUPITER_BASE_URL", "https://api.jup.ag"),
+            jupiter_slippage_bps=get_int(env, "JUPITER_SLIPPAGE_BPS", 500),
+            jupiter_max_impact_pct=get_float(env, "JUPITER_MAX_IMPACT_PCT", 15.0),
+            jupiter_quote_retries=get_int(env, "JUPITER_QUOTE_RETRIES", 3),
+            jupiter_quote_cache_s=get_float(env, "JUPITER_QUOTE_CACHE_S", 30.0),
+            jupiter_quote_throttle_s=get_float(env, "JUPITER_QUOTE_THROTTLE_S", 1.0),
+            jupiter_quote_retry_delay_s=get_float(env, "JUPITER_QUOTE_RETRY_DELAY_S", 1.0),
+            sell_slippage_escalation=get_csv_ints(
+                env, "SELL_SLIPPAGE_ESCALATION", (200, 300, 500, 1000)
+            ),
+            pumpapi_wss=get(env, "PUMPAPI_WSS", "wss://stream.pumpapi.io/"),
+            pumpapi_reconnect_s=get_float(env, "PUMPAPI_RECONNECT_S", 3.0),
+            price_wait_timeout_s=get_float(env, "PRICE_WAIT_TIMEOUT_S", 30.0),
+            bot_token=get(env, "BOT_TOKEN", ""),
+            chat_id=get(env, "CHAT_ID", ""),
+            telegram_api_id=get(env, "TELEGRAM_API_ID", ""),
+            telegram_api_hash=get(env, "TELEGRAM_API_HASH", ""),
+            telegram_phone=get(env, "TELEGRAM_PHONE", ""),
+        )
+
+    def to_env(self) -> str:
+        """Render as ``.env.example``-style text with current values."""
+        pairs = [
+            ("POSITION_SIZE_SOL", f"{self.position_size_sol:g}"),
+            ("START_BALANCE_SOL", f"{self.start_balance_sol:g}"),
+            ("TAKE_PROFIT", f"{self.take_profit:g}"),
+            ("STOP_LOSS", f"{self.stop_loss:g}"),
+            ("TIMEOUT_S", f"{self.timeout_s:g}"),
+            ("SHUTDOWN_GRACE_S", str(self.shutdown_grace_s)),
+            ("TELEGRAM_CHANNEL", self.channel),
+            ("CHECKPOINT_FILE", self.checkpoint_file),
+            ("BACKFILL_LIMIT", str(self.backfill_limit)),
+            ("DRY_RUN", "true" if self.dry_run else "false"),
+            ("PRIVATE_KEY", self.private_key),
+            ("JUPITER_API_KEY", self.jupiter_api_key),
+            ("JUPITER_BASE_URL", self.jupiter_base_url),
+            ("JUPITER_SLIPPAGE_BPS", str(self.jupiter_slippage_bps)),
+            ("JUPITER_MAX_IMPACT_PCT", f"{self.jupiter_max_impact_pct:g}"),
+            ("JUPITER_QUOTE_RETRIES", str(self.jupiter_quote_retries)),
+            ("JUPITER_QUOTE_CACHE_S", f"{self.jupiter_quote_cache_s:g}"),
+            ("JUPITER_QUOTE_THROTTLE_S", f"{self.jupiter_quote_throttle_s:g}"),
+            ("JUPITER_QUOTE_RETRY_DELAY_S", f"{self.jupiter_quote_retry_delay_s:g}"),
+            ("SELL_SLIPPAGE_ESCALATION", ",".join(str(v) for v in self.sell_slippage_escalation)),
+            ("PUMPAPI_WSS", self.pumpapi_wss),
+            ("PUMPAPI_RECONNECT_S", f"{self.pumpapi_reconnect_s:g}"),
+            ("PRICE_WAIT_TIMEOUT_S", f"{self.price_wait_timeout_s:g}"),
+            ("BOT_TOKEN", self.bot_token),
+            ("CHAT_ID", self.chat_id),
+            ("TELEGRAM_API_ID", self.telegram_api_id),
+            ("TELEGRAM_API_HASH", self.telegram_api_hash),
+            ("TELEGRAM_PHONE", self.telegram_phone),
+        ]
+        return "\n".join(f"{k}: {v}" for k, v in pairs) + "\n"
+
+
+def load_settings() -> Settings:
+    """Parse ``.env`` once and build the process-wide :class:`Settings`."""
+    return Settings.from_env(load_env())
 
 
 def prompt_phone(env: dict[str, str]) -> str:

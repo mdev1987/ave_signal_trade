@@ -148,6 +148,12 @@ class JupiterSwap:
             config.get(env, "JUPITER_MAX_IMPACT_PCT", max_price_impact_pct)
         )
         self._retries = int(config.get(env, "JUPITER_QUOTE_RETRIES", retries))
+        self._quote_cache_s = config.get_float(env, "JUPITER_QUOTE_CACHE_S", 30.0)
+        self._quote_throttle_s = config.get_float(env, "JUPITER_QUOTE_THROTTLE_S", 1.0)
+        self._quote_retry_delay_s = config.get_float(env, "JUPITER_QUOTE_RETRY_DELAY_S", 1.0)
+        self._sell_slippage_escalation = config.get_csv_ints(
+            env, "SELL_SLIPPAGE_ESCALATION", SELL_SLIPPAGE_ESCALATION
+        )
 
         key = private_key or config.get(env, "PRIVATE_KEY")
         self._keypair: Keypair | None = None
@@ -317,15 +323,14 @@ class JupiterSwap:
 
     # ------------------------------------------------------------------- quote
     async def _quote_slot(self) -> None:
-        """Throttle all quote requests to 1/sec (Jupiter free tier)."""
-        interval = 1.0
+        """Throttle all quote requests to N/sec (Jupiter free tier)."""
         async with self._quote_lock:
             now = time.monotonic()
             wait = self._next_quote_ts - now
             if wait > 0:
                 await asyncio.sleep(wait)
                 now = time.monotonic()
-            self._next_quote_ts = now + interval
+            self._next_quote_ts = now + self._quote_throttle_s
 
     def _record_latency(self, ms: float) -> None:
         self._lat_sum += ms
@@ -456,7 +461,7 @@ class JupiterSwap:
         if not force:
             now = time.monotonic()
             cached = self._quote_cache.get(key)
-            if cached and now - cached[0] < 30.0:
+            if cached and now - cached[0] < self._quote_cache_s:
                 return cached[1]
 
         result: QuoteResult | None = None
@@ -466,7 +471,7 @@ class JupiterSwap:
                 break
             log.info("quote %s for %s (attempt %d)", result.reason, mint, attempt + 1)
             if attempt + 1 < self._retries:
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(self._quote_retry_delay_s)
 
         if result is not None:
             self._quote_cache[key] = (time.monotonic(), result)
@@ -507,7 +512,7 @@ class JupiterSwap:
         if self._keypair is None:
             return SwapResult(False, "", amount_raw, 0, "paper mode: cannot sign")
         last: SwapResult | None = None
-        for slippage in (self._slippage_bps,) + SELL_SLIPPAGE_ESCALATION:
+        for slippage in (self._slippage_bps,) + self._sell_slippage_escalation:
             try:
                 order = await self._order(
                     mint,
