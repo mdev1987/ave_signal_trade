@@ -186,6 +186,7 @@ class PaperTrader:
         """Close a position (shared by on_event and run_sweep)."""
         self.closed.append(pos)
         self.open.pop(mint, None)
+        self._signals_seen.discard(mint)
         if self.jupiter is not None and self.jupiter.live:
             amount = self._token_amounts.pop(mint, 0)
             if amount > 0:
