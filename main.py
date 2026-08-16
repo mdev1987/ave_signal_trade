@@ -45,6 +45,7 @@ from jupiter_swap import JupiterError, JupiterSwap
 from models import FILTER
 from notifier import SEP, TelegramNotifier
 from paper_trader import PaperTrader
+from pool_check import PoolChecker
 from price_feed import PriceFeed
 from telegram_feed import TelegramFeed
 
@@ -109,15 +110,23 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
-async def _handle_new_signal(trader: PaperTrader, seen_cas: set[str], sig) -> None:
-    """Dedupe a real-time signal, arm it when it passes, or send a reject card."""
+async def _handle_new_signal(trader: PaperTrader, seen_cas: set[str], sig, notify: bool = True) -> None:
+    """Dedupe a real-time signal, arm it when it passes, or send a reject card.
+
+    Args:
+        trader: The active PaperTrader.
+        seen_cas: Set of CAs already processed (dedup).
+        sig: The parsed signal.
+        notify: Whether to send Telegram cards (False during backfill to
+            avoid flood control from hundreds of historical rejects).
+    """
     if not sig.ca or sig.ca in seen_cas:
         return
     seen_cas.add(sig.ca)
     ok, reasons = filt.check_signal(sig)
     if not ok:
         logs.journal("reject", ca=sig.ca, name=sig.name, reasons=reasons)
-        if trader.notifier is not None:
+        if notify and trader.notifier is not None:
             await trader.notifier.send_reject(
                 sig.ca, sig.name, reasons,
                 mcap_usd=sig.mcap_usd, liq_usd=sig.liq_usd,
@@ -125,7 +134,10 @@ async def _handle_new_signal(trader: PaperTrader, seen_cas: set[str], sig) -> No
             )
         return
     logs.journal("signal", ca=sig.ca, name=sig.name)
-    await trader.offer(sig)
+    if notify:
+        await trader.offer(sig)
+    else:
+        await trader.offer(sig, quiet=True)
 
 
 def _format_status(trader: PaperTrader) -> str:
@@ -196,11 +208,31 @@ async def _trade_loop(
         uri=s.pumpapi_wss, reconnect_s=s.pumpapi_reconnect_s,
         price_timeout_s=s.price_wait_timeout_s,
     )
+    pool_checker = (
+        PoolChecker(
+            dex_paprika_key=s.dex_paprika_key,
+            dex_paprika_base_url=s.dex_paprika_base_url,
+            helius_api_keys=s.helius_api_keys,
+            helius_base_url=s.helius_base_url,
+            min_liquidity_usd=s.min_liquidity_usd,
+            dev_rep_enabled=s.dev_rep_enabled,
+            dev_rep_max_creates_24h=s.dev_rep_max_creates_24h,
+            dev_rep_min_age_hours=s.dev_rep_min_age_hours,
+            timeout_s=s.dev_rep_timeout_s,
+        )
+        if s.pool_check_enabled
+        else None
+    )
     trader = PaperTrader(
         feed, size_sol=size_sol, checkpoint=checkpoint,
         jupiter=jupiter, notifier=notifier,
         start_balance_sol=s.start_balance_sol,
         take_profit=s.take_profit, stop_loss=s.stop_loss, timeout_s=s.timeout_s,
+        pool_checker=pool_checker,
+        entry_latency_s=s.entry_latency_s,
+        max_entry_mult=s.max_entry_mult,
+        max_entry_peak_pct=s.max_entry_peak_pct,
+        liq_confirm_window_s=s.liq_confirm_window_s,
     )
     seen_cas: set[str] = set()
     stop_event = asyncio.Event()
@@ -208,10 +240,11 @@ async def _trade_loop(
                 "LIVE" if (jupiter is not None and jupiter.live) else "PAPER", size_sol)
 
     # Backfill: arm signals already posted so positions can open immediately.
+    # quiet=True: don't spam Telegram with hundreds of historical cards.
     try:
         backfill = await tg.fetch_signals(limit=s.backfill_limit)
         for sig in backfill:
-            await _handle_new_signal(trader, seen_cas, sig)
+            await _handle_new_signal(trader, seen_cas, sig, notify=False)
         logger.info("backfill: %d signals, %d open, %d closed",
                     len(backfill), len(trader.open), len(trader.closed))
     except Exception:
@@ -236,6 +269,7 @@ async def _trade_loop(
     feed_task = asyncio.create_task(feed.run())
     tg_task = asyncio.create_task(tg.run_realtime())
     cmd_task = asyncio.create_task(commands())
+    sweep_task = asyncio.create_task(trader.run_sweep())
 
     logger.info("running — send /status or /stop via Telegram")
     await stop_event.wait()
@@ -254,12 +288,15 @@ async def _trade_loop(
     feed.stop()
     cmd_task.cancel()
     tg_task.cancel()
-    for task in (cmd_task, tg_task, feed_task):
+    sweep_task.cancel()
+    for task in (cmd_task, tg_task, feed_task, sweep_task):
         try:
             await task
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             logger.debug("consumer task %s cancelled", task)
     await tg.close()
+    if pool_checker is not None:
+        await pool_checker.close()
     trader._save()
     if notifier is not None:
         await notifier.send_summary(trader.summary())

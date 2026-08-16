@@ -100,6 +100,23 @@ class Settings:
     channel: str = "@AveSolanaTokenScanner"
     checkpoint_file: str = "paper_positions.json"
     backfill_limit: int = 200
+    # Entry guards (wired from .env; the channel's own snapshot is used for
+    # the mcap/liq filters — these gates run at arm/entry time):
+    min_liquidity_usd: float = 4000.0      # reject signals below this liq
+    entry_latency_s: float = 2.0           # wait after signal before entry
+    liq_confirm_window_s: float = 10.0     # how long to retry the DexPaprika check
+    max_entry_mult: float = 5.0            # skip entry if price already > N x init
+    max_entry_peak_pct: float = 0.0        # skip if entry price is above init by %
+    pool_check_enabled: bool = True        # DexPaprika liquidity/survival gate
+    dex_paprika_key: str = ""
+    dex_paprika_base_url: str = "https://api.dexpaprika.com"
+    helius_api_keys: str = ""              # comma-separated, rotated on 429
+    helius_base_url: str = "https://mainnet.helius-rpc.com"
+    dev_rep_enabled: bool = True           # Helius creator/reputation veto
+    dev_rep_max_creates_24h: int = 3
+    dev_rep_min_age_hours: float = 0.0
+    dev_rep_cache_ttl_min: float = 10.0
+    dev_rep_timeout_s: float = 2.5
 
     # --- jupiter ---------------------------------------------------------
     dry_run: bool = True
@@ -139,6 +156,21 @@ class Settings:
             channel=get(env, "TELEGRAM_CHANNEL", "@AveSolanaTokenScanner"),
             checkpoint_file=get(env, "CHECKPOINT_FILE", "paper_positions.json"),
             backfill_limit=get_int(env, "BACKFILL_LIMIT", 200),
+            min_liquidity_usd=get_float(env, "MIN_LIQUIDITY_USD", 4000.0),
+            entry_latency_s=get_float(env, "ENTRY_LATENCY_S", 2.0),
+            liq_confirm_window_s=get_float(env, "LIQ_CONFIRM_WINDOW_S", 10.0),
+            max_entry_mult=get_float(env, "MAX_ENTRY_MULT", 5.0),
+            max_entry_peak_pct=get_float(env, "MAX_ENTRY_PEAK_PCT", 0.0),
+            pool_check_enabled=get_bool(env, "POOL_CHECK_ENABLED", True),
+            dex_paprika_key=get(env, "DEX_PAPRIKA_KEY", ""),
+            dex_paprika_base_url=get(env, "DEX_PAPRIKA_REST_URL", "https://api.dexpaprika.com"),
+            helius_api_keys=get(env, "HELIUS_API_KEYS", get(env, "HELIUS_API_KEY", "")),
+            helius_base_url=get(env, "HELIUS_BASE_URL", "https://mainnet.helius-rpc.com"),
+            dev_rep_enabled=get_bool(env, "DEV_REP_ENABLED", True),
+            dev_rep_max_creates_24h=get_int(env, "DEV_REP_MAX_CREATES_24H", 3),
+            dev_rep_min_age_hours=get_float(env, "DEV_REP_MIN_AGE_HOURS", 0.0),
+            dev_rep_cache_ttl_min=get_float(env, "DEV_REP_CACHE_TTL_MIN", 10.0),
+            dev_rep_timeout_s=get_float(env, "DEV_REP_TIMEOUT_S", 2.5),
             dry_run=get_bool(env, "DRY_RUN", True),
             private_key=get(env, "PRIVATE_KEY", ""),
             jupiter_api_key=get(env, "JUPITER_API_KEY", ""),

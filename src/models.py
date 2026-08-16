@@ -84,6 +84,7 @@ class Position:
     entry_time: float | None = None
     entry_px: float | None = None
     peak_px: float | None = None
+    last_px: float | None = None
     exit_time: float | None = None
     exit_px: float | None = None
     exit_reason: str | None = None
@@ -97,7 +98,9 @@ class Position:
         """Current multiple of entry price (or None before entry)."""
         if self.entry_px is None or self.entry_px <= 0:
             return None
-        px = self.exit_px if self.exit_px is not None else self.peak_px
+        # Closed: realized exit price. Open: mark at the LAST observed price
+        # (not the peak — the peak is only valid for a TP limit-order fill).
+        px = self.exit_px if self.exit_px is not None else self.last_px
         if px is None:
             return None
         return px / self.entry_px
@@ -115,33 +118,42 @@ class Position:
         """Whether the position has an exit recorded."""
         return self.exit_time is not None
 
-    def update(self, now: float) -> str | None:
+    def update(self, now: float, price: float | None = None) -> str | None:
         """Advance the position against a price snapshot.
 
         Args:
             now: Current unix time (seconds).
+            price: The latest observed price. When omitted, ``last_px`` is
+                reused; with no price at all the position is only advanced by
+                wall-clock time (timeout check).
 
         Returns:
             The exit reason if the position closed during this tick, else None.
         """
         if self.entry_px is None or self.is_closed:
             return None
-        px = self.peak_px
-        if px is None:
-            return None
-        if px >= self.entry_px * self.take_profit:
+        if price is not None:
+            self.last_px = price
+            if self.peak_px is None or price > self.peak_px:
+                self.peak_px = price
+        # Take-profit is a limit order: fills when the price *ever* touched
+        # entry*tp, so the peak is the right trigger.
+        if self.peak_px is not None and self.peak_px >= self.entry_px * self.take_profit:
             self.exit_time = now
-            self.exit_px = px
+            self.exit_px = self.entry_px * self.take_profit  # fills at the limit
             self.exit_reason = "tp"
             return "tp"
-        if px <= self.entry_px * self.stop_loss:
+        # Stop-loss is a stop-market order: triggers on the CURRENT price
+        # (never on the peak — the peak only moves up and can't cross below).
+        cur = price if price is not None else self.last_px
+        if cur is not None and cur <= self.entry_px * self.stop_loss:
             self.exit_time = now
-            self.exit_px = px
+            self.exit_px = cur  # fills at the current (worse) price
             self.exit_reason = "sl"
             return "sl"
         if now - self.entry_time >= self.timeout_s:
             self.exit_time = now
-            self.exit_px = px
+            self.exit_px = cur if cur is not None else (self.peak_px or self.entry_px)
             self.exit_reason = "timeout"
             return "timeout"
         return None
@@ -155,6 +167,7 @@ class Position:
             "entry_time": self.entry_time,
             "entry_px": self.entry_px,
             "peak_px": self.peak_px,
+            "last_px": self.last_px,
             "exit_time": self.exit_time,
             "exit_px": self.exit_px,
             "exit_reason": self.exit_reason,

@@ -52,6 +52,23 @@ def parse_amount(raw: str) -> float:
     return val * mult
 
 
+def parse_price_usd(raw: str) -> float:
+    """Parse a token price like ``0.0{5}643`` or ``0.00000643`` to a float.
+
+    The channel writes tiny prices with a ``{n}`` brace notation meaning
+    "repeat the previous character n times", e.g. ``0.0{5}643`` expands to
+    ``0.0`` + five zeros + ``643`` == ``0.00000643``.
+    """
+    raw = raw.replace("$", "").replace(",", "").strip()
+    if not raw:
+        return 0.0
+    expanded = re.sub(r"(.)\{(\d+)\}", lambda m: m.group(1) * int(m.group(2)), raw)
+    try:
+        return float(expanded)
+    except ValueError:
+        return 0.0
+
+
 def _first_int(text: str, label: str) -> int | None:
     """Extract the first integer following ``label`` in ``text``."""
     m = re.search(re.escape(label) + r"\s*:\s*(\d+)", text)

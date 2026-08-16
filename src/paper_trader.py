@@ -16,6 +16,7 @@ Execution is gated by a **trade gate** (opened by ``/start``, closed by
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -25,11 +26,32 @@ from typing import Any
 import logs
 from jupiter_swap import JupiterSwap
 from models import Position, Signal
+from pool_check import PoolChecker
 from price_feed import PriceFeed
 
 logger = logging.getLogger(__name__)
 
 EXIT_LABELS = {"tp": "take-profit", "sl": "stop-loss", "timeout": "1h timeout"}
+
+
+def _safe_float(v: Any) -> float | None:
+    """Parse a value to float, tolerating the channel's ``0.0{5}643`` form."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).replace("$", "").strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    try:
+        from parser import parse_price_usd
+        return parse_price_usd(s) or None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 class PaperTrader:
@@ -43,6 +65,13 @@ class PaperTrader:
             mode, real execution when configured with a live wallet.
         notifier: Optional Telegram notifier for arm/open/close cards.
         start_balance_sol: Starting paper balance for /status reporting.
+        pool_checker: Optional :class:`PoolChecker` for arm-time gates.
+        entry_latency_s: Wait this many seconds after the signal before a
+            first buy may open a position (lets the pool settle + get indexed).
+        max_entry_mult: Skip entry if the observed price is already above
+            ``max_entry_mult`` x the signal's init price (chase guard).
+        max_entry_peak_pct: Skip entry if the observed price is above the
+            signal's init price by more than this percent (0 = disabled).
     """
 
     def __init__(
@@ -56,6 +85,11 @@ class PaperTrader:
         take_profit: float = 3.0,
         stop_loss: float = 0.5,
         timeout_s: float = 3600.0,
+        pool_checker: PoolChecker | None = None,
+        entry_latency_s: float = 2.0,
+        max_entry_mult: float = 5.0,
+        max_entry_peak_pct: float = 0.0,
+        liq_confirm_window_s: float = 10.0,
     ) -> None:
         self.feed = feed
         self.size_sol = size_sol
@@ -66,10 +100,16 @@ class PaperTrader:
         self.take_profit = take_profit
         self.stop_loss = stop_loss
         self.timeout_s = timeout_s
+        self.pool_checker = pool_checker
+        self.entry_latency_s = entry_latency_s
+        self.max_entry_mult = max_entry_mult
+        self.max_entry_peak_pct = max_entry_peak_pct
+        self.liq_confirm_window_s = liq_confirm_window_s
         self.gate_open = True
         self.open: dict[str, Position] = {}
         self.closed: list[Position] = []
         self._signals_seen: set[str] = set()
+        self._signals_info: dict[str, Signal] = {}
         self._names: dict[str, str] = {}
         self._token_amounts: dict[str, int] = {}  # live-mode raw token balance
         self._load()
@@ -103,7 +143,7 @@ class PaperTrader:
     def _from_dict(d: dict[str, Any]) -> Position:
         """Rebuild a Position from its serialized dict."""
         p = Position(ca=d["ca"], name=d.get("name", ""), signal_time=d.get("signal_time", 0.0))
-        for field in ("entry_time", "entry_px", "peak_px", "exit_time", "exit_px",
+        for field in ("entry_time", "entry_px", "peak_px", "last_px", "exit_time", "exit_px",
                       "exit_reason", "take_profit", "stop_loss", "timeout_s", "size_sol"):
             if d.get(field) is not None:
                 setattr(p, field, d[field])
@@ -123,6 +163,53 @@ class PaperTrader:
         logger.info("trade gate %s", "OPEN" if open_gate else "CLOSED")
         logs.journal("gate", open=open_gate)
 
+    # ----------------------------------------------------------- periodic
+    async def run_sweep(self, interval_s: float = 15.0) -> None:
+        """Periodically advance open positions on wall-clock time.
+
+        Positions only receive price events when the mint trades; without
+        this sweep a quiet position would never hit its 1h timeout and would
+        never re-price on the last known tick. Runs until cancelled.
+        """
+        while True:
+            await asyncio.sleep(interval_s)
+            now = time.time()
+            for mint in list(self.open):
+                pos = self.open.get(mint)
+                if pos is None:
+                    continue
+                reason = pos.update(now)  # reuse last_px; price=None
+                if reason:
+                    await self._close_position(mint, pos, reason)
+
+    async def _close_position(self, mint: str, pos: Position, reason: str) -> None:
+        """Close a position (shared by on_event and run_sweep)."""
+        self.closed.append(pos)
+        self.open.pop(mint, None)
+        if self.jupiter is not None and self.jupiter.live:
+            amount = self._token_amounts.pop(mint, 0)
+            if amount > 0:
+                swap = await self.jupiter.sell(mint, amount)
+                if swap.success:
+                    logs.journal("sell", ca=mint, sig=swap.signature,
+                                 output_amount=swap.output_amount)
+                    logger.info("LIVE SELL %s (sig=%s)", mint, swap.signature[:16])
+                else:
+                    logs.journal("sell_failed", ca=mint, error=swap.error)
+                    logger.warning("LIVE SELL FAILED %s: %s", mint, swap.error)
+        logger.info(
+            "CLOSE %s (%s) mult=%.2f pnl=%+.4f SOL",
+            mint, EXIT_LABELS.get(reason, reason), pos.mult or 0.0, pos.pnl_sol,
+        )
+        logs.journal("close", ca=mint, reason=reason, mult=pos.mult, pnl_sol=pos.pnl_sol)
+        logs.log_trade(pos.to_dict())
+        if self.notifier is not None:
+            await self.notifier.send_close(
+                mint, self._names.get(mint, ""), reason, pos.mult or 0.0, pos.pnl_sol,
+                hold_s=(pos.exit_time or 0) - (pos.entry_time or 0),
+            )
+        self._save()
+
     # ------------------------------------------------------------------- events
     async def on_event(self, event: dict) -> None:
         """Async feed callback: fill entries and update open positions.
@@ -139,6 +226,26 @@ class PaperTrader:
         now = time.time()
 
         if mint in self._signals_seen and mint not in self.open:
+            sig = self._signals_info.get(mint)
+            # Entry latency: wait for the pool to settle + get indexed.
+            if sig is not None and now - sig.unixtime < self.entry_latency_s:
+                logger.info("DEFER %s entry: %.1fs < latency %.1fs",
+                            mint, now - sig.unixtime, self.entry_latency_s)
+                return
+            # Chase guard: skip if the price already ran far above init.
+            init_px = _safe_float(sig.init_price) if sig else 0.0
+            if init_px and init_px > 0:
+                ratio = price / init_px
+                if self.max_entry_mult > 0 and ratio > self.max_entry_mult:
+                    logger.info("SKIP %s entry: price %.2fx init (>%.0fx)", mint, ratio, self.max_entry_mult)
+                    logs.journal("skip_entry", ca=mint, reason=f"chase:{ratio:.1f}x")
+                    self._signals_seen.discard(mint)
+                    return
+                if self.max_entry_peak_pct > 0 and (ratio - 1) * 100 > self.max_entry_peak_pct:
+                    logger.info("SKIP %s entry: price %.2fx init (>%.0f%% peak)", mint, ratio, self.max_entry_peak_pct)
+                    logs.journal("skip_entry", ca=mint, reason=f"peak_pct:{(ratio-1)*100:.0f}%")
+                    self._signals_seen.discard(mint)
+                    return
             self._signals_seen.discard(mint)
             if not self.gate_open:
                 logger.info("SKIP %s entry: gate closed", mint)
@@ -174,38 +281,11 @@ class PaperTrader:
         pos = self.open.get(mint)
         if pos is None:
             return
-        if pos.peak_px is None or price > pos.peak_px:
-            pos.peak_px = price
-        reason = pos.update(now)
+        reason = pos.update(now, price)
         if reason:
-            self.closed.append(pos)
-            del self.open[mint]
-            # Live mode: place the real sell before recording the close.
-            if self.jupiter is not None and self.jupiter.live:
-                amount = self._token_amounts.pop(mint, 0)
-                if amount > 0:
-                    swap = await self.jupiter.sell(mint, amount)
-                    if swap.success:
-                        logs.journal("sell", ca=mint, sig=swap.signature,
-                                     output_amount=swap.output_amount)
-                        logger.info("LIVE SELL %s (sig=%s)", mint, swap.signature[:16])
-                    else:
-                        logs.journal("sell_failed", ca=mint, error=swap.error)
-                        logger.warning("LIVE SELL FAILED %s: %s", mint, swap.error)
-            logger.info(
-                "CLOSE %s (%s) mult=%.2f pnl=%+.4f SOL",
-                mint, EXIT_LABELS.get(reason, reason), pos.mult or 0.0, pos.pnl_sol,
-            )
-            logs.journal("close", ca=mint, reason=reason, mult=pos.mult, pnl_sol=pos.pnl_sol)
-            logs.log_trade(pos.to_dict())
-            if self.notifier is not None:
-                await self.notifier.send_close(
-                    mint, self._names.get(mint, ""), reason, pos.mult or 0.0, pos.pnl_sol,
-                    hold_s=(pos.exit_time or 0) - (pos.entry_time or 0),
-                )
-            self._save()
+            await self._close_position(mint, pos, reason)
 
-    async def offer(self, sig: Signal) -> None:
+    async def offer(self, sig: Signal, quiet: bool = False) -> None:
         """Mark a passing signal as eligible for entry on first trade.
 
         Rejects the signal when the trade gate is closed, or when Jupiter has
@@ -213,11 +293,36 @@ class PaperTrader:
 
         Args:
             sig: A filtered signal that passed all rules.
+            quiet: Suppress the Telegram arm card (used during backfill).
         """
         if not self.gate_open:
             logger.info("SKIP %s (%s): gate closed", sig.ca, sig.name)
             logs.journal("skip", ca=sig.ca, name=sig.name, reason="gate_closed")
             return
+        # Arm-time pool gate: reject when DexPaprika *proves* the pool is
+        # dead/empty (fail-open on API errors). Also apply the signal's own
+        # liquidity snapshot as a cheap first filter.
+        if (self.pool_checker is not None and sig.liq_usd > 0
+                and sig.liq_usd < self.pool_checker.min_liquidity_usd):
+            logger.info("SKIP %s (%s): liq $%.0f < $%.0f",
+                        sig.ca, sig.name, sig.liq_usd, self.pool_checker.min_liquidity_usd)
+            logs.journal("skip", ca=sig.ca, name=sig.name, reason="low_liquidity")
+            return
+        if self.pool_checker is not None and sig.liq_usd <= 0:
+            ok, reason = await self.pool_checker.check_pool(
+                sig.ca, confirm_window_s=self.liq_confirm_window_s
+            )
+            if not ok:
+                logger.info("SKIP %s (%s): pool gate (%s)", sig.ca, sig.name, reason)
+                logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"pool_gate:{reason}")
+                return
+        # Dev-reputation veto (fail-open).
+        if self.pool_checker is not None:
+            ok, reason = await self.pool_checker.check_dev_rep(sig.ca, sig.unixtime)
+            if not ok:
+                logger.info("SKIP %s (%s): dev-rep (%s)", sig.ca, sig.name, reason)
+                logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"dev_rep:{reason}")
+                return
         if self.jupiter is not None:
             route = await self.jupiter.quote(sig.ca, int(self.size_sol * 1e9))
             if route is None or not route.success:
@@ -230,10 +335,11 @@ class PaperTrader:
                          price_impact_pct=route.price_impact_pct,
                          routes=route.route_count)
         self._signals_seen.add(sig.ca)
+        self._signals_info[sig.ca] = sig
         self._names[sig.ca] = sig.name
         logger.info("ARMED %s (%s) snipes=%d mcap=$%.0f", sig.ca, sig.name, sig.snipes, sig.mcap_usd)
         logs.journal("arm", ca=sig.ca, name=sig.name, snipes=sig.snipes, mcap_usd=sig.mcap_usd)
-        if self.notifier is not None:
+        if self.notifier is not None and not quiet:
             await self.notifier.send_arm(sig.ca, sig.name, sig.snipes, sig.mcap_usd)
 
     # --------------------------------------------------------------- reporting
