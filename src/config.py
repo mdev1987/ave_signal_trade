@@ -93,8 +93,8 @@ class Settings:
     # --- trading ---------------------------------------------------------
     position_size_sol: float = 0.1
     start_balance_sol: float = 10.0
-    take_profit: float = 3.0
-    stop_loss: float = 0.5
+    take_profit: float = 4.0
+    stop_loss: float = 0.3
     timeout_s: float = 3600.0
     shutdown_grace_s: int = 60
     channel: str = "@AveSolanaTokenScanner"
@@ -149,8 +149,8 @@ class Settings:
         return cls(
             position_size_sol=get_float(env, "POSITION_SIZE_SOL", 0.1),
             start_balance_sol=get_float(env, "START_BALANCE_SOL", 10.0),
-            take_profit=get_float(env, "TAKE_PROFIT", 3.0),
-            stop_loss=get_float(env, "STOP_LOSS", 0.5),
+            take_profit=get_float(env, "TAKE_PROFIT", 4.0),
+            stop_loss=get_float(env, "STOP_LOSS", 0.3),
             timeout_s=get_float(env, "TIMEOUT_S", 3600.0),
             shutdown_grace_s=get_int(env, "SHUTDOWN_GRACE_S", 60),
             channel=get(env, "TELEGRAM_CHANNEL", "@AveSolanaTokenScanner"),
