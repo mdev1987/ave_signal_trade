@@ -29,14 +29,31 @@ def flatten(text: Any) -> str:
         A single flattened string.
     """
     if isinstance(text, str):
-        return text
+        return _strip_markdown(text)
     parts = []
     for p in text:
         if isinstance(p, str):
             parts.append(p)
         else:
             parts.append(p.get("text", ""))
-    return "".join(parts)
+    return _strip_markdown("".join(parts))
+
+
+def _strip_markdown(text: str) -> str:
+    """Reduce Telethon markdown to the plain shape the regexes expect.
+
+    The live channel wraps every label in markdown (e.g. ``**CA**: `abc```),
+    while the offline export used to store plain text. Strip bold/italic/code,
+    links and spoilers so both representations parse identically:
+    ``**CA**: `G9mY…` `` -> ``CA: G9mY…``.
+    """
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)  # [txt](url) -> txt
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)            # **bold**
+    text = re.sub(r"\*(.+?)\*", r"\1", text)                # *italic*
+    text = re.sub(r"`(.+?)`", r"\1", text)                  # `code`
+    text = re.sub(r"~(.+?)~", r"\1", text)                  # ~strike~
+    text = re.sub(r"\|\|(.+?)\|\|", r"\1", text)            # ||spoiler||
+    return text
 
 
 def parse_amount(raw: str) -> float:
