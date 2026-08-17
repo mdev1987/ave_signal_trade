@@ -11,12 +11,44 @@ PIDFILE="$APP_DIR/.ave-super.pid"
 STOP_MARKER="$APP_DIR/bot_logs/.stop"
 PY="$APP_DIR/.venv/bin/python"
 
+# NOTE: the `[m]` bracket avoids pgrep matching this script's own cmdline.
+bot_alive() { pgrep -f "[m]ain.py trade" >/dev/null 2>&1; }
+
 pid_alive() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
 
-bot_alive() { pgrep -f "$APP_DIR/main.py trade" >/dev/null 2>&1; }
+# If the systemd unit exists, defer to it entirely (even when currently
+# stopped) — never run a nohup instance alongside it. This keeps a
+# `systemctl stop` genuinely stopped: no supervisor resurrects the bot.
+systemd_manages() {
+  command -v systemctl >/dev/null 2>&1 \
+    && [ -e /etc/systemd/system/ave-signal-trade.service ]
+}
+
+kill_bot() {
+  # Gracefully stop any existing bot (supervisor or orphaned) so we never run two.
+  if ! bot_alive; then return 0; fi
+  echo "stopping existing bot instance(s)..."
+  touch "$STOP_MARKER"
+  pkill -TERM -f "[m]ain.py trade" 2>/dev/null
+  for _ in 1 2 3 4 5 6; do
+    bot_alive || break
+    sleep 1
+  done
+  if bot_alive; then
+    echo "force-killing after grace period..."
+    pkill -KILL -f "[m]ain.py trade" 2>/dev/null
+  fi
+  rm -f "$STOP_MARKER"
+}
 
 start() {
-  if pid_alive; then echo "already running (supervisor pid $(cat "$PIDFILE"))"; return 0; fi
+  if systemd_manages; then
+    echo "systemd is managing the bot (ave-signal-trade.service) — use: systemctl status|restart|stop ave-signal-trade"
+    return 0
+  fi
+  # Never run two instances: kill any existing bot first, then start fresh.
+  if pid_alive && bot_alive; then echo "already running (supervisor pid $(cat "$PIDFILE"))"; return 0; fi
+  kill_bot
   if [ ! -x "$PY" ]; then
     echo "ERROR: $APP_DIR/.venv missing — build it first:"
     echo "  uv sync   # installs everything from pyproject.toml"
@@ -34,20 +66,39 @@ start() {
 }
 
 stop() {
+  if systemd_manages; then
+    echo "systemd is managing the bot — use: systemctl stop ave-signal-trade"
+    return 0
+  fi
   if ! pid_alive && ! bot_alive; then echo "not running"; rm -f "$PIDFILE"; return 0; fi
   echo "stopping..."
   touch "$STOP_MARKER"
-  pkill -TERM -f "$APP_DIR/main.py trade" 2>/dev/null
-  sleep 5
-  kill "$(cat "$PIDFILE")" 2>/dev/null
+  pkill -TERM -f "[m]ain.py trade" 2>/dev/null
+  # Graceful shutdown can take up to SHUTDOWN_GRACE_S (~60s) for in-flight
+  # trades; wait up to 10s then force-kill anything still alive.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    bot_alive || break
+    sleep 1
+  done
+  if bot_alive; then
+    echo "force-killing remaining bot process(es)..."
+    pkill -KILL -f "[m]ain.py trade" 2>/dev/null
+  fi
+  if [ -f "$PIDFILE" ]; then
+    kill "$(cat "$PIDFILE")" 2>/dev/null
+  fi
   rm -f "$PIDFILE"
   echo "stopped (exit 0)"
 }
 
 status() {
+  if systemd_manages; then
+    echo "running under systemd (ave-signal-trade.service) — use: systemctl status ave-signal-trade"
+    return 0
+  fi
   if pid_alive; then
     echo "running (supervisor pid $(cat "$PIDFILE"))"
-    pgrep -af "$APP_DIR/main.py trade" || echo "  (bot process not found — restarting soon)"
+    pgrep -af "[m]ain.py trade" || echo "  (bot process not found — restarting soon)"
   else
     echo "not running"
   fi

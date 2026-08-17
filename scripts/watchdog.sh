@@ -31,6 +31,14 @@ alert() {
 
 supervisor_alive() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
 
+# If the systemd unit exists (even when stopped), defer to it entirely — the
+# crontab watchdog must never start a second instance alongside systemd, and a
+# `systemctl stop` must stay stopped.
+if command -v systemctl >/dev/null 2>&1 \
+   && [ -e /etc/systemd/system/ave-signal-trade.service ]; then
+  exit 0
+fi
+
 if [ -f "$STOP_MARKER" ]; then
   exit 0  # deliberately stopped — nothing to watch
 fi

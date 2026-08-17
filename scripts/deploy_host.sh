@@ -66,6 +66,40 @@ if ! grep -q '^TELEGRAM_PHONE' .env; then
 fi
 
 echo "== [5/5] process supervisor =="
+# NEVER run two instances. Fully decommission ALL existing supervision —
+# systemd unit, nohup _supervise.sh, and the watchdog crontab — BEFORE
+# installing a single fresh supervisor. A leftover crontab watchdog or nohup
+# supervisor is what caused "keep only one websocket connection" (pumpapi) and
+# getUpdates 409 / sqlite "database is locked" (two bots, one session).
+decommission_all() {
+  echo "== decommissioning any existing supervision =="
+  # systemd unit (stop + disable + remove + reload):
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop ave-signal-trade.service >/dev/null 2>&1 || true
+    systemctl disable ave-signal-trade.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/ave-signal-trade.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+  # bot + nohup supervisor processes ([m] bracket avoids self-match):
+  pkill -TERM -f "[m]ain.py trade" >/dev/null 2>&1 || true
+  sleep 3
+  pkill -KILL -f "[m]ain.py trade" >/dev/null 2>&1 || true
+  pkill -TERM -f "_supervise.sh" >/dev/null 2>&1 || true
+  # watchdog crontab lines for THIS app dir:
+  if command -v crontab >/dev/null 2>&1; then
+    crontab -l 2>/dev/null | grep -vF "$APP_DIR/scripts/watchdog.sh" | crontab - 2>/dev/null || true
+  fi
+  rm -f "$APP_DIR/.ave-super.pid" "$APP_DIR/bot_logs/.stop"
+  sleep 1
+  if pgrep -f "[m]ain.py trade" >/dev/null 2>&1; then
+    echo "ERROR: a bot instance is still running — cannot guarantee a single instance."
+    exit 1
+  fi
+  echo "all prior supervision removed — starting fresh"
+}
+
+decommission_all
+
 if command -v systemctl >/dev/null 2>&1 && [ -d /etc/systemd/system ] && [ -w /etc/systemd/system ]; then
   echo "systemctl found — installing system service"
   cat > /etc/systemd/system/ave-signal-trade.service <<UNIT
@@ -78,7 +112,9 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$APP_DIR
 ExecStart=$APP_DIR/.venv/bin/python main.py trade
-Restart=always
+# on-failure: restart on crash (any non-zero exit), but a graceful exit 0
+# (telegram /stop or SIGTERM finishing in-flight trades) stays stopped.
+Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 # optional: match the local log timestamps
@@ -109,8 +145,15 @@ else
   echo "--- log tail ---"
   tail -n 4 "$APP_DIR/bot_logs/bot.log" 2>/dev/null || true
   echo
+  # Install the watchdog into crontab so boot/5-min auto-restart matches this
+  # deploy. Idempotent: existing watchdog lines for this app dir are removed
+  # first (decommission_all already did), so these are the only ones.
+  if command -v crontab >/dev/null 2>&1; then
+    ( crontab -l 2>/dev/null; \
+      echo "*/5 * * * * $APP_DIR/scripts/watchdog.sh $APP_DIR"; \
+      echo "@reboot $APP_DIR/scripts/watchdog.sh $APP_DIR" ) | crontab -
+    echo "watchdog installed in crontab (auto-start on boot + every 5 min)"
+  fi
+  echo
   echo "DONE. Commands:  bash scripts/run_bot.sh {start|stop|status|restart}"
-  echo "NOTE: no auto-start on boot (no systemd). Add BOTH lines to crontab:"
-  echo "  */5 * * * * $APP_DIR/scripts/watchdog.sh $APP_DIR"
-  echo "  @reboot $APP_DIR/scripts/watchdog.sh $APP_DIR"
 fi

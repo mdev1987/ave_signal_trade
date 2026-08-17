@@ -8,6 +8,15 @@ PY="$APP_DIR/.venv/bin/python"
 STOP_MARKER="$APP_DIR/bot_logs/.stop"
 LOG="$APP_DIR/bot_logs/supervisor.log"
 mkdir -p "$(dirname "$LOG")"
+
+# Defer to systemd if its unit exists (even when stopped) — never run
+# alongside it, so a `systemctl stop` stays stopped.
+if command -v systemctl >/dev/null 2>&1 \
+   && [ -e /etc/systemd/system/ave-signal-trade.service ]; then
+  echo "[$(date '+%F %T')] supervisor: systemd unit present — not starting" >> "$LOG"
+  exit 0
+fi
+
 while true; do
   if [ -f "$STOP_MARKER" ]; then
     echo "[$(date '+%F %T')] supervisor: .stop marker found — staying stopped" >> "$LOG"
