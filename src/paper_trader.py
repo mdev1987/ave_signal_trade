@@ -112,7 +112,14 @@ class PaperTrader:
         self._signals_info: dict[str, Signal] = {}
         self._names: dict[str, str] = {}
         self._token_amounts: dict[str, int] = {}  # live-mode raw token balance
+        self._rejects_total: int = 0
+        self._last_reject: dict[str, Any] | None = None
         self._load()
+
+    def note_reject(self, ca: str, name: str, reasons: list[str]) -> None:
+        """Record a filter rejection for the /status report."""
+        self._rejects_total += 1
+        self._last_reject = {"ca": ca, "name": name, "reasons": reasons}
 
     def _load(self) -> None:
         """Restore positions from the checkpoint file, if any."""
@@ -366,6 +373,8 @@ class PaperTrader:
             "gate_open": self.gate_open,
             "mode": "LIVE" if (self.jupiter is not None and self.jupiter.live) else "PAPER",
             "quote_gate": self.jupiter.quote_summary() if self.jupiter is not None else "disabled",
+            "rejects_total": self._rejects_total,
+            "last_reject": self._last_reject,
         }
 
     def snapshot(self) -> dict[str, Any]:

@@ -126,12 +126,9 @@ async def _handle_new_signal(trader: PaperTrader, seen_cas: set[str], sig, notif
     ok, reasons = filt.check_signal(sig)
     if not ok:
         logs.journal("reject", ca=sig.ca, name=sig.name, reasons=reasons)
-        if notify and trader.notifier is not None:
-            await trader.notifier.send_reject(
-                sig.ca, sig.name, reasons,
-                mcap_usd=sig.mcap_usd, liq_usd=sig.liq_usd,
-                dex=sig.dex, sec_score=sig.sec_score, snipes=sig.snipes,
-            )
+        # Count the rejection for /status but don't spam a Telegram card per
+        # rejected signal — the details are surfaced via /status instead.
+        trader.note_reject(sig.ca, sig.name, reasons)
         return
     logs.journal("signal", ca=sig.ca, name=sig.name)
     if notify:
@@ -149,7 +146,13 @@ def _format_status(trader: PaperTrader) -> str:
         f"{SEP} Balance `{s['balance_sol']:.4f}` SOL",
         f"{SEP} Closed `{s['closed']}` {SEP} WinRate `{s['win_rate']:.1f}%`",
         f"{SEP} Realized PnL `{s['pnl_sol']:+.4f}` SOL",
+        f"{SEP} Rejected `{s['rejects_total']}`",
     ]
+    last = s["last_reject"]
+    if last:
+        name = (last.get("name") or "")[:14] or (last.get("ca") or "")[:14]
+        reasons = ", ".join(last.get("reasons") or [])
+        lines.append(f"{SEP} Last rejected `{name}` — {reasons or 'unknown'}")
     for pos in trader.open.values():
         mult = pos.mult if pos.mult is not None else 0.0
         lines.append(
@@ -299,7 +302,7 @@ async def _trade_loop(
         await pool_checker.close()
     trader._save()
     if notifier is not None:
-        await notifier.send_summary(trader.summary())
+        await notifier.send_stopped(trader.summary())
     logger.info("shutdown complete — exit 0")
     return 0
 

@@ -33,7 +33,6 @@ ICONS = {
     "skip": "⚠️",
     "alert": "⚠️",
     "stop": "🏁",
-    "reject": "⛔",
 }
 
 
@@ -127,26 +126,6 @@ class TelegramNotifier:
             f"{SEP} Snipes `{snipes}` {SEP} MCap `${mcap_usd:,.0f}`"
         )
 
-    async def send_reject(
-        self,
-        ca: str,
-        name: str,
-        reasons: list[str],
-        mcap_usd: float,
-        liq_usd: float,
-        dex: str,
-        sec_score: int,
-        snipes: int,
-    ) -> None:
-        """A signal failed the filter; forward a reject card with the why."""
-        await self._send(
-            f"{ICONS['reject']} **REJECTED** `{name}`\n"
-            f"{self._short(ca)}\n"
-            f"{SEP} Dex `{dex or '?'}` {SEP} MCap `${mcap_usd:,.0f}` {SEP} Liq `${liq_usd:,.0f}`\n"
-            f"{SEP} Snipes `{snipes}` {SEP} SecScore `{sec_score}`\n"
-            f"{SEP} *Reasons:* {', '.join(f'`{r}`' for r in reasons) or '`unknown`'}"
-        )
-
     async def send_open(self, ca: str, name: str, price: float) -> None:
         """Position opened on the first live buy event."""
         await self._send(
@@ -179,6 +158,15 @@ class TelegramNotifier:
         """Periodic paper-trading summary."""
         await self._send(
             f"{ICONS['close']} **Summary**\n"
+            f"{SEP} Open `{summary['open']}` {SEP} Closed `{summary['closed']}`\n"
+            f"{SEP} WinRate `{summary['win_rate']:.1f}%`\n"
+            f"{SEP} PnL `{summary['pnl_sol']:+.4f}` SOL"
+        )
+
+    async def send_stopped(self, summary: dict[str, Any]) -> None:
+        """Shutdown card confirming the bot stopped cleanly."""
+        await self._send(
+            f"{ICONS['stop']} **Bot Stopped**\n"
             f"{SEP} Open `{summary['open']}` {SEP} Closed `{summary['closed']}`\n"
             f"{SEP} WinRate `{summary['win_rate']:.1f}%`\n"
             f"{SEP} PnL `{summary['pnl_sol']:+.4f}` SOL"
