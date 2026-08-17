@@ -1,6 +1,6 @@
 """Parse Telegram messages into :class:`models.Signal`.
 
-tgdata returns messages as plain text (``Message`` column). The bundled
+Telegram messages carry plain text. The bundled
 ``docs/channel_signals.json`` export stores structured entities instead, so the
 parser flattens either representation to the same plain-text form before
 extracting fields.

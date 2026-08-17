@@ -1,7 +1,8 @@
-"""Fetch Telegram channel messages via the ``tgdata`` library.
+"""Fetch Telegram channel messages via raw Telethon.
 
-tgdata authenticates a user session (prompting for a login code on first run)
-and returns messages as a pandas DataFrame. Two consumption modes:
+Telethon authenticates a user session (prompting for a login code only when no
+valid ``telegram_session.session`` exists) and streams channel events. Two
+consumption modes:
 
 - **Realtime (default)**: register an ``on_new_message`` handler so signals
   fire the moment the channel posts them (Telethon event system).
@@ -15,8 +16,9 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from tgdata import TgData
+from telethon import TelegramClient, events
 
+from config import TelegramCreds
 from models import Signal
 from parser import parse_signal
 
@@ -29,43 +31,76 @@ SignalHandler = Callable[[Signal], Awaitable[None]]
 
 
 class TelegramFeed:
-    """Thin wrapper around :class:`tgdata.TgData`.
+    """Thin wrapper around a raw :class:`telethon.TelegramClient`.
 
     Args:
-        config_path: Path to tgdata's ``config.ini`` (see config.resolve_tgdata_config).
+        creds: Resolved Telegram credentials + session file (see
+            config.resolve_telegram_creds).
         channel: Channel username (with ``@``) or numeric id to monitor.
     """
 
-    def __init__(self, config_path: str, channel: str = DEFAULT_CHANNEL) -> None:
-        self.config_path = config_path
+    def __init__(self, creds: TelegramCreds, channel: str = DEFAULT_CHANNEL) -> None:
+        self.creds = creds
         self.channel = channel
-        self._tg = TgData(config_path)
+        self._client = TelegramClient(
+            creds.session_file, creds.api_id, creds.api_hash
+        )
+        self._connected = False
         self._handlers: list[SignalHandler] = []
+
+    async def _ensure_connected(self) -> None:
+        """Connect + authorize once (never prompts when the session is valid)."""
+        if self._connected:
+            return
+        await self._client.connect()
+        if not await self._client.is_user_authorized():
+            await self._client.start(phone=self.creds.phone)
+        self._connected = True
+        logger.info("telegram connected (session %s)", self.creds.session_file)
 
     async def close(self) -> None:
         """Release the persistent Telegram connection."""
-        await self._tg.close()
+        if self._connected:
+            await self._client.disconnect()
+            self._connected = False
 
     async def list_channels(self) -> list[dict[str, Any]]:
         """List the channels/groups the session can see.
 
         Returns:
-            Rows of the tgdata groups DataFrame, as dicts.
+            Rows shaped like the old groups records.
         """
-        df = await self._tg.list_groups()
-        return df.to_dict(orient="records")
+        await self._ensure_connected()
+        rows: list[dict[str, Any]] = []
+        async for dialog in self._client.iter_dialogs():
+            if not (dialog.is_group or dialog.is_channel):
+                continue
+            entity = dialog.entity
+            username = getattr(entity, "username", None)
+            rows.append(
+                {
+                    "GroupID": entity.id,
+                    "Title": getattr(entity, "title", ""),
+                    "Username": f"@{username}" if username else None,
+                    "Identifier": f"@{username}" if username else str(entity.id),
+                    "IsChannel": dialog.is_channel,
+                    "IsMegagroup": getattr(entity, "megagroup", False),
+                    "ParticipantsCount": getattr(entity, "participants_count", None),
+                }
+            )
+        return rows
 
-    def _row_to_signal(self, row: dict[str, Any]) -> Signal | None:
-        """Convert one tgdata message row into a Signal."""
-        text = row.get("Message")
+    def _msg_to_signal(self, msg: Any) -> Signal | None:
+        """Convert one Telethon message into a Signal."""
+        text = msg.text
         if not text:
             return None
-        date: datetime = row.get("Date") or datetime.now(UTC)
+        date = msg.date or datetime.now(UTC)
         return parse_signal(
             text,
             unixtime=int(date.timestamp()),
             date=date.isoformat(),
-            message_id=int(row.get("MessageId", 0) or 0),
+            message_id=getattr(msg, "id", 0) or 0,
         )
 
     async def fetch_signals(
@@ -82,14 +117,17 @@ class TelegramFeed:
         Returns:
             Parsed signals in chronological order.
         """
-        kwargs: dict[str, Any] = {"group_id": self.channel, "limit": limit}
+        await self._ensure_connected()
+        cutoff = None
         if minutes is not None:
-            kwargs["start_date"] = datetime.now(UTC) - timedelta(minutes=minutes)
-        df = await self._tg.get_messages(**kwargs)
-        if df is None or df.empty:
-            return []
-        rows = df.to_dict(orient="records")
-        signals = [s for s in (self._row_to_signal(r) for r in rows) if s is not None]
+            cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
+        signals: list[Signal] = []
+        async for msg in self._client.iter_messages(self.channel, limit=limit):
+            if cutoff is not None and (msg.date or datetime.now(UTC)) < cutoff:
+                break
+            sig = self._msg_to_signal(msg)
+            if sig is not None:
+                signals.append(sig)
         signals.sort(key=lambda s: s.unixtime)
         return signals
 
@@ -104,22 +142,25 @@ class TelegramFeed:
     async def run_realtime(self) -> None:
         """Stream new messages via Telethon's event loop (blocks until stopped).
 
-        Registers an ``on_new_message`` handler for the configured channel and
+        Registers a ``NewMessage`` handler for the configured channel and
         dispatches every parsed signal to the registered handlers.
         """
-        @self._tg.on_new_message(group_id=self.channel)
+        await self._ensure_connected()
+
+        @self._client.on(events.NewMessage(chats=self.channel))
         async def handle(event) -> None:
-            text = getattr(event.message, "text", "") or ""
+            msg = event.message
+            text = getattr(msg, "text", "") or ""
             if not text:
                 return
-            date = event.message.date or datetime.now(UTC)
+            date = msg.date or datetime.now(UTC)
             sig = parse_signal(
                 text,
                 unixtime=int(date.timestamp()),
                 date=date.isoformat(),
-                message_id=getattr(event.message, "id", 0) or 0,
+                message_id=getattr(msg, "id", 0) or 0,
             )
             for h in self._handlers:
                 await h(sig)
 
-        await self._tg.run_with_event_loop()
+        await self._client.run_until_disconnected()

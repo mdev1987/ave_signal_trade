@@ -20,7 +20,7 @@ Telegram control (via BOT_TOKEN in .env):
     /help    command list
 
 On first run ``trade``/``channels`` prompts for your Telegram phone number
-(config.config.resolve_tgdata_config) and writes config.ini + telegram_session.
+(config.config.resolve_telegram_creds) and writes the telethon_session.
 """
 
 from __future__ import annotations
@@ -320,13 +320,13 @@ def _build_jupiter() -> JupiterSwap | None:
 
 def cmd_trade(args: argparse.Namespace) -> int:
     """Stream live signals (event-based), arm winners, track positions."""
-    cfg = config.resolve_tgdata_config()
+    creds = config.resolve_telegram_creds()
     checkpoint = Path(args.checkpoint)
 
     async def run() -> int:
         notifier = TelegramNotifier()
         await notifier.send_startup(summary=f"channel `{args.channel}`")
-        tg = TelegramFeed(str(cfg), channel=args.channel)
+        tg = TelegramFeed(creds, channel=args.channel)
         try:
             jupiter = _build_jupiter()
             # Force the Telegram auth/connection up front so the phone/login
@@ -348,10 +348,10 @@ def cmd_trade(args: argparse.Namespace) -> int:
 
 def cmd_channels(args: argparse.Namespace) -> int:
     """List channels/groups visible to the Telegram session."""
-    cfg = config.resolve_tgdata_config()
+    creds = config.resolve_telegram_creds()
 
     async def run() -> int:
-        tg = TelegramFeed(str(cfg), channel=args.channel)
+        tg = TelegramFeed(creds, channel=args.channel)
         try:
             rows = await tg.list_channels()
             for r in rows:
