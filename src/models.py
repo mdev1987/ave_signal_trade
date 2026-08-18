@@ -85,6 +85,7 @@ class Position:
     entry_px: float | None = None
     peak_px: float | None = None
     last_px: float | None = None
+    last_tick_s: float | None = None  # wall-clock time of the last price tick
     exit_time: float | None = None
     exit_px: float | None = None
     exit_reason: str | None = None
@@ -92,6 +93,9 @@ class Position:
     stop_loss: float = 0.5
     timeout_s: float = 3600.0
     size_sol: float = 0.1
+    price_stale_s: float = 120.0   # last_px older than this is "stale"
+    timeout_stale_grace_s: float = 300.0  # max extra wait for a fresh tick
+    max_tick_mult: float = 1e5     # ticks beyond this multiple of entry are junk
 
     @property
     def mult(self) -> float | None:
@@ -133,7 +137,10 @@ class Position:
         if self.entry_px is None or self.is_closed:
             return None
         if price is not None:
+            if not self._plausible_tick(price):
+                return None  # ignore garbage ticks (absurd spikes/dust)
             self.last_px = price
+            self.last_tick_s = now
             if self.peak_px is None or price > self.peak_px:
                 self.peak_px = price
         # Take-profit is a limit order: fills when the price *ever* touched
@@ -152,11 +159,31 @@ class Position:
             self.exit_reason = "sl"
             return "sl"
         if now - self.entry_time >= self.timeout_s:
+            # A stale last price flatters the paper exit. Prefer a fresh tick;
+            # only force the close once the stale-grace window has elapsed so a
+            # dead feed can never leave a position open forever.
+            stale = (
+                self.last_tick_s is not None
+                and now - self.last_tick_s > self.price_stale_s
+            )
+            if stale and now - self.entry_time < self.timeout_s + self.timeout_stale_grace_s:
+                return None  # wait for a fresh tick before marking the exit
             self.exit_time = now
             self.exit_px = cur if cur is not None else (self.peak_px or self.entry_px)
             self.exit_reason = "timeout"
             return "timeout"
         return None
+
+    def _plausible_tick(self, price: float) -> bool:
+        """Reject absurd price ticks that would corrupt peak/exit marks.
+
+        A valid tick stays within ``max_tick_mult`` of the entry price on
+        either side (e.g. 1e5). Out-of-range values (decimal dust, 1e4 SOL
+        spikes) are treated as feed noise and ignored.
+        """
+        if price is None or price <= 0 or self.entry_px is None or self.entry_px <= 0:
+            return False
+        return price < self.entry_px * self.max_tick_mult and price > self.entry_px / self.max_tick_mult
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the position (including running stats)."""
@@ -168,6 +195,7 @@ class Position:
             "entry_px": self.entry_px,
             "peak_px": self.peak_px,
             "last_px": self.last_px,
+            "last_tick_s": self.last_tick_s,
             "exit_time": self.exit_time,
             "exit_px": self.exit_px,
             "exit_reason": self.exit_reason,

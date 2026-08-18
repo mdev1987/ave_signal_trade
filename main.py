@@ -140,10 +140,13 @@ async def _handle_new_signal(trader: PaperTrader, seen_cas: set[str], sig, notif
 def _format_status(trader: PaperTrader) -> str:
     """Render the /status reply from the trader's current state."""
     s = trader.summary()
+    bal_line = f"{SEP} Balance `{s['balance_sol']:.4f}` SOL"
+    if s.get("allocated_sol"):
+        bal_line += f" (alloc `{s['allocated_sol']:.3f}`/`{s['max_positions']}` max)"
     lines = [
         "**Status**",
         f"{SEP} Mode `{s['mode']}` {SEP} Gate `{'OPEN' if s['gate_open'] else 'CLOSED'}`",
-        f"{SEP} Balance `{s['balance_sol']:.4f}` SOL",
+        bal_line,
         f"{SEP} Closed `{s['closed']}` {SEP} WinRate `{s['win_rate']:.1f}%`",
         f"{SEP} Realized PnL `{s['pnl_sol']:+.4f}` SOL",
         f"{SEP} Rejected `{s['rejects_total']}`",
@@ -230,17 +233,24 @@ async def _trade_loop(
         feed, size_sol=size_sol, checkpoint=checkpoint,
         jupiter=jupiter, notifier=notifier,
         start_balance_sol=s.start_balance_sol,
+        max_positions=s.max_positions,
         take_profit=s.take_profit, stop_loss=s.stop_loss, timeout_s=s.timeout_s,
         pool_checker=pool_checker,
         entry_latency_s=s.entry_latency_s,
         max_entry_mult=s.max_entry_mult,
         max_entry_peak_pct=s.max_entry_peak_pct,
         liq_confirm_window_s=s.liq_confirm_window_s,
+        min_entry_px=s.min_entry_px,
+        max_entry_px=s.max_entry_px,
+        price_stale_s=s.price_stale_s,
+        timeout_stale_grace_s=s.timeout_stale_grace_s,
+        max_tick_mult=s.max_tick_mult,
     )
     seen_cas: set[str] = set()
     stop_event = asyncio.Event()
-    logger.info("mode=%s gate=OPEN size=%.4f SOL",
-                "LIVE" if (jupiter is not None and jupiter.live) else "PAPER", size_sol)
+    logger.info("mode=%s gate=OPEN size=%.4f SOL max_positions=%d",
+                "LIVE" if (jupiter is not None and jupiter.live) else "PAPER",
+                size_sol, s.max_positions)
 
     # Backfill: arm signals already posted so positions can open immediately.
     # quiet=True: don't spam Telegram with hundreds of historical cards.

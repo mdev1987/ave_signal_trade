@@ -65,6 +65,7 @@ class PaperTrader:
             mode, real execution when configured with a live wallet.
         notifier: Optional Telegram notifier for arm/open/close cards.
         start_balance_sol: Starting paper balance for /status reporting.
+        max_positions: Maximum concurrent open positions (new entries skip).
         pool_checker: Optional :class:`PoolChecker` for arm-time gates.
         entry_latency_s: Wait this many seconds after the signal before a
             first buy may open a position (lets the pool settle + get indexed).
@@ -72,6 +73,11 @@ class PaperTrader:
             ``max_entry_mult`` x the signal's init price (chase guard).
         max_entry_peak_pct: Skip entry if the observed price is above the
             signal's init price by more than this percent (0 = disabled).
+        min_entry_px / max_entry_px: Price sanity band for entries (SOL/token).
+        price_stale_s: A ``last_px`` older than this is stale for exits.
+        timeout_stale_grace_s: Max extra wait for a fresh tick before forcing
+            the timeout exit (prevents stale-price flattery and dead positions).
+        max_tick_mult: Ticks beyond this multiple of entry are ignored as noise.
     """
 
     def __init__(
@@ -81,7 +87,8 @@ class PaperTrader:
         checkpoint: Path | None = None,
         jupiter: JupiterSwap | None = None,
         notifier=None,
-        start_balance_sol: float = 10.0,
+        start_balance_sol: float = 2.0,
+        max_positions: int = 5,
         take_profit: float = 3.0,
         stop_loss: float = 0.5,
         timeout_s: float = 3600.0,
@@ -90,6 +97,11 @@ class PaperTrader:
         max_entry_mult: float = 5.0,
         max_entry_peak_pct: float = 0.0,
         liq_confirm_window_s: float = 10.0,
+        min_entry_px: float = 1e-11,
+        max_entry_px: float = 1e-3,
+        price_stale_s: float = 120.0,
+        timeout_stale_grace_s: float = 300.0,
+        max_tick_mult: float = 1e5,
     ) -> None:
         self.feed = feed
         self.size_sol = size_sol
@@ -97,6 +109,7 @@ class PaperTrader:
         self.jupiter = jupiter
         self.notifier = notifier
         self.start_balance_sol = start_balance_sol
+        self.max_positions = max_positions
         self.take_profit = take_profit
         self.stop_loss = stop_loss
         self.timeout_s = timeout_s
@@ -105,6 +118,11 @@ class PaperTrader:
         self.max_entry_mult = max_entry_mult
         self.max_entry_peak_pct = max_entry_peak_pct
         self.liq_confirm_window_s = liq_confirm_window_s
+        self.min_entry_px = min_entry_px
+        self.max_entry_px = max_entry_px
+        self.price_stale_s = price_stale_s
+        self.timeout_stale_grace_s = timeout_stale_grace_s
+        self.max_tick_mult = max_tick_mult
         self.gate_open = True
         self.open: dict[str, Position] = {}
         self.closed: list[Position] = []
@@ -112,6 +130,7 @@ class PaperTrader:
         self._signals_info: dict[str, Signal] = {}
         self._names: dict[str, str] = {}
         self._token_amounts: dict[str, int] = {}  # live-mode raw token balance
+        self._live_balance_sol: float | None = None  # RPC wallet balance (live)
         self._rejects_total: int = 0
         self._last_reject: dict[str, Any] | None = None
         self._load()
@@ -150,8 +169,10 @@ class PaperTrader:
     def _from_dict(d: dict[str, Any]) -> Position:
         """Rebuild a Position from its serialized dict."""
         p = Position(ca=d["ca"], name=d.get("name", ""), signal_time=d.get("signal_time", 0.0))
-        for field in ("entry_time", "entry_px", "peak_px", "last_px", "exit_time", "exit_px",
-                      "exit_reason", "take_profit", "stop_loss", "timeout_s", "size_sol"):
+        for field in ("entry_time", "entry_px", "peak_px", "last_px", "last_tick_s",
+                      "exit_time", "exit_px", "exit_reason", "take_profit", "stop_loss",
+                      "timeout_s", "size_sol", "price_stale_s", "timeout_stale_grace_s",
+                      "max_tick_mult"):
             if d.get(field) is not None:
                 setattr(p, field, d[field])
         return p
@@ -176,10 +197,12 @@ class PaperTrader:
 
         Positions only receive price events when the mint trades; without
         this sweep a quiet position would never hit its 1h timeout and would
-        never re-price on the last known tick. Runs until cancelled.
+        never re-price on the last known tick. In live mode it also refreshes
+        the wallet balance from the RPC. Runs until cancelled.
         """
         while True:
             await asyncio.sleep(interval_s)
+            await self._refresh_live_balance()
             now = time.time()
             for mint in list(self.open):
                 pos = self.open.get(mint)
@@ -189,22 +212,49 @@ class PaperTrader:
                 if reason:
                     await self._close_position(mint, pos, reason)
 
+    async def _refresh_live_balance(self) -> None:
+        """Update the cached real-wallet balance (live mode only; paper no-op)."""
+        if self.jupiter is None or not self.jupiter.live:
+            return
+        bal = await self.jupiter.balance_sol()
+        if bal is not None:
+            self._live_balance_sol = bal
+
     async def _close_position(self, mint: str, pos: Position, reason: str) -> None:
-        """Close a position (shared by on_event and run_sweep)."""
-        self.closed.append(pos)
-        self.open.pop(mint, None)
-        self._signals_seen.discard(mint)
+        """Close a position (shared by on_event and run_sweep).
+
+        Live mode sells the real tokens FIRST; only when the sell succeeds is
+        the position marked closed (a failed sell keeps the position open so
+        it is retried on the next sweep instead of silently abandoning tokens).
+        """
+        balance_before = self.balance()
         if self.jupiter is not None and self.jupiter.live:
             amount = self._token_amounts.pop(mint, 0)
             if amount > 0:
                 swap = await self.jupiter.sell(mint, amount)
-                if swap.success:
-                    logs.journal("sell", ca=mint, sig=swap.signature,
-                                 output_amount=swap.output_amount)
-                    logger.info("LIVE SELL %s (sig=%s)", mint, swap.signature[:16])
-                else:
+                if not swap.success:
+                    self._token_amounts[mint] = amount  # keep for retry
+                    pos.exit_time = None
+                    pos.exit_px = None
+                    pos.exit_reason = None
                     logs.journal("sell_failed", ca=mint, error=swap.error)
-                    logger.warning("LIVE SELL FAILED %s: %s", mint, swap.error)
+                    logger.warning("LIVE SELL FAILED %s: %s — keeping position",
+                                   mint, swap.error)
+                    if self.notifier is not None:
+                        await self.notifier.send_alert(
+                            "Sell failed", f"`{(mint or '')[:10]}…` — {swap.error}"
+                        )
+                    return
+                logs.journal("sell", ca=mint, sig=swap.signature,
+                             output_amount=swap.output_amount)
+                logger.info("LIVE SELL %s (sig=%s)", mint, swap.signature[:16])
+                proceeds_sol = swap.output_amount / 1e9
+                if pos.entry_px and proceeds_sol > 0:
+                    # Mark the exit so mult/pnl reflect the REAL sold proceeds.
+                    pos.exit_px = pos.entry_px * (proceeds_sol / pos.size_sol)
+        self.closed.append(pos)
+        self.open.pop(mint, None)
+        self._signals_seen.discard(mint)
         logger.info(
             "CLOSE %s (%s) mult=%.2f pnl=%+.4f SOL",
             mint, EXIT_LABELS.get(reason, reason), pos.mult or 0.0, pos.pnl_sol,
@@ -215,6 +265,7 @@ class PaperTrader:
             await self.notifier.send_close(
                 mint, self._names.get(mint, ""), reason, pos.mult or 0.0, pos.pnl_sol,
                 hold_s=(pos.exit_time or 0) - (pos.entry_time or 0),
+                exit_px=pos.exit_px, balance_before=balance_before,
             )
         self._save()
 
@@ -240,6 +291,12 @@ class PaperTrader:
                 logger.info("DEFER %s entry: %.1fs < latency %.1fs",
                             mint, now - sig.unixtime, self.entry_latency_s)
                 return
+            # Price sanity band: reject dust/garbage prices that corrupt PnL.
+            if not (self.min_entry_px <= price <= self.max_entry_px):
+                logger.info("SKIP %s entry: price %.4g outside sane band", mint, price)
+                logs.journal("skip_entry", ca=mint, reason="bad_price")
+                self._signals_seen.discard(mint)
+                return
             # Chase guard: skip if the price already ran far above init.
             init_px = _safe_float(sig.init_price) if sig else 0.0
             if init_px and init_px > 0:
@@ -254,10 +311,16 @@ class PaperTrader:
                     logs.journal("skip_entry", ca=mint, reason=f"peak_pct:{(ratio-1)*100:.0f}%")
                     self._signals_seen.discard(mint)
                     return
-            self._signals_seen.discard(mint)
             if not self.gate_open:
                 logger.info("SKIP %s entry: gate closed", mint)
-                return
+                return  # stays armed — retries once the gate reopens
+            if len(self.open) >= self.max_positions:
+                logger.info("SKIP %s entry: at max positions (%d)", mint, self.max_positions)
+                logs.journal("skip_entry", ca=mint, reason="max_positions")
+                return  # stays armed — retries once a slot frees up
+            self._signals_seen.discard(mint)
+            balance_before = self.balance()
+            entry_px = price
             # Live mode: place the real buy before opening the position.
             if self.jupiter is not None and self.jupiter.live:
                 swap = await self.jupiter.buy(mint, self.size_sol)
@@ -268,21 +331,39 @@ class PaperTrader:
                 self._token_amounts[mint] = swap.output_amount
                 logs.journal("buy", ca=mint, sig=swap.signature,
                              output_amount=swap.output_amount)
+                # Real fill price (SOL/token) from the executed swap, not the
+                # feed tick — decimals come from the RPC mint account.
+                decimals = await self.jupiter.token_decimals(mint)
+                if decimals is not None and swap.output_amount > 0:
+                    token_amt = swap.output_amount / (10**decimals)
+                    if token_amt > 0:
+                        entry_px = self.size_sol / token_amt
                 logger.info("LIVE BUY %s @ %.12g SOL (sig=%s)",
-                            mint, price, swap.signature[:16])
+                            mint, entry_px, swap.signature[:16])
             pos = Position(
-                ca=mint, name="", signal_time=0.0, size_sol=self.size_sol,
+                ca=mint,
+                name=self._names.get(mint, sig.name if sig else ""),
+                signal_time=sig.unixtime if sig else 0.0,
+                size_sol=self.size_sol,
                 take_profit=self.take_profit, stop_loss=self.stop_loss,
                 timeout_s=self.timeout_s,
+                price_stale_s=self.price_stale_s,
+                timeout_stale_grace_s=self.timeout_stale_grace_s,
+                max_tick_mult=self.max_tick_mult,
             )
             pos.entry_time = now
-            pos.entry_px = price
-            pos.peak_px = price
+            pos.entry_px = entry_px
+            pos.peak_px = entry_px
+            pos.last_px = entry_px
+            pos.last_tick_s = now
             self.open[mint] = pos
-            logger.info("OPEN %s @ %.12g SOL", mint, price)
-            logs.journal("open", ca=mint, entry_px=price)
+            logger.info("OPEN %s @ %.12g SOL", mint, entry_px)
+            logs.journal("open", ca=mint, entry_px=entry_px)
             if self.notifier is not None:
-                await self.notifier.send_open(mint, self._names.get(mint, ""), price)
+                await self.notifier.send_open(
+                    mint, self._names.get(mint, ""), entry_px,
+                    balance_before=balance_before,
+                )
             self._save()
             return
 
@@ -306,6 +387,11 @@ class PaperTrader:
         if not self.gate_open:
             logger.info("SKIP %s (%s): gate closed", sig.ca, sig.name)
             logs.journal("skip", ca=sig.ca, name=sig.name, reason="gate_closed")
+            return
+        if len(self.open) >= self.max_positions:
+            logger.info("SKIP %s (%s): at max positions (%d)",
+                        sig.ca, sig.name, self.max_positions)
+            logs.journal("skip", ca=sig.ca, name=sig.name, reason="max_positions")
             return
         # Arm-time pool gate: reject when DexPaprika *proves* the pool is
         # dead/empty (fail-open on API errors). Also apply the signal's own
@@ -352,8 +438,23 @@ class PaperTrader:
 
     # --------------------------------------------------------------- reporting
     def balance(self) -> float:
-        """Current paper balance = starting balance + realized PnL (SOL)."""
-        return self.start_balance_sol + self._realized_pnl()
+        """Current available balance (SOL).
+
+        - **Paper mode**: ``start_balance + realized PnL`` minus the SOL still
+          committed to open positions (deducted on open, returned on close).
+        - **Live mode**: the real wallet SOL balance fetched from the RPC
+          (cached; refreshed by :meth:`run_sweep`). No deduction here — the
+          wallet already reflects what was spent on buys.
+        """
+        if self.jupiter is not None and self.jupiter.live:
+            if self._live_balance_sol is not None:
+                return self._live_balance_sol
+            return self.start_balance_sol
+        return self.start_balance_sol + self._realized_pnl() - self._allocated()
+
+    def _allocated(self) -> float:
+        """SOL committed to currently-open paper positions."""
+        return sum(p.size_sol for p in self.open.values())
 
     def _realized_pnl(self) -> float:
         return sum(p.pnl_sol for p in self.closed)
@@ -370,6 +471,8 @@ class PaperTrader:
             "avg_mult": (sum(results) / len(results)) if results else 0.0,
             "pnl_sol": self._realized_pnl(),
             "balance_sol": self.balance(),
+            "allocated_sol": self._allocated(),
+            "max_positions": self.max_positions,
             "gate_open": self.gate_open,
             "mode": "LIVE" if (self.jupiter is not None and self.jupiter.live) else "PAPER",
             "quote_gate": self.jupiter.quote_summary() if self.jupiter is not None else "disabled",

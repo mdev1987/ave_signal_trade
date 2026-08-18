@@ -91,7 +91,8 @@ class Settings:
 
     # --- trading ---------------------------------------------------------
     position_size_sol: float = 0.1
-    start_balance_sol: float = 10.0
+    start_balance_sol: float = 2.0
+    max_positions: int = 5
     take_profit: float = 4.0
     stop_loss: float = 0.3
     timeout_s: float = 3600.0
@@ -99,6 +100,12 @@ class Settings:
     channel: str = "@AveSolanaTokenScanner"
     checkpoint_file: str = "paper_positions.json"
     backfill_limit: int = 200
+    # Price sanity + staleness guards (entry/exit marks):
+    min_entry_px: float = 1e-11       # reject entry prices below this (dust)
+    max_entry_px: float = 1e-3        # reject entry prices above this (junk)
+    price_stale_s: float = 120.0      # last tick older than this is stale
+    timeout_stale_grace_s: float = 300.0  # max extra wait for a fresh tick
+    max_tick_mult: float = 1e5        # ticks beyond this multiple of entry are noise
     # Entry guards (wired from .env; the channel's own snapshot is used for
     # the mcap/liq filters — these gates run at arm/entry time):
     min_liquidity_usd: float = 4000.0      # reject signals below this liq
@@ -147,7 +154,8 @@ class Settings:
         """Build settings from a parsed env dict (see :func:`load_settings`)."""
         return cls(
             position_size_sol=get_float(env, "POSITION_SIZE_SOL", 0.1),
-            start_balance_sol=get_float(env, "START_BALANCE_SOL", 10.0),
+            start_balance_sol=get_float(env, "START_BALANCE_SOL", 2.0),
+            max_positions=get_int(env, "MAX_POSITIONS", 5),
             take_profit=get_float(env, "TAKE_PROFIT", 4.0),
             stop_loss=get_float(env, "STOP_LOSS", 0.3),
             timeout_s=get_float(env, "TIMEOUT_S", 3600.0),
@@ -155,6 +163,11 @@ class Settings:
             channel=get(env, "TELEGRAM_CHANNEL", "@AveSolanaTokenScanner"),
             checkpoint_file=get(env, "CHECKPOINT_FILE", "paper_positions.json"),
             backfill_limit=get_int(env, "BACKFILL_LIMIT", 200),
+            min_entry_px=get_float(env, "MIN_ENTRY_PX", 1e-11),
+            max_entry_px=get_float(env, "MAX_ENTRY_PX", 1e-3),
+            price_stale_s=get_float(env, "PRICE_STALE_S", 120.0),
+            timeout_stale_grace_s=get_float(env, "TIMEOUT_STALE_GRACE_S", 300.0),
+            max_tick_mult=get_float(env, "MAX_TICK_MULT", 1e5),
             min_liquidity_usd=get_float(env, "MIN_LIQUIDITY_USD", 4000.0),
             entry_latency_s=get_float(env, "ENTRY_LATENCY_S", 2.0),
             liq_confirm_window_s=get_float(env, "LIQ_CONFIRM_WINDOW_S", 10.0),
@@ -198,6 +211,7 @@ class Settings:
         pairs = [
             ("POSITION_SIZE_SOL", f"{self.position_size_sol:g}"),
             ("START_BALANCE_SOL", f"{self.start_balance_sol:g}"),
+            ("MAX_POSITIONS", str(self.max_positions)),
             ("TAKE_PROFIT", f"{self.take_profit:g}"),
             ("STOP_LOSS", f"{self.stop_loss:g}"),
             ("TIMEOUT_S", f"{self.timeout_s:g}"),
@@ -205,6 +219,11 @@ class Settings:
             ("TELEGRAM_CHANNEL", self.channel),
             ("CHECKPOINT_FILE", self.checkpoint_file),
             ("BACKFILL_LIMIT", str(self.backfill_limit)),
+            ("MIN_ENTRY_PX", f"{self.min_entry_px:g}"),
+            ("MAX_ENTRY_PX", f"{self.max_entry_px:g}"),
+            ("PRICE_STALE_S", f"{self.price_stale_s:g}"),
+            ("TIMEOUT_STALE_GRACE_S", f"{self.timeout_stale_grace_s:g}"),
+            ("MAX_TICK_MULT", f"{self.max_tick_mult:g}"),
             ("DRY_RUN", "true" if self.dry_run else "false"),
             ("PRIVATE_KEY", self.private_key),
             ("JUPITER_API_KEY", self.jupiter_api_key),

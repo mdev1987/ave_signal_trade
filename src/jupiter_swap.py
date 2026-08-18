@@ -38,6 +38,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 from solders.keypair import Keypair
@@ -154,6 +155,9 @@ class JupiterSwap:
         self._sell_slippage_escalation = config.get_csv_ints(
             env, "SELL_SLIPPAGE_ESCALATION", SELL_SLIPPAGE_ESCALATION
         )
+        # RPC used for real-wallet reads (getBalance, token decimals). Only
+        # ever queried in live mode — never in paper/dry-run.
+        self._rpc_url = self._build_rpc_url(env)
 
         key = private_key or config.get(env, "PRIVATE_KEY")
         self._keypair: Keypair | None = None
@@ -209,6 +213,61 @@ class JupiterSwap:
     def ready(self) -> bool:
         """True when we can quote/sign (paper mode uses a throwaway keypair)."""
         return self._keypair is not None or self._paper_quoting
+
+    @property
+    def wallet_pubkey(self) -> str | None:
+        """The live wallet's public key (None in paper mode)."""
+        return str(self._keypair.pubkey()) if self._keypair is not None else None
+
+    def _build_rpc_url(self, env: dict[str, str]) -> str:
+        """Pick an RPC endpoint for live wallet reads (never used in paper)."""
+        rpc = config.get(env, "SOLANA_RPC_URL") or config.get(env, "RPC_URL")
+        if rpc:
+            return rpc
+        base = config.get(env, "HELIUS_BASE_URL", "https://mainnet.helius-rpc.com")
+        keys = [k.strip() for k in config.get(env, "HELIUS_API_KEYS", "").split(",") if k.strip()]
+        if keys:
+            return f"{base.rstrip('/')}/?api-key={keys[0]}"
+        return "https://api.mainnet-beta.solana.com"
+
+    async def _rpc(self, method: str, params: list) -> Any:
+        """POST a JSON-RPC call to the configured RPC (live wallet reads only)."""
+        resp = await self._client.post(
+            self._rpc_url,
+            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if "error" in data:
+            raise JupiterError(f"rpc {method}: {data['error']}")
+        return data.get("result")
+
+    async def balance_sol(self) -> float | None:
+        """Return the live wallet's SOL balance, or None on any failure."""
+        if self._keypair is None:
+            return None
+        try:
+            result = await self._rpc("getBalance", [str(self._keypair.pubkey())])
+            return float(result.get("value", 0)) / 1e9
+        except Exception as e:  # noqa: BLE001
+            log.warning("balance_sol failed: %s", e)
+            return None
+
+    async def token_decimals(self, mint: str) -> int | None:
+        """Return the token's decimal count via RPC (live entry pricing)."""
+        try:
+            result = await self._rpc(
+                "getParsedAccountInfo", [mint, {"encoding": "jsonParsed"}]
+            )
+            info = (result or {}).get("value")
+            if info is not None:
+                data = info.get("data", {})
+                if isinstance(data, dict):
+                    parsed = data.get("parsed", {})
+                    return int(parsed.get("info", {}).get("decimals"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("token_decimals %s failed: %s", mint, e)
+        return None
 
     def quote_summary(self) -> str:
         """One-line quote-gate + latency summary (avg/max/p50/p95)."""

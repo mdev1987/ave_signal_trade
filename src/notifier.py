@@ -65,14 +65,20 @@ class TelegramNotifier:
         if not self._enabled or self._bot is None:
             log.debug("telegram disabled — dropping: %s", text[:80])
             return
-        try:
-            rendered, entities = telegramify_markdown.convert(text, latex_escape=False)
-            tg_entities = self._to_tg_entities(entities)
-            await self._bot.send_message(
-                chat_id=chat_id, text=rendered, entities=tg_entities
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("telegram send failed: %s", exc)
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                rendered, entities = telegramify_markdown.convert(text, latex_escape=False)
+                tg_entities = self._to_tg_entities(entities)
+                await self._bot.send_message(
+                    chat_id=chat_id, text=rendered, entities=tg_entities
+                )
+                return
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                log.warning("telegram send failed (attempt %d): %s", attempt + 1, exc)
+                await asyncio.sleep(2 * (attempt + 1))
+        log.warning("telegram send giving up after retries: %s", last_exc)
 
     @staticmethod
     def _to_tg_entities(items) -> list[TGMessageEntity]:
@@ -126,12 +132,17 @@ class TelegramNotifier:
             f"{SEP} Snipes `{snipes}` {SEP} MCap `${mcap_usd:,.0f}`"
         )
 
-    async def send_open(self, ca: str, name: str, price: float) -> None:
+    async def send_open(
+        self, ca: str, name: str, price: float, balance_before: float | None = None
+    ) -> None:
         """Position opened on the first live buy event."""
+        bal = ""
+        if balance_before is not None:
+            bal = f"\n{SEP} Balance `{balance_before:.4f}` SOL"
         await self._send(
             f"{ICONS['open']} **OPEN** `{name}`\n"
             f"{self._short(ca)}\n"
-            f"{SEP} Entry `{price:.12g}` SOL"
+            f"{SEP} Entry `{price:.12g}` SOL{bal}"
         )
 
     async def send_close(
@@ -142,16 +153,25 @@ class TelegramNotifier:
         mult: float,
         pnl_sol: float,
         hold_s: float | None = None,
+        exit_px: float | None = None,
+        balance_before: float | None = None,
     ) -> None:
         """Position closed (tp / sl / timeout) with simulated PnL."""
         icon = ICONS.get(reason, "💰")
         card = ICONS["close"] if pnl_sol >= 0 else ICONS["sl"]
         s = "+" if pnl_sol >= 0 else ""
         held = f" {SEP} Held `{hold_s:.0f}s`" if hold_s is not None else ""
+        bal = ""
+        if balance_before is not None:
+            bal = f" {SEP} Balance `{balance_before:.4f}` SOL"
+        exit_line = ""
+        if exit_px is not None:
+            exit_line = f"\n{SEP} Exit `{exit_px:.12g}` SOL"
         await self._send(
             f"{card} **CLOSE {reason.upper()}** {icon}\n"
             f"`{(ca or '')[:10]}…`\n"
-            f"{SEP} Mult `{mult:.2f}x` {SEP} PnL `{s}{pnl_sol:.4f} SOL`{held}"
+            f"{SEP} Mult `{mult:.2f}x` {SEP} PnL `{s}{pnl_sol:.4f} SOL`{held}{bal}"
+            f"{exit_line}"
         )
 
     async def send_summary(self, summary: dict[str, Any]) -> None:
