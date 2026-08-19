@@ -116,13 +116,16 @@ ExecStart=$APP_DIR/.venv/bin/python main.py trade
 # (telegram /stop or SIGTERM finishing in-flight trades) stays stopped.
 Restart=on-failure
 RestartSec=5
+# Bound the bot's memory so a leak/OOM takes down the service (and is then
+# auto-restarted by Restart=on-failure) instead of the whole 4G host.
+MemoryMax=2500M
 Environment=PYTHONUNBUFFERED=1
 # optional: match the local log timestamps
 # Environment=TZ=Asia/Tehran
 StandardOutput=journal
 StandardError=journal
-# graceful /stop waits up to ~60s for in-flight trades to finish
-TimeoutStopSec=70
+# graceful /stop waits for in-flight trades to finish + sends the stop card
+TimeoutStopSec=120
 
 [Install]
 WantedBy=multi-user.target
@@ -134,6 +137,16 @@ UNIT
   echo
   echo "--- log tail ---"
   tail -n 4 "$APP_DIR/bot_logs/bot.log" 2>/dev/null || true
+  echo
+  # Install the wedge-recovery watchdog into crontab even under systemd:
+  # Restart=on-failure never restarts a *hung* process, so the watchdog's
+  # stale-log check + `systemctl restart` is the safety net for that.
+  if command -v crontab >/dev/null 2>&1; then
+    ( crontab -l 2>/dev/null; \
+      echo "*/5 * * * * $APP_DIR/scripts/watchdog.sh $APP_DIR"; \
+      echo "@reboot $APP_DIR/scripts/watchdog.sh $APP_DIR" ) | crontab -
+    echo "watchdog installed in crontab (stale-log wedge recovery every 5 min)"
+  fi
   echo
   echo "DONE. Commands:  systemctl status|restart|stop ave-signal-trade   |   journalctl -u ave-signal-trade -e"
 else

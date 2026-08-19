@@ -75,9 +75,9 @@ stop() {
   touch "$STOP_MARKER"
   pkill -TERM -f "[m]ain.py trade" 2>/dev/null
   # Graceful shutdown can take up to SHUTDOWN_GRACE_S (~60s) for in-flight
-  # trades; wait that long so the final "Bot Stopped" card is sent before
-  # force-killing anything still alive (matches systemd TimeoutStopSec=70).
-  for _ in $(seq 1 70); do
+  # trades + sending the final card; wait that long so the "Bot Stopped" card
+  # is sent before force-killing anything still alive (matches TimeoutStopSec).
+  for _ in $(seq 1 120); do
     bot_alive || break
     sleep 1
   done

@@ -97,6 +97,8 @@ class Settings:
     stop_loss: float = 0.3
     timeout_s: float = 3600.0
     shutdown_grace_s: int = 60
+    health_timeout_s: int = 300   # no sweep progress this long -> force exit
+    checkpoint_save_s: float = 300.0  # periodic checkpoint flush (positions)
     channel: str = "@AveSolanaTokenScanner"
     checkpoint_file: str = "paper_positions.json"
     backfill_limit: int = 200
@@ -141,6 +143,7 @@ class Settings:
     pumpapi_wss: str = "wss://stream.pumpapi.io/"
     pumpapi_reconnect_s: float = 3.0
     price_wait_timeout_s: float = 30.0
+    pumpapi_recv_timeout_s: float = 90.0  # wedged recv -> reconnect
 
     # --- telegram bot / session ------------------------------------------
     bot_token: str = ""
@@ -160,6 +163,8 @@ class Settings:
             stop_loss=get_float(env, "STOP_LOSS", 0.3),
             timeout_s=get_float(env, "TIMEOUT_S", 3600.0),
             shutdown_grace_s=get_int(env, "SHUTDOWN_GRACE_S", 60),
+            health_timeout_s=get_int(env, "HEALTH_TIMEOUT_S", 300),
+            checkpoint_save_s=get_float(env, "CHECKPOINT_SAVE_S", 300.0),
             channel=get(env, "TELEGRAM_CHANNEL", "@AveSolanaTokenScanner"),
             checkpoint_file=get(env, "CHECKPOINT_FILE", "paper_positions.json"),
             backfill_limit=get_int(env, "BACKFILL_LIMIT", 200),
@@ -199,6 +204,7 @@ class Settings:
             pumpapi_wss=get(env, "PUMPAPI_WSS", "wss://stream.pumpapi.io/"),
             pumpapi_reconnect_s=get_float(env, "PUMPAPI_RECONNECT_S", 3.0),
             price_wait_timeout_s=get_float(env, "PRICE_WAIT_TIMEOUT_S", 30.0),
+            pumpapi_recv_timeout_s=get_float(env, "PUMPAPI_RECV_TIMEOUT_S", 90.0),
             bot_token=get(env, "BOT_TOKEN", ""),
             chat_id=get(env, "CHAT_ID", ""),
             telegram_api_id=get(env, "TELEGRAM_API_ID", ""),
@@ -216,6 +222,8 @@ class Settings:
             ("STOP_LOSS", f"{self.stop_loss:g}"),
             ("TIMEOUT_S", f"{self.timeout_s:g}"),
             ("SHUTDOWN_GRACE_S", str(self.shutdown_grace_s)),
+            ("HEALTH_TIMEOUT_S", str(self.health_timeout_s)),
+            ("CHECKPOINT_SAVE_S", f"{self.checkpoint_save_s:g}"),
             ("TELEGRAM_CHANNEL", self.channel),
             ("CHECKPOINT_FILE", self.checkpoint_file),
             ("BACKFILL_LIMIT", str(self.backfill_limit)),
@@ -238,6 +246,7 @@ class Settings:
             ("PUMPAPI_WSS", self.pumpapi_wss),
             ("PUMPAPI_RECONNECT_S", f"{self.pumpapi_reconnect_s:g}"),
             ("PRICE_WAIT_TIMEOUT_S", f"{self.price_wait_timeout_s:g}"),
+            ("PUMPAPI_RECV_TIMEOUT_S", f"{self.pumpapi_recv_timeout_s:g}"),
             ("BOT_TOKEN", self.bot_token),
             ("CHAT_ID", self.chat_id),
             ("TELEGRAM_API_ID", self.telegram_api_id),

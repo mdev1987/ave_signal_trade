@@ -9,12 +9,15 @@ WorkingDirectory=/home/mdev/Programming/ave_signal_trade
 ExecStart=/home/mdev/Programming/ave_signal_trade/.venv/bin/python main.py trade
 Restart=always
 RestartSec=5
+# Bound the bot's memory so a leak/OOM takes down the service (and is then
+# auto-restarted) instead of the whole 4G host.
+MemoryMax=2500M
 Environment=PYTHONUNBUFFERED=1
 # bot.log is written by the bot's own FileHandler; stderr/tracebacks -> journald
 # (journalctl --user -u ave-signal-trade -e)
 StandardOutput=journal
 StandardError=journal
-TimeoutStopSec=60
+TimeoutStopSec=120
 
 [Install]
 WantedBy=default.target

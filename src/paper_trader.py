@@ -102,6 +102,8 @@ class PaperTrader:
         price_stale_s: float = 120.0,
         timeout_stale_grace_s: float = 300.0,
         max_tick_mult: float = 1e5,
+        checkpoint_save_s: float = 300.0,
+        progress_cb=None,
     ) -> None:
         self.feed = feed
         self.size_sol = size_sol
@@ -123,6 +125,8 @@ class PaperTrader:
         self.price_stale_s = price_stale_s
         self.timeout_stale_grace_s = timeout_stale_grace_s
         self.max_tick_mult = max_tick_mult
+        self.checkpoint_save_s = checkpoint_save_s
+        self._progress_cb = progress_cb
         self.gate_open = True
         self.open: dict[str, Position] = {}
         self.closed: list[Position] = []
@@ -133,6 +137,8 @@ class PaperTrader:
         self._live_balance_sol: float | None = None  # RPC wallet balance (live)
         self._rejects_total: int = 0
         self._last_reject: dict[str, Any] | None = None
+        self._last_save_s: float = 0.0
+        self._heartbeat_s: float = 0.0
         self._load()
 
     def note_reject(self, ca: str, name: str, reasons: list[str]) -> None:
@@ -154,6 +160,18 @@ class PaperTrader:
         for p in data.get("open", []):
             pos = self._from_dict(p)
             self.open[pos.ca] = pos
+            age = (time.time() - pos.entry_time) if pos.entry_time else 0.0
+            ttl = max(0.0, (pos.entry_time + pos.timeout_s) - time.time()) if pos.entry_time else 0.0
+            logger.info(
+                "RESTORE %s (%s) age=%.0fs ttl=%.0fs entry=%.12g last=%s "
+                "tp=%.2fx sl=%.2fx timeout=%.0fs",
+                pos.ca, pos.name, age, ttl, pos.entry_px or 0.0,
+                f"{pos.last_px:.12g}" if pos.last_px else "n/a",
+                pos.take_profit, pos.stop_loss, pos.timeout_s,
+            )
+        if self.open:
+            logger.info("restored %d open position(s) from checkpoint %s",
+                        len(self.open), self.checkpoint)
 
     def _save(self) -> None:
         """Persist open and closed positions to the checkpoint file."""
@@ -211,6 +229,25 @@ class PaperTrader:
                 reason = pos.update(now)  # reuse last_px; price=None
                 if reason:
                     await self._close_position(mint, pos, reason)
+            # Health heartbeat: proves the sweep loop is alive to the watchdog.
+            # Logging also keeps bot.log mtime fresh so scripts/watchdog.sh can
+            # detect a wedged loop (silent log) and restart the service.
+            if self._progress_cb is not None:
+                self._progress_cb()
+            if now - self._last_save_s >= self.checkpoint_save_s:
+                self._save()
+                self._last_save_s = now
+            if now - self._heartbeat_s >= 300.0:
+                self._heartbeat_s = now
+                oldest = min(
+                    (p.entry_time for p in self.open.values() if p.entry_time),
+                    default=0.0,
+                )
+                logger.info(
+                    "heartbeat: %d open, %d closed, balance=%.3f SOL, oldest_age=%.0fs",
+                    len(self.open), len(self.closed), self.balance(),
+                    (now - oldest) if oldest else 0.0,
+                )
 
     async def _refresh_live_balance(self) -> None:
         """Update the cached real-wallet balance (live mode only; paper no-op)."""

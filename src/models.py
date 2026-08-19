@@ -202,4 +202,10 @@ class Position:
             "mult": self.mult,
             "pnl_sol": self.pnl_sol,
             "size_sol": self.size_sol,
+            "take_profit": self.take_profit,
+            "stop_loss": self.stop_loss,
+            "timeout_s": self.timeout_s,
+            "price_stale_s": self.price_stale_s,
+            "timeout_stale_grace_s": self.timeout_stale_grace_s,
+            "max_tick_mult": self.max_tick_mult,
         }

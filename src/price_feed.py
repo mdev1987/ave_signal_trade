@@ -36,11 +36,13 @@ class PriceFeed:
         on_event: EventCallback | None = None,
         reconnect_s: float = 3.0,
         price_timeout_s: float = 30.0,
+        recv_timeout_s: float = 90.0,
     ) -> None:
         self.uri = uri
         self.on_event = on_event
         self.reconnect_s = reconnect_s
         self.price_timeout_s = price_timeout_s
+        self.recv_timeout_s = recv_timeout_s
         self.prices: dict[str, float] = {}
         self._new_trades: dict[str, asyncio.Event] = {}
         self._stop = asyncio.Event()
@@ -99,16 +101,34 @@ class PriceFeed:
                     continue
             recv_task = asyncio.create_task(ws.recv())
             stop_task = asyncio.create_task(self._stop.wait())
+            timeout_task = asyncio.create_task(asyncio.sleep(self.recv_timeout_s))
             await asyncio.wait(
-                {recv_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
+                {recv_task, stop_task, timeout_task},
+                return_when=asyncio.FIRST_COMPLETED,
             )
             if self._stop.is_set():
                 recv_task.cancel()
+                timeout_task.cancel()
                 break
-            try:
-                raw = recv_task.result()
-            except (websockets.ConnectionClosed, OSError) as e:
-                logger.warning("feed dropped (%s); reconnecting in %.0fs", e, self.reconnect_s)
+            if recv_task.done():
+                timeout_task.cancel()
+                try:
+                    raw = recv_task.result()
+                except (websockets.ConnectionClosed, OSError) as e:
+                    logger.warning("feed dropped (%s); reconnecting in %.0fs", e, self.reconnect_s)
+                    await ws.close()
+                    ws = None
+                    if not self._stop.is_set():
+                        await asyncio.sleep(self.reconnect_s)
+                    continue
+            else:
+                # recv got no data for recv_timeout_s — the socket is likely
+                # wedged (half-open). Cancel the pending read and reconnect so
+                # the loop can never stall on a dead connection.
+                timeout_task.cancel()
+                recv_task.cancel()
+                logger.warning("feed recv silent >%.0fs; reconnecting in %.0fs",
+                               self.recv_timeout_s, self.reconnect_s)
                 await ws.close()
                 ws = None
                 if not self._stop.is_set():

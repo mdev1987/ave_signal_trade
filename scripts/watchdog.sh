@@ -1,8 +1,13 @@
 #!/bin/bash
-# Health watchdog for the nohup supervisor (scripts/run_bot.sh).
+# Health watchdog for the bot, used by the nohup supervisor path AND as a
+# systemd backstop (catches a wedged process that Restart=on-failure misses).
 #
 # Usage:  bash scripts/watchdog.sh [APP_DIR]          (defaults to repo root)
 # Crontab:  */5 * * * * /opt/ave-signal-trade/scripts/watchdog.sh /opt/ave-signal-trade
+#
+# Liveness signal: bot_logs/bot.log mtime. The bot logs a heartbeat line
+# every 5 minutes even when idle, so a log silent for WATCHDOG_STALE_MIN is a
+# wedged loop (hang in I/O), not a quiet market.
 #
 # Watches two failure modes that _supervise.sh alone cannot survive:
 #   1. the whole supervisor (nohup shell) died — host reboot / OOM / terminal
@@ -16,7 +21,7 @@
 set -u
 APP_DIR="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 PIDFILE="$APP_DIR/.ave-super.pid"
-SUP_LOG="$APP_DIR/bot_logs/supervisor.log"
+BOT_LOG="$APP_DIR/bot_logs/bot.log"
 STOP_MARKER="$APP_DIR/bot_logs/.stop"
 STALE_MIN="${WATCHDOG_STALE_MIN:-10}"
 
@@ -31,11 +36,26 @@ alert() {
 
 supervisor_alive() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
 
-# If the systemd unit exists (even when stopped), defer to it entirely — the
-# crontab watchdog must never start a second instance alongside systemd, and a
-# `systemctl stop` must stay stopped.
+log_stale() {
+  [ -f "$BOT_LOG" ] && [ -n "$(find "$BOT_LOG" -mmin +"$STALE_MIN")" ]
+}
+
+# If the systemd unit exists, defer to it for start/stop decisions, but still
+# recover a *wedged* process: Restart=on-failure never restarts a hung bot.
+# A `systemctl stop` (inactive service) must stay stopped, so only restart
+# when the unit is still active but the log has gone silent.
 if command -v systemctl >/dev/null 2>&1 \
    && [ -e /etc/systemd/system/ave-signal-trade.service ]; then
+  if [ -f "$STOP_MARKER" ]; then
+    exit 0  # deliberately stopped — nothing to watch
+  fi
+  if systemctl is-active --quiet ave-signal-trade.service; then
+    if log_stale; then
+      echo "[$(date '+%F %T')] watchdog: systemd unit active but bot.log silent > ${STALE_MIN}m — restarting"
+      alert "⚠️ watchdog: bot wedged (log silent >${STALE_MIN}m) — restarting"
+      systemctl restart ave-signal-trade.service
+    fi
+  fi
   exit 0
 fi
 
@@ -44,8 +64,8 @@ if [ -f "$STOP_MARKER" ]; then
 fi
 
 if supervisor_alive; then
-  if [ -f "$SUP_LOG" ] && [ -n "$(find "$SUP_LOG" -mmin +"$STALE_MIN")" ]; then
-    echo "[$(date '+%F %T')] watchdog: log silent > ${STALE_MIN}m — restarting"
+  if log_stale; then
+    echo "[$(date '+%F %T')] watchdog: bot log silent > ${STALE_MIN}m — restarting"
     alert "⚠️ watchdog: bot log silent >${STALE_MIN}m — restarting"
     bash "$APP_DIR/scripts/run_bot.sh" restart
   fi

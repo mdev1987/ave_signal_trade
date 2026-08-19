@@ -29,8 +29,10 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -213,6 +215,7 @@ async def _trade_loop(
     feed = PriceFeed(
         uri=s.pumpapi_wss, reconnect_s=s.pumpapi_reconnect_s,
         price_timeout_s=s.price_wait_timeout_s,
+        recv_timeout_s=s.pumpapi_recv_timeout_s,
     )
     pool_checker = (
         PoolChecker(
@@ -229,6 +232,32 @@ async def _trade_loop(
         if s.pool_check_enabled
         else None
     )
+    # Health watchdog: if the sweep loop stops making progress (wedged event
+    # loop, hung I/O), force-exit so systemd/no-supervisor restarts it. The
+    # checkpoint is saved every CHECKPOINT_SAVE_S in run_sweep, so a forced
+    # exit loses at most a few minutes of position marks.
+    progress: dict[str, float] = {"last": time.monotonic()}
+
+    def _mark_progress() -> None:
+        progress["last"] = time.monotonic()
+
+    health_timeout_s = s.health_timeout_s
+    if health_timeout_s > 0:
+        def _health_watchdog() -> None:
+            while True:
+                time.sleep(health_timeout_s)
+                idle = time.monotonic() - progress["last"]
+                if idle >= health_timeout_s:
+                    logger.critical(
+                        "health watchdog: no sweep progress for %.0fs — forcing exit",
+                        idle,
+                    )
+                    os._exit(1)
+
+        threading.Thread(target=_health_watchdog, daemon=True).start()
+        logger.info("health watchdog armed (no-progress threshold %.0fs)",
+                    health_timeout_s)
+
     trader = PaperTrader(
         feed, size_sol=size_sol, checkpoint=checkpoint,
         jupiter=jupiter, notifier=notifier,
@@ -245,12 +274,24 @@ async def _trade_loop(
         price_stale_s=s.price_stale_s,
         timeout_stale_grace_s=s.timeout_stale_grace_s,
         max_tick_mult=s.max_tick_mult,
+        checkpoint_save_s=s.checkpoint_save_s,
+        progress_cb=_mark_progress,
     )
     seen_cas: set[str] = set()
     stop_event = asyncio.Event()
     logger.info("mode=%s gate=OPEN size=%.4f SOL max_positions=%d",
                 "LIVE" if (jupiter is not None and jupiter.live) else "PAPER",
                 size_sol, s.max_positions)
+
+    if trader.open:
+        await notifier.send_alert(
+            "Recovered open position(s) after restart",
+            "\n".join(
+                f"{SEP} `{(p.name or p.ca)[:14]}` mult `{p.mult or 0.0:.2f}x` "
+                f"ttl `{max(0.0, p.entry_time + p.timeout_s - time.time()):.0f}s`"
+                for p in trader.open.values()
+            ),
+        )
 
     # Backfill: arm signals already posted so positions can open immediately.
     # quiet=True: don't spam Telegram with hundreds of historical cards.
