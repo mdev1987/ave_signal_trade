@@ -385,14 +385,20 @@ class PaperTrader:
                 pos.exit_time = None
                 pos.exit_px = None
                 pos.exit_reason = None
-                pos.sell_fail_count += 1
+                transient = self._is_transient_sell_error(swap.error)
+                if not transient:
+                    pos.sell_fail_count += 1
                 pos.next_sell_retry = time.time() + self.sell_backoff_s
                 logs.journal("sell_failed", ca=mint, error=swap.error,
-                             sell_fail_count=pos.sell_fail_count)
-                logger.warning("LIVE SELL FAILED %s (%d/%d): %s — keeping position",
-                               mint, pos.sell_fail_count, self.max_sell_failures,
-                               swap.error)
-                if pos.sell_fail_count >= self.max_sell_failures:
+                             sell_fail_count=pos.sell_fail_count,
+                             transient=transient)
+                logger.warning(
+                    "LIVE SELL FAILED %s (%d/%d)%s: %s — keeping position",
+                    mint, pos.sell_fail_count, self.max_sell_failures,
+                    " [transient, not counted]" if transient else "",
+                    swap.error,
+                )
+                if not transient and pos.sell_fail_count >= self.max_sell_failures:
                     # Give up: the pool is drained or un-quotable. Write the
                     # position off at its last mark (or entry), free the slot
                     # and alert, instead of retrying a dead token forever.
@@ -467,6 +473,30 @@ class PaperTrader:
                 exit_px=pos.exit_px, balance_before=balance_before,
             )
         self._save()
+
+    @staticmethod
+    def _is_transient_sell_error(error: str) -> bool:
+        """Whether a failed sell was a transient API issue rather than a dead pool.
+
+        Only *permanent* failures (no route / no liquidity / un-quotable) should
+        count toward the give-up writeoff. HTTP 429 (rate limit), 5xx, and
+        timeout errors mean "try again", not "this token is worthless" — counting
+        them would abandon a perfectly sellable position after a rate-limit
+        storm. A rate-limited sell still gets the backoff so we don't hammer the
+        API, but it is not counted against the position.
+        """
+        if not error:
+            return False
+        low = error.lower()
+        if "429" in error or "too many requests" in low or "rate_limit" in low:
+            return True
+        if "timed out" in low or "timeout" in low:
+            return True
+        if "http 5" in low or "status 5" in low or "server" in low:
+            return True
+        # transient balance/route state (e.g. "insufficient" liquidity for the
+        # taker), not a drained pool
+        return "http 400" in low and "insufficient" in low
 
     # ------------------------------------------------------------------- events
     async def on_event(self, event: dict) -> None:
