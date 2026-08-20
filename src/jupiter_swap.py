@@ -468,7 +468,11 @@ class JupiterSwap:
         tx = VersionedTransaction.from_bytes(raw)
         if any(sig != b"\x00" * 64 for sig in tx.signatures):
             log.warning("transaction already partially signed")
-        signature = self._keypair.sign_message(tx.message.serialize())
+        # Jupiter returns v0 (lookup-table) transactions for most swaps; the
+        # message has __bytes__ (no .serialize()). bytes() works for both the
+        # legacy Message and MessageV0, so signing never depends on the layout.
+        message = bytes(tx.message)
+        signature = self._keypair.sign_message(message)
         signed = VersionedTransaction.populate(tx.message, [signature])
         return base64.b64encode(bytes(signed)).decode()
 
