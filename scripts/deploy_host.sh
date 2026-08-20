@@ -78,7 +78,9 @@ echo "== [5/5] process supervisor =="
 # in live mode — a second deploy must never paper over that by killing them.
 preflight_single_instance() {
   local count
-  count=$(pgrep -f "[m]ain.py trade" | wc -l)
+  # `pgrep` exits 1 when nothing matches; under `set -euo pipefail` that would
+  # kill the script, so swallow the failure and rely on the count alone.
+  count=$(pgrep -f "[m]ain.py trade" 2>/dev/null | wc -l || true)
   if [ "$count" -gt 1 ]; then
     echo "ERROR: $count bot instances are running ('pgrep -f \"main.py trade\"')."
     echo "Resolve the duplicate supervision manually (systemd unit, nohup"
