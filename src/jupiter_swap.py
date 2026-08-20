@@ -375,10 +375,16 @@ class JupiterSwap:
             return None
 
     async def token_decimals(self, mint: str) -> int | None:
-        """Return the token's decimal count via RPC (live entry pricing)."""
+        """Return the token's decimal count via RPC (live entry pricing).
+
+        Uses ``getAccountInfo`` with jsonParsed: ``getParsedAccountInfo`` is
+        not implemented on Helius RPC (returns ``-32601 Method not found`` on
+        both Gatekeeper beta and mainnet), while ``getAccountInfo`` returns the
+        same ``data.parsed.info.decimals`` shape.
+        """
         try:
             result = await self._rpc(
-                "getParsedAccountInfo", [mint, {"encoding": "jsonParsed"}]
+                "getAccountInfo", [mint, {"encoding": "jsonParsed"}]
             )
             info = (result or {}).get("value")
             if info is not None:
