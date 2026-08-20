@@ -415,6 +415,7 @@ class PaperTrader:
                     self._token_amounts.pop(mint, None)
                     self.closed.append(pos)
                     self._prune_closed()
+                    logs.log_trade(pos.to_dict())
                     if self.notifier is not None:
                         await self.notifier.send_alert(
                             "Sell gave up",
