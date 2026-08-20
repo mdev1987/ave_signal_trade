@@ -283,6 +283,10 @@ async def _trade_loop(
         checkpoint_save_s=s.checkpoint_save_s,
         paper_fill_sim=s.paper_fill_sim,
         sell_slippage_bps=s.jupiter_slippage_bps,
+        max_sell_failures=s.max_sell_failures,
+        sell_backoff_s=s.sell_backoff_s,
+        trail_activate_mult=s.trail_activate_mult,
+        trail_retrace_pct=s.trail_retrace_pct,
         progress_cb=_mark_progress,
     )
     seen_cas: set[str] = set()

@@ -105,6 +105,10 @@ class PaperTrader:
         checkpoint_save_s: float = 300.0,
         paper_fill_sim: bool = True,
         sell_slippage_bps: int = 500,
+        max_sell_failures: int = 6,
+        sell_backoff_s: float = 60.0,
+        trail_activate_mult: float = 2.0,
+        trail_retrace_pct: float = 0.5,
         progress_cb=None,
     ) -> None:
         self.feed = feed
@@ -131,6 +135,10 @@ class PaperTrader:
         self._progress_cb = progress_cb
         self.paper_fill_sim = paper_fill_sim
         self.sell_slippage_bps = sell_slippage_bps
+        self.max_sell_failures = max_sell_failures
+        self.sell_backoff_s = sell_backoff_s
+        self.trail_activate_mult = trail_activate_mult
+        self.trail_retrace_pct = trail_retrace_pct
         # Hard cap on one close operation (live sell: quote + execute + confirm).
         # Bounded so a hung sell can never stall the whole sweep loop.
         self._close_timeout_s = 90.0
@@ -225,7 +233,8 @@ class PaperTrader:
         for field in ("entry_time", "entry_px", "peak_px", "last_px", "last_tick_s",
                       "exit_time", "exit_px", "exit_reason", "take_profit", "stop_loss",
                       "timeout_s", "size_sol", "token_amount", "price_stale_s",
-                      "timeout_stale_grace_s", "max_tick_mult"):
+                      "timeout_stale_grace_s", "max_tick_mult", "sell_fail_count",
+                      "next_sell_retry", "trail_activate_mult", "trail_retrace_pct"):
             if d.get(field) is not None:
                 setattr(p, field, d[field])
         return p
@@ -324,6 +333,13 @@ class PaperTrader:
         """
         balance_before = self.balance()
         if self.jupiter is not None and self.jupiter.live:
+            # Sell backoff: after a failed sell, wait ``sell_backoff_s`` before
+            # retrying so a dead pool stops being hammered every sweep (the
+            # 15s sweep loop used to retry a drained token ~60x/hour).
+            if pos.next_sell_retry and time.time() < pos.next_sell_retry:
+                logger.info("SELL DEFER %s: backoff %.0fs left",
+                            mint, pos.next_sell_retry - time.time())
+                return
             # Prefer the persisted amount; fall back to the in-memory map (live
             # buy sets both) and finally to the real wallet balance via RPC so
             # a restart can never sell 0 tokens while marking a position closed.
@@ -336,6 +352,8 @@ class PaperTrader:
                     "position open to retry on the next sweep", mint,
                 )
                 logs.journal("sell_failed", ca=mint, error="unknown token amount")
+                pos.sell_fail_count += 1
+                pos.next_sell_retry = time.time() + self.sell_backoff_s
                 if self.notifier is not None:
                     await self.notifier.send_alert(
                         "Sell skipped", f"`{(mint or '')[:10]}…` — unknown token amount"
@@ -348,14 +366,47 @@ class PaperTrader:
                 pos.exit_time = None
                 pos.exit_px = None
                 pos.exit_reason = None
-                logs.journal("sell_failed", ca=mint, error=swap.error)
-                logger.warning("LIVE SELL FAILED %s: %s — keeping position",
-                               mint, swap.error)
+                pos.sell_fail_count += 1
+                pos.next_sell_retry = time.time() + self.sell_backoff_s
+                logs.journal("sell_failed", ca=mint, error=swap.error,
+                             sell_fail_count=pos.sell_fail_count)
+                logger.warning("LIVE SELL FAILED %s (%d/%d): %s — keeping position",
+                               mint, pos.sell_fail_count, self.max_sell_failures,
+                               swap.error)
+                if pos.sell_fail_count >= self.max_sell_failures:
+                    # Give up: the pool is drained or un-quotable. Write the
+                    # position off at its last mark (or entry), free the slot
+                    # and alert, instead of retrying a dead token forever.
+                    logger.error("SELL GIVE-UP %s: %d failures (%s) — writing "
+                                 "position off at last mark",
+                                 mint, pos.sell_fail_count, swap.error)
+                    pos.exit_time = time.time()
+                    pos.exit_px = pos.last_px if pos.last_px else pos.entry_px
+                    pos.exit_reason = "writeoff"
+                    logs.journal("close", ca=mint, reason="writeoff",
+                                 exit_px=pos.exit_px, pnl_sol=pos.pnl_sol,
+                                 sell_fail_count=pos.sell_fail_count)
+                    self.open.pop(mint, None)
+                    self._token_amounts.pop(mint, None)
+                    self.closed.append(pos)
+                    self._prune_closed()
+                    if self.notifier is not None:
+                        await self.notifier.send_alert(
+                            "Sell gave up",
+                            f"`{(mint or '')[:10]}…` — {self.max_sell_failures} "
+                            f"failed sells, pool drained. Written off at "
+                            f"{pos.exit_px:.3g} SOL/token."
+                        )
+                    self._save()
+                    return
                 if self.notifier is not None:
                     await self.notifier.send_alert(
                         "Sell failed", f"`{(mint or '')[:10]}…` — {swap.error}"
                     )
+                self._save()
                 return
+            pos.sell_fail_count = 0
+            pos.next_sell_retry = 0.0
             logs.journal("sell", ca=mint, sig=swap.signature,
                          output_amount=swap.output_amount)
             logger.info("LIVE SELL %s (sig=%s)", mint, swap.signature[:16])
@@ -450,6 +501,18 @@ class PaperTrader:
             self._signals_seen.discard(mint)
             balance_before = self.balance()
             entry_px = price
+            # Entry-time liquidity re-check (zero-latency, cache only): between
+            # the arm-time pool gate and the first trade the pool can drain
+            # (rug in progress). The cached verdict is fresh (<=60s) so this
+            # costs no network call; None means fail-open.
+            if (self.pool_checker is not None and self.jupiter is not None
+                    and self.jupiter.live):
+                verdict = self.pool_checker.cached_verdict(mint)
+                if verdict is not None and not verdict[0]:
+                    logger.info("SKIP %s entry: pool drained at entry (%s)",
+                                mint, verdict[1])
+                    logs.journal("skip_entry", ca=mint, reason=f"pool_drained:{verdict[1]}")
+                    return
             # Live mode: place the real buy before opening the position.
             if self.jupiter is not None and self.jupiter.live:
                 swap = await self.jupiter.buy(mint, self.size_sol)
@@ -496,6 +559,8 @@ class PaperTrader:
                 price_stale_s=self.price_stale_s,
                 timeout_stale_grace_s=self.timeout_stale_grace_s,
                 max_tick_mult=self.max_tick_mult,
+                trail_activate_mult=self.trail_activate_mult,
+                trail_retrace_pct=self.trail_retrace_pct,
             )
             pos.entry_time = now
             pos.entry_px = entry_px

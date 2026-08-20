@@ -155,6 +155,19 @@ class PoolChecker:
             return False, f"liquidity ${liq:.0f} < ${self.min_liquidity_usd:.0f}"
         return True, ""
 
+    def cached_verdict(self, ca: str) -> tuple[bool, str] | None:
+        """Return the cached pool verdict if fresh, else None (no verdict).
+
+        Used at entry time for a zero-latency re-check: between the arm-time
+        pool gate and the first buy trade the pool can be drained (a rug in
+        progress), and this catches it without another network call. None
+        means "no fresh data — don't reject" (fail-open, same as the arm gate).
+        """
+        cached = self._pool_cache.get(ca)
+        if cached and time.time() - cached[0] < 60:
+            return self._eval_liq(cached[1])
+        return None
+
     # ---------------------------------------------------------------- helius
     async def _helius_rpc(self, method: str, params: list) -> dict | None:
         """POST a JSON-RPC call to Helius, rotating API keys on 429."""

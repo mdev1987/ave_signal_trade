@@ -97,6 +97,16 @@ class Position:
     price_stale_s: float = 120.0   # last_px older than this is "stale"
     timeout_stale_grace_s: float = 300.0  # max extra wait for a fresh tick
     max_tick_mult: float = 1e5     # ticks beyond this multiple of entry are junk
+    # Sell robustness: consecutive failed live sells (e.g. a drained pool that
+    # Jupiter can no longer quote). When the count reaches the trader's cap the
+    # position is written off so a dead token never holds a slot or hammers
+    # the API. ``next_sell_retry`` backs off retries across sweeps.
+    sell_fail_count: int = 0
+    next_sell_retry: float = 0.0  # wall-clock: don't retry the sell before this
+    # Trailing stop: once the peak reaches ``trail_activate_mult`` x entry the
+    # stop ratchets to peak * (1 - trail_retrace_pct). 0 disables.
+    trail_activate_mult: float = 0.0
+    trail_retrace_pct: float = 0.5
 
     @property
     def mult(self) -> float | None:
@@ -151,6 +161,20 @@ class Position:
             self.exit_px = self.entry_px * self.take_profit  # fills at the limit
             self.exit_reason = "tp"
             return "tp"
+        # Trailing stop: once the price has reached trail_activate_mult x entry,
+        # ratchet a stop-loss up to (peak - retrace). A winner that reverses
+        # after a big run is locked out with gains intact instead of bleeding
+        # all the way back to the fixed stop or the 1h timeout.
+        if (self.trail_activate_mult > 0 and self.peak_px is not None
+                and self.peak_px >= self.entry_px * self.trail_activate_mult):
+            cur = price if price is not None else self.last_px
+            if cur is not None:
+                trail_stop = self.peak_px * (1.0 - self.trail_retrace_pct)
+                if cur <= trail_stop:
+                    self.exit_time = now
+                    self.exit_px = cur
+                    self.exit_reason = "trail"
+                    return "trail"
         # Stop-loss is a stop-market order: triggers on the CURRENT price
         # (never on the peak — the peak only moves up and can't cross below).
         cur = price if price is not None else self.last_px
@@ -210,4 +234,8 @@ class Position:
             "price_stale_s": self.price_stale_s,
             "timeout_stale_grace_s": self.timeout_stale_grace_s,
             "max_tick_mult": self.max_tick_mult,
+            "sell_fail_count": self.sell_fail_count,
+            "next_sell_retry": self.next_sell_retry,
+            "trail_activate_mult": self.trail_activate_mult,
+            "trail_retrace_pct": self.trail_retrace_pct,
         }

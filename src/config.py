@@ -143,6 +143,18 @@ class Settings:
     rpc_timeout_s: float = 12.0
     rpc_key_cooldown_s: float = 60.0
     sell_slippage_escalation: tuple[int, ...] = (200, 300, 500, 1000)
+    # Sell robustness: a drained pool keeps failing to quote forever. After
+    # ``max_sell_failures`` consecutive failures the position is written off
+    # (closed at its last mark, slot freed, Telegram alert) instead of
+    # retrying every sweep and occupying a position slot indefinitely.
+    max_sell_failures: int = 6
+    sell_backoff_s: float = 60.0  # min wait between failed sell retries
+    # Trailing stop: once the peak reaches ``trail_activate_mult`` x entry, a
+    # stop is ratcheted to peak * (1 - trail_retrace_pct) so a winner that
+    # reverses after the take-profit level is locked out with gains intact
+    # instead of bleeding back to the timeout exit. 0 disables the trail.
+    trail_activate_mult: float = 2.0
+    trail_retrace_pct: float = 0.5
     # Paper fill simulation: fill entries at the real Jupiter quote price
     # (slippage + price impact) and mark exits with a simulated sell that
     # applies sell slippage, instead of filling at the raw feed tick.
@@ -215,6 +227,10 @@ class Settings:
             sell_slippage_escalation=get_csv_ints(
                 env, "SELL_SLIPPAGE_ESCALATION", (200, 300, 500, 1000)
             ),
+            max_sell_failures=get_int(env, "MAX_SELL_FAILURES", 6),
+            sell_backoff_s=get_float(env, "SELL_BACKOFF_S", 60.0),
+            trail_activate_mult=get_float(env, "TRAIL_ACTIVATE_MULT", 2.0),
+            trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", 0.5),
             paper_fill_sim=get_bool(env, "PAPER_FILL_SIM", True),
             pumpapi_wss=get(env, "PUMPAPI_WSS", "wss://stream.pumpapi.io/"),
             pumpapi_reconnect_s=get_float(env, "PUMPAPI_RECONNECT_S", 3.0),
@@ -263,6 +279,10 @@ class Settings:
             ("RPC_TIMEOUT_S", f"{self.rpc_timeout_s:g}"),
             ("RPC_KEY_COOLDOWN_S", f"{self.rpc_key_cooldown_s:g}"),
             ("SELL_SLIPPAGE_ESCALATION", ",".join(str(v) for v in self.sell_slippage_escalation)),
+            ("MAX_SELL_FAILURES", str(self.max_sell_failures)),
+            ("SELL_BACKOFF_S", f"{self.sell_backoff_s:g}"),
+            ("TRAIL_ACTIVATE_MULT", f"{self.trail_activate_mult:g}"),
+            ("TRAIL_RETRACE_PCT", f"{self.trail_retrace_pct:g}"),
             ("PAPER_FILL_SIM", "true" if self.paper_fill_sim else "false"),
             ("PUMPAPI_WSS", self.pumpapi_wss),
             ("PUMPAPI_RECONNECT_S", f"{self.pumpapi_reconnect_s:g}"),
