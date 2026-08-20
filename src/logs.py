@@ -131,6 +131,16 @@ def journal(event: str, **fields) -> None:
         row = {"ts": time.time(), "event": event, **fields}
         with JOURNAL_LOG.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
+        # Rotate when the journal exceeds ~5 MB so a multi-week live run never
+        # fills the disk: keep the newest lines in journal.json, archive the
+        # rest once (journal.old), then truncate. Nothing reads the journal at
+        # startup, so rotation is safe at any point.
+        if JOURNAL_LOG.stat().st_size > 5 * 1024 * 1024:
+            old = JOURNAL_LOG.with_suffix(".old")
+            if old.exists():
+                old.unlink()
+            JOURNAL_LOG.rename(old)
+            JOURNAL_LOG.touch()
     except OSError:
         logging.getLogger("logs").exception("failed to write journal entry")
 

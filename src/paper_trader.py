@@ -131,6 +131,14 @@ class PaperTrader:
         self._progress_cb = progress_cb
         self.paper_fill_sim = paper_fill_sim
         self.sell_slippage_bps = sell_slippage_bps
+        # Hard cap on one close operation (live sell: quote + execute + confirm).
+        # Bounded so a hung sell can never stall the whole sweep loop.
+        self._close_timeout_s = 90.0
+        # Cap on closed positions kept in memory + checkpoint. Full history
+        # lives in trade_log.csv; only the last N are needed for /status and
+        # PnL rollup, so a multi-day run never grows the checkpoint unboundedly.
+        self._closed_keep = 200
+        self._closed_dropped_pnl = 0.0  # PnL of truncated positions (kept for /status)
         self.gate_open = True
         self.open: dict[str, Position] = {}
         self.closed: list[Position] = []
@@ -247,15 +255,38 @@ class PaperTrader:
         """
         while True:
             await asyncio.sleep(interval_s)
-            await self._refresh_live_balance()
+            # Mark progress BEFORE any network I/O: the watchdog's job is to
+            # catch a wedged event loop, and run_sweep is the only place that
+            # proves liveness. If a hung balance/sell call stalled the loop,
+            # marking here first means the watchdog fires on the NEXT check
+            # (300s) instead of never — and the waits below are hard-bounded
+            # anyway, so a single slow call can't block the whole sweep.
+            if self._progress_cb is not None:
+                self._progress_cb()
+            try:
+                await asyncio.wait_for(
+                    self._refresh_live_balance(), timeout=15.0
+                )
+            except (TimeoutError, Exception):  # noqa: BLE001
+                logger.warning("sweep: balance refresh timed out — continuing")
             now = time.time()
+            self._prune_stale_signal_state(now)
             for mint in list(self.open):
                 pos = self.open.get(mint)
                 if pos is None:
                     continue
                 reason = pos.update(now)  # reuse last_px; price=None
                 if reason:
-                    await self._close_position(mint, pos, reason)
+                    try:
+                        await asyncio.wait_for(
+                            self._close_position(mint, pos, reason),
+                            timeout=self._close_timeout_s,
+                        )
+                    except (TimeoutError, Exception):  # noqa: BLE001
+                        logger.error(
+                            "sweep: close of %s timed out after %.0fs — retrying "
+                            "next sweep", mint, self._close_timeout_s,
+                        )
             # Health heartbeat: proves the sweep loop is alive to the watchdog.
             # Logging also keeps bot.log mtime fresh so scripts/watchdog.sh can
             # detect a wedged loop (silent log) and restart the service.
@@ -350,6 +381,7 @@ class PaperTrader:
                 else:
                     logger.info("PAPER SELL %s: quote failed — tick mark", mint)
         self.closed.append(pos)
+        self._prune_closed()
         self.open.pop(mint, None)
         self._signals_seen.discard(mint)
         logger.info(
@@ -575,7 +607,49 @@ class PaperTrader:
         return sum(p.size_sol for p in self.open.values())
 
     def _realized_pnl(self) -> float:
-        return sum(p.pnl_sol for p in self.closed)
+        return self._closed_dropped_pnl + sum(p.pnl_sol for p in self.closed)
+
+    def _prune_closed(self) -> None:
+        """Truncate the in-memory closed list, folding dropped PnL into a rollup.
+
+        The full trade history lives in trade_log.csv; keeping the last
+        ``_closed_keep`` positions in memory + checkpoint bounds the checkpoint
+        file and restart load time on a long-running bot.
+        """
+        if len(self.closed) <= self._closed_keep:
+            return
+        drop = self.closed[: len(self.closed) - self._closed_keep]
+        self._closed_dropped_pnl += sum(p.pnl_sol for p in drop)
+        del self.closed[: len(self.closed) - self._closed_keep]
+
+    def _prune_stale_signal_state(self, now: float) -> None:
+        """Drop signal bookkeeping for mints that can never be entered.
+
+        ``_signals_info`` / ``_names`` / ``_entry_quotes`` / ``_signals_seen``
+        grow with every armed signal and were never evicted — a real leak on a
+        long-running bot. A signal older than ``timeout_s + entry latency`` can
+        no longer open a position (the pool will have moved on), so its state is
+        safe to drop; entry re-arms on a fresh signal if the token is re-posted.
+        """
+        if not self._signals_info:
+            return
+        horizon = self.timeout_s + self.entry_latency_s + 300.0
+        stale = [
+            mint for mint, sig in self._signals_info.items()
+            if now - sig.unixtime > horizon
+        ]
+        for mint in stale:
+            self._signals_info.pop(mint, None)
+            self._names.pop(mint, None)
+            self._entry_quotes.pop(mint, None)
+            self._signals_seen.discard(mint)
+        # Safety net: bound absolute size even if signals keep streaming.
+        if len(self._signals_info) > 2000:
+            for mint in list(self._signals_info)[: len(self._signals_info) - 2000]:
+                self._signals_info.pop(mint, None)
+                self._names.pop(mint, None)
+                self._entry_quotes.pop(mint, None)
+                self._signals_seen.discard(mint)
 
     def summary(self) -> dict[str, Any]:
         """Compute running trading statistics."""

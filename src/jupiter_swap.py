@@ -57,6 +57,17 @@ SELL_SLIPPAGE_ESCALATION = (200, 300, 500, 1000)
 # Recent-latency samples kept for p50/p95 percentiles in quote_summary().
 _LATENCY_SAMPLES_MAX = 500
 
+# Hard wall-clock bounds for every network call. httpx `timeout=` covers
+# connect/read/write/pool but NOT DNS resolution — a wedged resolver can hang
+# the coroutine past any httpx timeout, which froze the whole event loop for
+# 5+ minutes (heartbeat + Telegram polling + sweep all went silent). Every
+# network await is wrapped in asyncio.wait_for with these caps so a hung
+# socket/resolver can only stall the caller, never the loop.
+_DEFAULT_ORDER_TIMEOUT_S = 20.0
+_DEFAULT_EXECUTE_TIMEOUT_S = 60.0   # Jupiter lands + confirms the tx server-side
+_DEFAULT_RPC_TIMEOUT_S = 12.0
+_DEFAULT_QUOTE_CACHE_MAX = 500      # bounded cache: (mint, amount) -> QuoteResult
+
 
 class JupiterError(RuntimeError):
     """Raised when a swap order/execute fails and cannot be retried."""
@@ -158,6 +169,22 @@ class JupiterSwap:
         # RPC used for real-wallet reads (getBalance, token decimals). Only
         # ever queried in live mode — never in paper/dry-run.
         self._rpc_url = self._build_rpc_url(env)
+        # Rotating RPC key list (Helius) + index; rotation happens on 429 so a
+        # rate-limited key never wedges live wallet reads for long.
+        self._rpc_keys: list[str] = [
+            k.strip()
+            for k in config.get(env, "HELIUS_API_KEYS", "").split(",")
+            if k.strip()
+        ]
+        self._rpc_key_idx = 0
+        self._order_timeout_s = config.get_float(env, "JUPITER_ORDER_TIMEOUT_S",
+                                                 _DEFAULT_ORDER_TIMEOUT_S)
+        self._execute_timeout_s = config.get_float(env, "JUPITER_EXECUTE_TIMEOUT_S",
+                                                   _DEFAULT_EXECUTE_TIMEOUT_S)
+        self._rpc_timeout_s = config.get_float(env, "RPC_TIMEOUT_S",
+                                               _DEFAULT_RPC_TIMEOUT_S)
+        self._quote_cache_max = int(config.get(env, "QUOTE_CACHE_MAX",
+                                               _DEFAULT_QUOTE_CACHE_MAX))
 
         key = private_key or config.get(env, "PRIVATE_KEY")
         self._keypair: Keypair | None = None
@@ -230,17 +257,54 @@ class JupiterSwap:
             return f"{base.rstrip('/')}/?api-key={keys[0]}"
         return "https://api.mainnet-beta.solana.com"
 
+    def _rpc_endpoint(self) -> str:
+        """Current RPC endpoint, rotating the Helius key on each call.
+
+        A single key can be rate-limited (429) for a while; round-robining
+        spreads live wallet reads across every configured key so balance
+        refreshes keep succeeding instead of falling back to a stale cache.
+        Only applies when the endpoint is the Helius API-key URL; a custom
+        ``SOLANA_RPC_URL`` is used as-is.
+        """
+        if not self._rpc_keys or "helius-rpc.com" not in self._rpc_url:
+            return self._rpc_url
+        base = self._rpc_url.rsplit("/?", 1)[0]
+        key = self._rpc_keys[self._rpc_key_idx % len(self._rpc_keys)]
+        self._rpc_key_idx += 1
+        return f"{base}/?api-key={key}"
+
     async def _rpc(self, method: str, params: list) -> Any:
-        """POST a JSON-RPC call to the configured RPC (live wallet reads only)."""
-        resp = await self._client.post(
-            self._rpc_url,
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if "error" in data:
-            raise JupiterError(f"rpc {method}: {data['error']}")
-        return data.get("result")
+        """POST a JSON-RPC call to the configured RPC (live wallet reads only).
+
+        Wrapped in :func:`asyncio.wait_for` so a hung DNS resolver or a dead
+        socket can never block the event loop past ``_rpc_timeout_s``.
+        """
+        async def _post(url: str) -> Any:
+            resp = await self._client.post(
+                url,
+                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if "error" in data:
+                raise JupiterError(f"rpc {method}: {data['error']}")
+            return data.get("result")
+
+        for attempt in range(max(len(self._rpc_keys), 1)):
+            url = self._rpc_endpoint() if len(self._rpc_keys) > 1 else self._rpc_url
+            try:
+                return await asyncio.wait_for(
+                    _post(url), timeout=self._rpc_timeout_s
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 429 and len(self._rpc_keys) > 1:
+                    continue  # rotate key and retry
+                raise
+            except (TimeoutError, httpx.TimeoutException) as exc:
+                # Timeout is NOT retried per-key: the endpoint is unhealthy;
+                # fail fast so the sweep loop can advance and retry next round.
+                raise JupiterError(f"rpc {method} timed out: {exc}") from exc
+        raise JupiterError(f"rpc {method}: all RPC keys rate-limited (429)")
 
     async def balance_sol(self) -> float | None:
         """Return the live wallet's SOL balance, or None on any failure."""
@@ -365,9 +429,17 @@ class JupiterSwap:
         }
         if taker is not None:
             params["taker"] = str(taker)
-        resp = await self._client.get(
-            f"{self._base}/swap/v2/order", params=params, headers=self._headers
-        )
+
+        async def _get() -> httpx.Response:
+            return await self._client.get(
+                f"{self._base}/swap/v2/order", params=params, headers=self._headers
+            )
+
+        try:
+            resp = await asyncio.wait_for(_get(), timeout=self._order_timeout_s)
+        except (TimeoutError, httpx.TimeoutException) as exc:
+            raise JupiterError(f"order timed out after {self._order_timeout_s:.0f}s: {exc}",
+                               status=0) from exc
         if resp.status_code != 200:
             raise JupiterError(
                 f"order HTTP {resp.status_code}: {resp.text[:200]}",
@@ -408,9 +480,22 @@ class JupiterSwap:
             "signedTransaction": signed,
             "requestId": order.get("requestId", ""),
         }
-        resp = await self._client.post(
-            f"{self._base}/swap/v2/execute", json=body, headers=self._headers
-        )
+
+        async def _post() -> httpx.Response:
+            return await self._client.post(
+                f"{self._base}/swap/v2/execute", json=body, headers=self._headers
+            )
+
+        try:
+            resp = await asyncio.wait_for(_post(), timeout=self._execute_timeout_s)
+        except (TimeoutError, httpx.TimeoutException):
+            return SwapResult(
+                success=False,
+                signature="",
+                input_amount=0,
+                output_amount=0,
+                error=f"execute timed out after {self._execute_timeout_s:.0f}s",
+            )
         data = resp.json() if resp.content else {}
         if resp.status_code != 200 or data.get("status") != "Success":
             return SwapResult(
@@ -581,6 +666,18 @@ class JupiterSwap:
 
         if result is not None:
             self._quote_cache[key] = (time.monotonic(), result)
+            # Bound the cache: prune entries older than the TTL, then drop the
+            # oldest survivors if still over capacity. Without this the cache
+            # grows forever with every unique (mint, amount) evaluated, which
+            # contributed to the OOM kills seen in live operation.
+            if len(self._quote_cache) > self._quote_cache_max:
+                cutoff = time.monotonic() - self._quote_cache_s
+                stale = [k for k, (ts, _) in self._quote_cache.items() if ts < cutoff]
+                for k in stale:
+                    self._quote_cache.pop(k, None)
+            if len(self._quote_cache) > self._quote_cache_max:
+                for k in list(self._quote_cache)[: max(len(self._quote_cache) - self._quote_cache_max, 0)]:
+                    self._quote_cache.pop(k, None)
         return result
 
     # ------------------------------------------------------------- high level

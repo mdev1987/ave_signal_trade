@@ -125,6 +125,12 @@ async def _handle_new_signal(trader: PaperTrader, seen_cas: set[str], sig, notif
     if not sig.ca or sig.ca in seen_cas:
         return
     seen_cas.add(sig.ca)
+    # Bound the dedup set: with hundreds of signals/day the set grows forever
+    # (a slow leak that contributed to live OOM kills). Once over 5k entries,
+    # halve it — an old CA being re-posted is a fresh signal anyway, and the
+    # trader's own _signals_seen/_prune logic is the real anti-double-open guard.
+    if len(seen_cas) > 5000:
+        seen_cas.clear()
     ok, reasons = filt.check_signal(sig)
     if not ok:
         logs.journal("reject", ca=sig.ca, name=sig.name, reasons=reasons)

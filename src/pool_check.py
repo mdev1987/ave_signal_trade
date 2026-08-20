@@ -14,6 +14,7 @@ only happens when the APIs answer and the data is clearly bad:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -63,6 +64,23 @@ class PoolChecker:
         self._pool_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._dev_cache: dict[str, tuple[float, tuple[bool, str]]] = {}
         self._helius_idx = 0
+        # Bounded caches: every unique CA checked would otherwise stay cached
+        # forever (the pool cache TTL is 60s, dev-rep TTL 600s, but entries are
+        # never evicted). Cap both so long-running live mode stays flat.
+        self._cache_max = 2000
+
+    def _prune_cache(self) -> None:
+        """Evict old entries from the bounded caches when over capacity."""
+        for cache in (self._pool_cache, self._dev_cache):
+            if len(cache) <= self._cache_max:
+                continue
+            # Drop entries older than their TTL first, then the oldest survivors.
+            now = time.time()
+            stale = [k for k, (ts, _) in cache.items() if now - ts > 600]
+            for k in stale:
+                cache.pop(k, None)
+            while len(cache) > self._cache_max:
+                cache.pop(next(iter(cache)), None)
 
     async def close(self) -> None:
         """Release the HTTP client."""
@@ -79,10 +97,13 @@ class PoolChecker:
         if self.dex_paprika_key:
             headers["Authorization"] = f"Bearer {self.dex_paprika_key}"
         try:
-            r = await self._client.get(
-                f"{self.dex_paprika_base_url}/networks/solana/pools/search",
-                params={"token_address": ca, "limit": 1},
-                headers=headers,
+            r = await asyncio.wait_for(
+                self._client.get(
+                    f"{self.dex_paprika_base_url}/networks/solana/pools/search",
+                    params={"token_address": ca, "limit": 1},
+                    headers=headers,
+                ),
+                timeout=self.timeout_s + 2.0,
             )
             r.raise_for_status()
             res = r.json().get("results", [])
@@ -123,6 +144,7 @@ class PoolChecker:
                 break
             await _sleep(0.4)
         self._pool_cache[ca] = (time.time(), last or {})
+        self._prune_cache()
         return self._eval_liq(last or {})
 
     def _eval_liq(self, info: dict[str, Any]) -> tuple[bool, str]:
@@ -142,9 +164,12 @@ class PoolChecker:
             key = self.helius_api_keys[self._helius_idx % len(self.helius_api_keys)]
             self._helius_idx += 1
             try:
-                r = await self._client.post(
-                    f"{self.helius_base_url}/?api-key={key}",
-                    json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                r = await asyncio.wait_for(
+                    self._client.post(
+                        f"{self.helius_base_url}/?api-key={key}",
+                        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                    ),
+                    timeout=self.timeout_s + 2.0,
                 )
                 if r.status_code == 429:
                     continue
@@ -184,13 +209,13 @@ class PoolChecker:
         if age_h < self.dev_rep_min_age_hours:
             msg = f"age {age_h:.1f}h < {self.dev_rep_min_age_hours:.1f}h"
             self._dev_cache[ca] = (time.time(), (False, msg))
+            self._prune_cache()
             return False, f"token too young (age {age_h:.1f}h)"
         self._dev_cache[ca] = (time.time(), (True, ""))
+        self._prune_cache()
         return True, ""
 
 
 async def _sleep(s: float) -> None:
-    """Async sleep helper (kept import-free of asyncio at module top)."""
-    import asyncio
-
+    """Async sleep helper."""
     await asyncio.sleep(s)

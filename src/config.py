@@ -137,6 +137,10 @@ class Settings:
     jupiter_quote_cache_s: float = 30.0
     jupiter_quote_throttle_s: float = 1.0
     jupiter_quote_retry_delay_s: float = 1.0
+    jupiter_quote_cache_max: int = 500
+    jupiter_order_timeout_s: float = 20.0
+    jupiter_execute_timeout_s: float = 60.0
+    rpc_timeout_s: float = 12.0
     sell_slippage_escalation: tuple[int, ...] = (200, 300, 500, 1000)
     # Paper fill simulation: fill entries at the real Jupiter quote price
     # (slippage + price impact) and mark exits with a simulated sell that
@@ -202,6 +206,10 @@ class Settings:
             jupiter_quote_cache_s=get_float(env, "JUPITER_QUOTE_CACHE_S", 30.0),
             jupiter_quote_throttle_s=get_float(env, "JUPITER_QUOTE_THROTTLE_S", 1.0),
             jupiter_quote_retry_delay_s=get_float(env, "JUPITER_QUOTE_RETRY_DELAY_S", 1.0),
+            jupiter_quote_cache_max=get_int(env, "JUPITER_QUOTE_CACHE_MAX", 500),
+            jupiter_order_timeout_s=get_float(env, "JUPITER_ORDER_TIMEOUT_S", 20.0),
+            jupiter_execute_timeout_s=get_float(env, "JUPITER_EXECUTE_TIMEOUT_S", 60.0),
+            rpc_timeout_s=get_float(env, "RPC_TIMEOUT_S", 12.0),
             sell_slippage_escalation=get_csv_ints(
                 env, "SELL_SLIPPAGE_ESCALATION", (200, 300, 500, 1000)
             ),
@@ -247,6 +255,10 @@ class Settings:
             ("JUPITER_QUOTE_CACHE_S", f"{self.jupiter_quote_cache_s:g}"),
             ("JUPITER_QUOTE_THROTTLE_S", f"{self.jupiter_quote_throttle_s:g}"),
             ("JUPITER_QUOTE_RETRY_DELAY_S", f"{self.jupiter_quote_retry_delay_s:g}"),
+            ("JUPITER_QUOTE_CACHE_MAX", str(self.jupiter_quote_cache_max)),
+            ("JUPITER_ORDER_TIMEOUT_S", f"{self.jupiter_order_timeout_s:g}"),
+            ("JUPITER_EXECUTE_TIMEOUT_S", f"{self.jupiter_execute_timeout_s:g}"),
+            ("RPC_TIMEOUT_S", f"{self.rpc_timeout_s:g}"),
             ("SELL_SLIPPAGE_ESCALATION", ",".join(str(v) for v in self.sell_slippage_escalation)),
             ("PAPER_FILL_SIM", "true" if self.paper_fill_sim else "false"),
             ("PUMPAPI_WSS", self.pumpapi_wss),
