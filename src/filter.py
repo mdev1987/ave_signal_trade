@@ -1,11 +1,17 @@
 """Apply the data-backed filter to parsed signals.
 
-The base rules live in :data:`models.FILTER` and were tuned on 2026-08-13
-replay data (5210 outcomes): mcap $5-20K + Pumpfunamm + snipes>=3 + security
-score 0 achieved a ~60-64% win rate to a 3x target. The mcap band and snipes/
-security thresholds can be tightened per-deployment via ``FILTER_MCAP_USD_MIN``,
-``FILTER_MCAP_USD_MAX``, ``FILTER_SNIPES_MIN`` and ``FILTER_SEC_SCORE_MAX`` in
-``.env`` (read lazily by :func:`models.get_filter`).
+The base rules live in :data:`models.FILTER` and were re-tuned on 2026-08-13
+replay data with the HONEST engine semantics (``scripts/replay_tune.py``:
+fresh-quote entries, realized exits, dead-pool writeoffs): mcap $5-20K +
+Pumpfunamm + snipes>=3 + security score 0 gives n=105 trades/day, 32.4% of
+positions realize the 4x take-profit, EV ≈ +101% per trade, win-to-3x ≈ 33%.
+The edge is fat-tailed (median exit 1.49x; ~19% stop out at -70%; ~40% of
+pools die mid-hold and are written off at their last mark) — it is NOT a
+high-win-rate strategy. Single-day dataset: treat as directional evidence,
+not proof. The mcap band and snipes/security thresholds can be adjusted per
+deployment via ``FILTER_MCAP_USD_MIN``, ``FILTER_MCAP_USD_MAX``,
+``FILTER_SNIPES_MIN`` and ``FILTER_SEC_SCORE_MAX`` in ``.env`` (read lazily
+by :func:`models.get_filter`).
 """
 
 from __future__ import annotations
