@@ -93,6 +93,7 @@ class Position:
     stop_loss: float = 0.5
     timeout_s: float = 3600.0
     size_sol: float = 0.1
+    token_amount: int = 0  # raw token balance held (live mode, from the buy swap)
     price_stale_s: float = 120.0   # last_px older than this is "stale"
     timeout_stale_grace_s: float = 300.0  # max extra wait for a fresh tick
     max_tick_mult: float = 1e5     # ticks beyond this multiple of entry are junk
@@ -202,6 +203,7 @@ class Position:
             "mult": self.mult,
             "pnl_sol": self.pnl_sol,
             "size_sol": self.size_sol,
+            "token_amount": self.token_amount,
             "take_profit": self.take_profit,
             "stop_loss": self.stop_loss,
             "timeout_s": self.timeout_s,

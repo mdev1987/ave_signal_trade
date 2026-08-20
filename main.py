@@ -307,6 +307,10 @@ async def _trade_loop(
     feed.on_event = trader.on_event
     tg.on_signal(lambda sig: _handle_new_signal(trader, seen_cas, sig))
 
+    # Live mode: reconcile restored open positions against the real wallet
+    # before the sweep loop starts, so exits never sell a wrong/zero amount.
+    await trader._reconcile_token_amounts()
+
     # SIGTERM/SIGINT -> graceful stop (same path as /stop).
     loop = asyncio.get_running_loop()
     for signame in ("SIGTERM", "SIGINT"):

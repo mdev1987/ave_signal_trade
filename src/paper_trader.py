@@ -173,6 +173,28 @@ class PaperTrader:
             logger.info("restored %d open position(s) from checkpoint %s",
                         len(self.open), self.checkpoint)
 
+    async def _reconcile_token_amounts(self) -> None:
+        """Refresh live token amounts for restored open positions from the RPC.
+
+        After a restart the wallet's real balances are the source of truth:
+        the checkpoint may predate the persistence of ``token_amount`` or be
+        stale. This runs once at startup in live mode before the sweep loop
+        starts, so ``_close_position`` never sells a wrong or zero amount.
+        """
+        if self.jupiter is None or not self.jupiter.live or not self.open:
+            return
+        for mint, pos in list(self.open.items()):
+            balance = await self.jupiter.token_balance(mint)
+            if balance is None:
+                logger.warning("token reconcile %s: RPC unavailable — using "
+                               "checkpoint amount %d", mint, pos.token_amount)
+                continue
+            if balance != pos.token_amount:
+                logger.info("token reconcile %s: checkpoint=%d wallet=%d",
+                            mint, pos.token_amount, balance)
+            self._token_amounts[mint] = balance
+            pos.token_amount = balance
+
     def _save(self) -> None:
         """Persist open and closed positions to the checkpoint file."""
         if not self.checkpoint:
@@ -189,8 +211,8 @@ class PaperTrader:
         p = Position(ca=d["ca"], name=d.get("name", ""), signal_time=d.get("signal_time", 0.0))
         for field in ("entry_time", "entry_px", "peak_px", "last_px", "last_tick_s",
                       "exit_time", "exit_px", "exit_reason", "take_profit", "stop_loss",
-                      "timeout_s", "size_sol", "price_stale_s", "timeout_stale_grace_s",
-                      "max_tick_mult"):
+                      "timeout_s", "size_sol", "token_amount", "price_stale_s",
+                      "timeout_stale_grace_s", "max_tick_mult"):
             if d.get(field) is not None:
                 setattr(p, field, d[field])
         return p
@@ -266,29 +288,45 @@ class PaperTrader:
         """
         balance_before = self.balance()
         if self.jupiter is not None and self.jupiter.live:
-            amount = self._token_amounts.pop(mint, 0)
-            if amount > 0:
-                swap = await self.jupiter.sell(mint, amount)
-                if not swap.success:
-                    self._token_amounts[mint] = amount  # keep for retry
-                    pos.exit_time = None
-                    pos.exit_px = None
-                    pos.exit_reason = None
-                    logs.journal("sell_failed", ca=mint, error=swap.error)
-                    logger.warning("LIVE SELL FAILED %s: %s — keeping position",
-                                   mint, swap.error)
-                    if self.notifier is not None:
-                        await self.notifier.send_alert(
-                            "Sell failed", f"`{(mint or '')[:10]}…` — {swap.error}"
-                        )
-                    return
-                logs.journal("sell", ca=mint, sig=swap.signature,
-                             output_amount=swap.output_amount)
-                logger.info("LIVE SELL %s (sig=%s)", mint, swap.signature[:16])
-                proceeds_sol = swap.output_amount / 1e9
-                if pos.entry_px and proceeds_sol > 0:
-                    # Mark the exit so mult/pnl reflect the REAL sold proceeds.
-                    pos.exit_px = pos.entry_px * (proceeds_sol / pos.size_sol)
+            # Prefer the persisted amount; fall back to the in-memory map (live
+            # buy sets both) and finally to the real wallet balance via RPC so
+            # a restart can never sell 0 tokens while marking a position closed.
+            amount = pos.token_amount or self._token_amounts.pop(mint, 0)
+            if amount <= 0:
+                amount = await self.jupiter.token_balance(mint) or 0
+            if amount <= 0:
+                logger.error(
+                    "LIVE SELL SKIPPED %s: unknown token amount — keeping "
+                    "position open to retry on the next sweep", mint,
+                )
+                logs.journal("sell_failed", ca=mint, error="unknown token amount")
+                if self.notifier is not None:
+                    await self.notifier.send_alert(
+                        "Sell skipped", f"`{(mint or '')[:10]}…` — unknown token amount"
+                    )
+                return
+            self._token_amounts[mint] = amount
+            swap = await self.jupiter.sell(mint, amount)
+            if not swap.success:
+                self._token_amounts[mint] = amount  # keep for retry
+                pos.exit_time = None
+                pos.exit_px = None
+                pos.exit_reason = None
+                logs.journal("sell_failed", ca=mint, error=swap.error)
+                logger.warning("LIVE SELL FAILED %s: %s — keeping position",
+                               mint, swap.error)
+                if self.notifier is not None:
+                    await self.notifier.send_alert(
+                        "Sell failed", f"`{(mint or '')[:10]}…` — {swap.error}"
+                    )
+                return
+            logs.journal("sell", ca=mint, sig=swap.signature,
+                         output_amount=swap.output_amount)
+            logger.info("LIVE SELL %s (sig=%s)", mint, swap.signature[:16])
+            proceeds_sol = swap.output_amount / 1e9
+            if pos.entry_px and proceeds_sol > 0:
+                # Mark the exit so mult/pnl reflect the REAL sold proceeds.
+                pos.exit_px = pos.entry_px * (proceeds_sol / pos.size_sol)
         self.closed.append(pos)
         self.open.pop(mint, None)
         self._signals_seen.discard(mint)
@@ -382,6 +420,7 @@ class PaperTrader:
                 name=self._names.get(mint, sig.name if sig else ""),
                 signal_time=sig.unixtime if sig else 0.0,
                 size_sol=self.size_sol,
+                token_amount=self._token_amounts.get(mint, 0),
                 take_profit=self.take_profit, stop_loss=self.stop_loss,
                 timeout_s=self.timeout_s,
                 price_stale_s=self.price_stale_s,

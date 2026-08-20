@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 
 import websockets
@@ -25,9 +26,12 @@ class PriceFeed:
     Args:
         uri: WebSocket endpoint (default from config env ``PUMPAPI_WSS``).
         on_event: Optional async callback invoked for every raw event.
+        max_prices: Upper bound on the per-mint price cache (LRU eviction).
+            Keeps memory flat on the long-running live feed, where unique
+            mints accumulate without limit.
 
     Attributes:
-        prices: Latest per-mint price keyed by contract address.
+        prices: Latest per-mint price keyed by contract address (LRU-bounded).
     """
 
     def __init__(
@@ -37,13 +41,15 @@ class PriceFeed:
         reconnect_s: float = 3.0,
         price_timeout_s: float = 30.0,
         recv_timeout_s: float = 90.0,
+        max_prices: int = 20_000,
     ) -> None:
         self.uri = uri
         self.on_event = on_event
         self.reconnect_s = reconnect_s
         self.price_timeout_s = price_timeout_s
         self.recv_timeout_s = recv_timeout_s
-        self.prices: dict[str, float] = {}
+        self.max_prices = max_prices
+        self.prices: OrderedDict[str, float] = OrderedDict()
         self._new_trades: dict[str, asyncio.Event] = {}
         self._stop = asyncio.Event()
 
@@ -75,6 +81,10 @@ class PriceFeed:
         price = self._price_of(event)
         if mint and price and price > 0:
             self.prices[mint] = price
+            self.prices.move_to_end(mint)
+            if self.max_prices > 0:
+                while len(self.prices) > self.max_prices:
+                    self.prices.popitem(last=False)
             ev = self._new_trades.get(mint)
             if ev is not None:
                 ev.set()

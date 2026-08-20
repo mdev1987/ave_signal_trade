@@ -269,6 +269,34 @@ class JupiterSwap:
             log.warning("token_decimals %s failed: %s", mint, e)
         return None
 
+    async def token_balance(self, mint: str) -> int | None:
+        """Return the wallet's raw balance of ``mint`` via RPC.
+
+        Used to reconcile token amounts after a restart, so restored open
+        positions never sell a wrong (or zero) amount. Returns None on any
+        failure so callers can fall back to the persisted checkpoint value.
+        """
+        if self._keypair is None:
+            return None
+        try:
+            result = await self._rpc(
+                "getTokenAccountsByOwner",
+                [
+                    str(self._keypair.pubkey()),
+                    {"mint": mint},
+                    {"encoding": "jsonParsed"},
+                ],
+            )
+            accounts = (result or {}).get("value") or []
+            for acct in accounts:
+                parsed = (acct.get("account", {}).get("data") or {}).get("parsed") or {}
+                raw = parsed.get("info", {}).get("tokenAmount", {}).get("amount")
+                if raw is not None:
+                    return int(raw)
+        except Exception as e:  # noqa: BLE001
+            log.warning("token_balance %s failed: %s", mint, e)
+        return None
+
     def quote_summary(self) -> str:
         """One-line quote-gate + latency summary (avg/max/p50/p95)."""
         q = self._qstats
