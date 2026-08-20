@@ -275,6 +275,8 @@ async def _trade_loop(
         timeout_stale_grace_s=s.timeout_stale_grace_s,
         max_tick_mult=s.max_tick_mult,
         checkpoint_save_s=s.checkpoint_save_s,
+        paper_fill_sim=s.paper_fill_sim,
+        sell_slippage_bps=s.jupiter_slippage_bps,
         progress_cb=_mark_progress,
     )
     seen_cas: set[str] = set()

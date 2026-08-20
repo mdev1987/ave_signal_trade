@@ -138,6 +138,10 @@ class Settings:
     jupiter_quote_throttle_s: float = 1.0
     jupiter_quote_retry_delay_s: float = 1.0
     sell_slippage_escalation: tuple[int, ...] = (200, 300, 500, 1000)
+    # Paper fill simulation: fill entries at the real Jupiter quote price
+    # (slippage + price impact) and mark exits with a simulated sell that
+    # applies sell slippage, instead of filling at the raw feed tick.
+    paper_fill_sim: bool = True
 
     # --- price feed ------------------------------------------------------
     pumpapi_wss: str = "wss://stream.pumpapi.io/"
@@ -201,6 +205,7 @@ class Settings:
             sell_slippage_escalation=get_csv_ints(
                 env, "SELL_SLIPPAGE_ESCALATION", (200, 300, 500, 1000)
             ),
+            paper_fill_sim=get_bool(env, "PAPER_FILL_SIM", True),
             pumpapi_wss=get(env, "PUMPAPI_WSS", "wss://stream.pumpapi.io/"),
             pumpapi_reconnect_s=get_float(env, "PUMPAPI_RECONNECT_S", 3.0),
             price_wait_timeout_s=get_float(env, "PRICE_WAIT_TIMEOUT_S", 30.0),
@@ -243,6 +248,7 @@ class Settings:
             ("JUPITER_QUOTE_THROTTLE_S", f"{self.jupiter_quote_throttle_s:g}"),
             ("JUPITER_QUOTE_RETRY_DELAY_S", f"{self.jupiter_quote_retry_delay_s:g}"),
             ("SELL_SLIPPAGE_ESCALATION", ",".join(str(v) for v in self.sell_slippage_escalation)),
+            ("PAPER_FILL_SIM", "true" if self.paper_fill_sim else "false"),
             ("PUMPAPI_WSS", self.pumpapi_wss),
             ("PUMPAPI_RECONNECT_S", f"{self.pumpapi_reconnect_s:g}"),
             ("PRICE_WAIT_TIMEOUT_S", f"{self.price_wait_timeout_s:g}"),

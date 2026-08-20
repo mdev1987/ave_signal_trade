@@ -297,6 +297,25 @@ class JupiterSwap:
             log.warning("token_balance %s failed: %s", mint, e)
         return None
 
+    async def paper_sell_proceeds(self, mint: str, amount_raw: int, slippage_bps: int) -> int | None:
+        """Simulated sell proceeds (raw SOL) for paper mode — no signing.
+
+        Mirrors :meth:`sell`'s first attempt: quotes a token→SOL swap at
+        ``slippage_bps`` and returns the expected raw out amount. This is what
+        a live sell would net before execution, so paper exits reflect real
+        sell slippage instead of filling at the raw feed tick. Returns None on
+        any failure so the trader can fall back to a tick-based mark.
+        """
+        if self.live:
+            return None
+        try:
+            await self._quote_slot()
+            order = await self._order(mint, BASE_MINT, amount_raw, slippage_bps)
+            return int(order.get("outAmount") or order.get("actualOutAmount") or 0)
+        except Exception as e:  # noqa: BLE001
+            log.warning("paper_sell_proceeds %s failed: %s", mint, e)
+            return None
+
     def quote_summary(self) -> str:
         """One-line quote-gate + latency summary (avg/max/p50/p95)."""
         q = self._qstats

@@ -103,6 +103,8 @@ class PaperTrader:
         timeout_stale_grace_s: float = 300.0,
         max_tick_mult: float = 1e5,
         checkpoint_save_s: float = 300.0,
+        paper_fill_sim: bool = True,
+        sell_slippage_bps: int = 500,
         progress_cb=None,
     ) -> None:
         self.feed = feed
@@ -127,6 +129,8 @@ class PaperTrader:
         self.max_tick_mult = max_tick_mult
         self.checkpoint_save_s = checkpoint_save_s
         self._progress_cb = progress_cb
+        self.paper_fill_sim = paper_fill_sim
+        self.sell_slippage_bps = sell_slippage_bps
         self.gate_open = True
         self.open: dict[str, Position] = {}
         self.closed: list[Position] = []
@@ -134,6 +138,7 @@ class PaperTrader:
         self._signals_info: dict[str, Signal] = {}
         self._names: dict[str, str] = {}
         self._token_amounts: dict[str, int] = {}  # live-mode raw token balance
+        self._entry_quotes: dict[str, int] = {}  # paper-sim: mint -> raw quote out
         self._live_balance_sol: float | None = None  # RPC wallet balance (live)
         self._rejects_total: int = 0
         self._last_reject: dict[str, Any] | None = None
@@ -327,6 +332,23 @@ class PaperTrader:
             if pos.entry_px and proceeds_sol > 0:
                 # Mark the exit so mult/pnl reflect the REAL sold proceeds.
                 pos.exit_px = pos.entry_px * (proceeds_sol / pos.size_sol)
+        elif self.paper_fill_sim and self.jupiter is not None:
+            # Paper sell simulation: quote a real token→SOL swap for the exact
+            # token amount the (simulated) buy would have netted, and mark the
+            # exit from those proceeds — the same formula live mode uses. Falls
+            # back to the tick mark when the amount is unknown or the quote
+            # fails, so a transient API issue never corrupts paper PnL.
+            amount = pos.token_amount or self._token_amounts.pop(mint, 0)
+            if amount > 0:
+                proceeds_raw = await self.jupiter.paper_sell_proceeds(
+                    mint, amount, self.sell_slippage_bps
+                )
+                if proceeds_raw and proceeds_raw > 0 and pos.entry_px:
+                    pos.exit_px = pos.entry_px * ((proceeds_raw / 1e9) / pos.size_sol)
+                    logger.info("PAPER SELL %s proceeds=%d sl=%dbps",
+                                mint, proceeds_raw, self.sell_slippage_bps)
+                else:
+                    logger.info("PAPER SELL %s: quote failed — tick mark", mint)
         self.closed.append(pos)
         self.open.pop(mint, None)
         self._signals_seen.discard(mint)
@@ -415,6 +437,22 @@ class PaperTrader:
                         entry_px = self.size_sol / token_amt
                 logger.info("LIVE BUY %s @ %.12g SOL (sig=%s)",
                             mint, entry_px, swap.signature[:16])
+            # Paper fill simulation: fill at the quote's expected price (which
+            # already bakes in slippage + price impact) rather than the raw
+            # feed tick, and bank the matching raw token amount so paper exits
+            # can simulate a real sell of exactly those tokens.
+            elif self.paper_fill_sim and self.jupiter is not None:
+                out = self._entry_quotes.get(mint, 0)
+                if out and out > 0:
+                    decimals = await self.jupiter.token_decimals(mint)
+                    if decimals is None:
+                        decimals = 6  # pump.fun tokens are 6-decimals
+                    token_amt = out / (10**decimals)
+                    if token_amt > 0:
+                        entry_px = self.size_sol / token_amt
+                        self._token_amounts[mint] = out
+                        logger.info("PAPER FILL %s @ %.12g SOL (quote out=%d)",
+                                    mint, entry_px, out)
             pos = Position(
                 ca=mint,
                 name=self._names.get(mint, sig.name if sig else ""),
@@ -504,6 +542,10 @@ class PaperTrader:
                          out_amount=route.output_amount,
                          price_impact_pct=route.price_impact_pct,
                          routes=route.route_count)
+            # Paper fill simulation: remember the quote's expected out so the
+            # entry fill price reflects real slippage + impact instead of the
+            # raw feed tick (a live buy would net roughly this amount).
+            self._entry_quotes[sig.ca] = route.output_amount
         self._signals_seen.add(sig.ca)
         self._signals_info[sig.ca] = sig
         self._names[sig.ca] = sig.name
