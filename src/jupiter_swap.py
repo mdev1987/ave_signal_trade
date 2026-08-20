@@ -518,19 +518,38 @@ class JupiterSwap:
 
     # ---------------------------------------------------------------- signing
     def _sign(self, b64_transaction: str) -> str:
-        """Sign a base64 transaction with the wallet keypair; return base64."""
+        """Sign a base64 transaction with the wallet keypair; return base64.
+
+        Jupiter v0 transactions are signed over the versioned message bytes —
+        a leading 0x80 version byte followed by the serialized MessageV0
+        (``bytes(tx.message)``). Signing the bare message yields a signature
+        that fails /execute with ``Invalid signature`` (verified offline:
+        ``verify_with_results``). The taker's signature is placed in its slot
+        while any other pre-existing signatures (JupiterZ market-maker slot)
+        are preserved, matching @solana/kit's ``partiallySignTransaction``.
+        """
         if self._keypair is None:
             raise JupiterError("no wallet key configured; cannot sign (dry-run?)")
         raw = base64.b64decode(b64_transaction)
         tx = VersionedTransaction.from_bytes(raw)
-        if any(sig != b"\x00" * 64 for sig in tx.signatures):
-            log.warning("transaction already partially signed")
-        # Jupiter returns v0 (lookup-table) transactions for most swaps; the
-        # message has __bytes__ (no .serialize()). bytes() works for both the
-        # legacy Message and MessageV0, so signing never depends on the layout.
-        message = bytes(tx.message)
-        signature = self._keypair.sign_message(message)
-        signed = VersionedTransaction.populate(tx.message, [signature])
+        # Sign the versioned message: [0x80][serialized MessageV0]. bytes() on
+        # the message gives the bare MessageV0; the 0x80 header marks the
+        # transaction as versioned and MUST be part of the signed payload.
+        versioned_message = b"\x80" + bytes(tx.message)
+        signature = self._keypair.sign_message(versioned_message)
+
+        # Partial sign: keep existing slots (e.g. the JupiterZ market-maker
+        # signature) and only fill the taker's slot so /execute sees every
+        # required signer. Signers are the first num_required_signatures keys.
+        sigs = list(tx.signatures)
+        required = tx.message.header.num_required_signatures
+        signer_keys = tx.message.account_keys[:required]
+        try:
+            slot = signer_keys.index(self._keypair.pubkey())
+        except ValueError:
+            raise JupiterError("wallet keypair is not a signer of this transaction")
+        sigs[slot] = signature
+        signed = VersionedTransaction.populate(tx.message, sigs)
         return base64.b64encode(bytes(signed)).decode()
 
     # ----------------------------------------------------------------- execute
