@@ -174,7 +174,9 @@ class JupiterSwap:
         # preferred and older keys act as fallbacks when one is 429-limited.
         self._rpc_keys: list[str] = [
             k.strip()
-            for k in config.get(env, "HELIUS_API_KEYS", "").split(",")
+            for k in config.get(
+                env, "HELIUS_API_KEYS", config.get(env, "HELIUS_API_KEY", "")
+            ).split(",")
             if k.strip()
         ]
         # Per-key 429 cooldown: after a key rate-limits it is skipped for
@@ -259,7 +261,13 @@ class JupiterSwap:
         if rpc:
             return rpc
         base = config.get(env, "HELIUS_BASE_URL", "https://mainnet.helius-rpc.com")
-        keys = [k.strip() for k in config.get(env, "HELIUS_API_KEYS", "").split(",") if k.strip()]
+        keys = [
+            k.strip()
+            for k in config.get(
+                env, "HELIUS_API_KEYS", config.get(env, "HELIUS_API_KEY", "")
+            ).split(",")
+            if k.strip()
+        ]
         if keys:
             return f"{base.rstrip('/')}/?api-key={keys[0]}"
         return "https://api.mainnet-beta.solana.com"
