@@ -180,6 +180,17 @@ class PaperTrader:
             self.closed.append(self._from_dict(p))
         for p in data.get("open", []):
             pos = self._from_dict(p)
+            if pos.is_closed:
+                # Stale exit markers: the old sell-backoff bug set exit_time on a
+                # defer, making the position look closed while it was still in
+                # the open list, so it was never retried. Clear them so a
+                # restart re-triggers the close attempt (and eventually the
+                # give-up writeoff) instead of parking the slot forever.
+                logger.warning("RESTORE %s (%s): clearing stale exit markers "
+                               "(exit_reason=%s)", pos.ca, pos.name, pos.exit_reason)
+                pos.exit_time = None
+                pos.exit_px = None
+                pos.exit_reason = None
             self.open[pos.ca] = pos
             age = (time.time() - pos.entry_time) if pos.entry_time else 0.0
             ttl = max(0.0, (pos.entry_time + pos.timeout_s) - time.time()) if pos.entry_time else 0.0
@@ -337,6 +348,14 @@ class PaperTrader:
             # retrying so a dead pool stops being hammered every sweep (the
             # 15s sweep loop used to retry a drained token ~60x/hour).
             if pos.next_sell_retry and time.time() < pos.next_sell_retry:
+                # Clear the exit markers: ``pos.update()`` in the sweep sets
+                # exit_time/exit_px/exit_reason before _close_position runs, and
+                # if we leave them set the position looks closed (is_closed) so
+                # the sweep stops retrying it forever. Reset them so the next
+                # sweep re-triggers the close attempt once the backoff passes.
+                pos.exit_time = None
+                pos.exit_px = None
+                pos.exit_reason = None
                 logger.info("SELL DEFER %s: backoff %.0fs left",
                             mint, pos.next_sell_retry - time.time())
                 return
