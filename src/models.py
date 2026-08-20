@@ -46,7 +46,7 @@ def get_filter() -> dict:
 
 REASONS = {
     "dex": "dex not in allowed set",
-    "mcap": "mcap outside $5K-$20K band",
+    "mcap": "mcap outside allowed band",
     "snipes": "snipes below threshold",
     "sec": "security score above threshold",
     "no_ca": "missing contract address",
