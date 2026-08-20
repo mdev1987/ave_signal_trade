@@ -71,6 +71,24 @@ echo "== [5/5] process supervisor =="
 # installing a single fresh supervisor. A leftover crontab watchdog or nohup
 # supervisor is what caused "keep only one websocket connection" (pumpapi) and
 # getUpdates 409 / sqlite "database is locked" (two bots, one session).
+
+# Pre-flight: abort BEFORE touching anything if more than one bot instance is
+# already running. Two instances polling the same BOT_TOKEN produce the
+# getUpdates 409 Conflict (each one steals the other's updates) and double-trade
+# in live mode — a second deploy must never paper over that by killing them.
+preflight_single_instance() {
+  local count
+  count=$(pgrep -f "[m]ain.py trade" | wc -l)
+  if [ "$count" -gt 1 ]; then
+    echo "ERROR: $count bot instances are running ('pgrep -f \"main.py trade\"')."
+    echo "Resolve the duplicate supervision manually (systemd unit, nohup"
+    echo "_supervise.sh, crontab watchdog) so exactly ONE instance remains,"
+    echo "then re-run this deploy. Refusing to proceed."
+    exit 1
+  fi
+}
+
+preflight_single_instance
 decommission_all() {
   echo "== decommissioning any existing supervision =="
   # systemd unit (stop + disable + remove + reload):
