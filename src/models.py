@@ -13,6 +13,37 @@ FILTER = {
     "sec_score_max": 0,
 }
 
+
+def get_filter() -> dict:
+    """The live filter, overlaid with env overrides.
+
+    ``.env`` is loaded lazily by :func:`config.load_settings` at runtime, so a
+    module-level constant would be frozen before the overrides exist. Reading
+    the file here keeps ``FILTER_MCAP_USD_MIN`` etc. effective on every check.
+    """
+    overrides = {}
+    env = None
+    try:
+        from config import load_env
+
+        env = load_env()
+    except Exception:  # noqa: BLE001 - env loading is best-effort here
+        env = None
+    if env:
+        for key, base in (
+            ("mcap_usd_min", "FILTER_MCAP_USD_MIN"),
+            ("mcap_usd_max", "FILTER_MCAP_USD_MAX"),
+            ("snipes_min", "FILTER_SNIPES_MIN"),
+            ("sec_score_max", "FILTER_SEC_SCORE_MAX"),
+        ):
+            raw = env.get(base)
+            if raw is not None:
+                try:
+                    overrides[key] = int(raw)
+                except ValueError:
+                    pass
+    return {**FILTER, **overrides}
+
 REASONS = {
     "dex": "dex not in allowed set",
     "mcap": "mcap outside $5K-$20K band",

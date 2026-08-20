@@ -1,13 +1,16 @@
 """Apply the data-backed filter to parsed signals.
 
-The rules live in :data:`models.FILTER` and were tuned on 2026-08-13 replay
-data (5210 outcomes): mcap $5-20K + Pumpfunamm + snipes>=3 + security score 0
-achieved a ~60-64% win rate to a 3x target.
+The base rules live in :data:`models.FILTER` and were tuned on 2026-08-13
+replay data (5210 outcomes): mcap $5-20K + Pumpfunamm + snipes>=3 + security
+score 0 achieved a ~60-64% win rate to a 3x target. The mcap band and snipes/
+security thresholds can be tightened per-deployment via ``FILTER_MCAP_USD_MIN``,
+``FILTER_MCAP_USD_MAX``, ``FILTER_SNIPES_MIN`` and ``FILTER_SEC_SCORE_MAX`` in
+``.env`` (read lazily by :func:`models.get_filter`).
 """
 
 from __future__ import annotations
 
-from models import FILTER, REASONS, Signal
+from models import REASONS, Signal, get_filter
 
 
 def check_signal(sig: Signal) -> tuple[bool, list[str]]:
@@ -20,16 +23,17 @@ def check_signal(sig: Signal) -> tuple[bool, list[str]]:
         Tuple of (passed, reasons). ``passed`` is True only when the signal
         meets every rule; ``reasons`` lists every violated rule.
     """
+    rules = get_filter()
     reasons: list[str] = []
     if not sig.ca:
         return False, [REASONS["no_ca"]]
-    if sig.dex not in FILTER["dexes"]:
+    if sig.dex not in rules["dexes"]:
         reasons.append(REASONS["dex"])
-    if not (FILTER["mcap_usd_min"] <= sig.mcap_usd <= FILTER["mcap_usd_max"]):
+    if not (rules["mcap_usd_min"] <= sig.mcap_usd <= rules["mcap_usd_max"]):
         reasons.append(REASONS["mcap"])
-    if sig.snipes < FILTER["snipes_min"]:
+    if sig.snipes < rules["snipes_min"]:
         reasons.append(REASONS["snipes"])
-    if sig.sec_score > FILTER["sec_score_max"]:
+    if sig.sec_score > rules["sec_score_max"]:
         reasons.append(REASONS["sec"])
     return not reasons, reasons
 
