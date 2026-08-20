@@ -431,7 +431,8 @@ class JupiterSwap:
         ``slippage_bps`` and returns the expected raw out amount. This is what
         a live sell would net before execution, so paper exits reflect real
         sell slippage instead of filling at the raw feed tick. Returns None on
-        any failure so the trader can fall back to a tick-based mark.
+        any failure so the trader keeps the position open (mirroring live) —
+        no fabricated tick-based fill.
         """
         if self.live:
             return None
@@ -480,9 +481,13 @@ class JupiterSwap:
     ) -> dict:
         """Request a swap quote (and, with a taker, an assembled transaction).
 
-        Live mode passes ``taker`` so Jupiter builds an executable transaction;
-        paper mode omits it, which returns just the quote (transaction null) —
-        tradability without needing a funded wallet.
+        Live mode passes ``taker`` so Jupiter builds an executable transaction.
+        Paper mode deliberately omits it: a throwaway taker would make Jupiter
+        fail every paper quote with "Insufficient funds" (the paper wallet
+        holds no SOL/tokens), which is not the question paper asks. Paper asks
+        "does a tradable route exist right now and what would it net" — the
+        taker-less quote answers exactly that, and a dead pool fails it with
+        the same "Failed to get quotes" as live.
         """
         params = {
             "inputMint": input_mint,

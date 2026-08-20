@@ -1,15 +1,15 @@
 """Arm-time pool checks: DexPaprika liquidity gate + Helius dev reputation.
 
-Both are **fail-open**: if the API is unreachable, rate-limited or times out,
-the signal is *not* rejected — we log the failure and let the trade proceed
-(the Jupiter quote gate remains the hard filter). A deterministic rejection
-only happens when the APIs answer and the data is clearly bad:
+Both are **fail-closed**: if the API is unreachable, rate-limited or times
+out, the signal *is* rejected — an unverified pool is not a pool we buy, and
+entering blind into unconfirmed liquidity turns every API outage into a
+potential rug exposure. A deterministic pass only happens when the APIs
+answer and the data is clearly good:
 
-- DexPaprika: the token has no indexed pool, or its liquidity is below
+- DexPaprika: the token has an indexed pool with liquidity at or above
   ``min_liquidity_usd``.
-- Helius dev-rep (optional): the token's creator account has already created
-  more than ``max_creates_24h`` tokens in the last 24h, or the token is
-  younger than ``min_age_hours``.
+- Helius dev-rep (optional): the token's creator passes the age/creates
+  gates when ``dev_rep_enabled``; if Helius cannot answer, reject.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class PoolChecker:
-    """Async, cached, fail-open gate used by :class:`PaperTrader.offer`.
+    """Async, cached, fail-closed gate used by :class:`PaperTrader.offer`.
 
     Args:
         dex_paprika_key: Bearer key for api.dexpaprika.com (may be empty).
@@ -112,7 +112,7 @@ class PoolChecker:
             return float(res[0].get("liquidity_usd") or 0.0)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
-                logger.warning("dexpaprika 429 (rate limit) — fail-open")
+                logger.warning("dexpaprika 429 (rate limit) — fail-closed")
             else:
                 logger.warning("dexpaprika pool check failed %s: %s", e.response.status_code, ca)
             return None
@@ -126,10 +126,11 @@ class PoolChecker:
         """Veto the signal when DexPaprika proves the pool is dead/empty.
 
         Retries for up to ``confirm_window_s`` (fresh pools take seconds to be
-        indexed). Fail-open on any error — a None liquidity never rejects.
+        indexed). Fail-closed on any error — a None liquidity rejects (an
+        unverified pool is not a pool we buy).
 
         Returns:
-            ``(ok, reason)``; ok=False only on a *confirmed* bad pool.
+            ``(ok, reason)``; ok=True only on a *confirmed* good pool.
         """
         cached = self._pool_cache.get(ca)
         if cached and time.time() - cached[0] < 60:
@@ -150,7 +151,10 @@ class PoolChecker:
     def _eval_liq(self, info: dict[str, Any]) -> tuple[bool, str]:
         liq = info.get("liq")
         if liq is None:
-            return True, ""  # API didn't answer — fail open
+            # API didn't answer — fail CLOSED. An unknown pool is not a
+            # confirmed-good pool; entering blind into unverified liquidity
+            # turns every API outage into a potential rug exposure.
+            return False, "liquidity check unavailable"
         if liq < self.min_liquidity_usd:
             return False, f"liquidity ${liq:.0f} < ${self.min_liquidity_usd:.0f}"
         return True, ""
@@ -161,7 +165,8 @@ class PoolChecker:
         Used at entry time for a zero-latency re-check: between the arm-time
         pool gate and the first buy trade the pool can be drained (a rug in
         progress), and this catches it without another network call. None
-        means "no fresh data — don't reject" (fail-open, same as the arm gate).
+        means "no fresh data" — callers must treat that as a reject (fail
+        closed): an unverified pool is not a pool we should buy.
         """
         cached = self._pool_cache.get(ca)
         if cached and time.time() - cached[0] < 60:
@@ -194,18 +199,19 @@ class PoolChecker:
         return None
 
     async def check_dev_rep(self, ca: str, created_ts: float | None = None) -> tuple[bool, str]:
-        """Veto freshly-minted tokens (fail-open, conservative).
+        """Veto freshly-minted tokens (fail-closed when enabled).
 
         Uses Helius ``getAsset`` to read the mint's metadata. The 24h-creates
         heuristic is intentionally NOT implemented: ``getSignaturesForAddress``
         counts every signature (trades included), so it would veto healthy
         devs — a false positive that kills all entries. Only the explicit
         age veto (when ``min_age_hours`` > 0) can reject, and only when Helius
-        actually answers.
+        actually answers; if Helius is unreachable the token is NOT admitted
+        (fail closed) because the age gate is precisely the one we enabled.
 
         Returns:
-            ``(ok, reason)``; ok=False only when Helius answered and the
-            token is provably too young.
+            ``(ok, reason)``; ok=False when the token is provably too young OR
+            the age check could not be completed.
         """
         if not self.dev_rep_enabled:
             return True, ""
@@ -217,7 +223,12 @@ class PoolChecker:
 
         asset = await self._helius_rpc("getAsset", [ca])
         if asset is None:
-            return True, ""  # fail-open
+            # Fail CLOSED: the dev-rep gate is on, so an unanswered age check
+            # must not admit a token that could be seconds old.
+            msg = "dev reputation check unavailable"
+            self._dev_cache[ca] = (time.time(), (False, msg))
+            self._prune_cache()
+            return False, msg
         age_h = (time.time() - created_ts) / 3600.0
         if age_h < self.dev_rep_min_age_hours:
             msg = f"age {age_h:.1f}h < {self.dev_rep_min_age_hours:.1f}h"

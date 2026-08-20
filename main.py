@@ -284,6 +284,7 @@ async def _trade_loop(
         paper_fill_sim=s.paper_fill_sim,
         sell_slippage_bps=s.jupiter_slippage_bps,
         max_sell_failures=s.max_sell_failures,
+        max_sell_failures_timeout=s.max_sell_failures_timeout,
         sell_backoff_s=s.sell_backoff_s,
         trail_activate_mult=s.trail_activate_mult,
         trail_retrace_pct=s.trail_retrace_pct,

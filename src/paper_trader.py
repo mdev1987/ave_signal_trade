@@ -106,6 +106,7 @@ class PaperTrader:
         paper_fill_sim: bool = True,
         sell_slippage_bps: int = 500,
         max_sell_failures: int = 6,
+        max_sell_failures_timeout: int = 3,
         sell_backoff_s: float = 60.0,
         trail_activate_mult: float = 2.0,
         trail_retrace_pct: float = 0.5,
@@ -136,6 +137,7 @@ class PaperTrader:
         self.paper_fill_sim = paper_fill_sim
         self.sell_slippage_bps = sell_slippage_bps
         self.max_sell_failures = max_sell_failures
+        self.max_sell_failures_timeout = max_sell_failures_timeout
         self.sell_backoff_s = sell_backoff_s
         self.trail_activate_mult = trail_activate_mult
         self.trail_retrace_pct = trail_retrace_pct
@@ -154,7 +156,6 @@ class PaperTrader:
         self._signals_info: dict[str, Signal] = {}
         self._names: dict[str, str] = {}
         self._token_amounts: dict[str, int] = {}  # live-mode raw token balance
-        self._entry_quotes: dict[str, int] = {}  # paper-sim: mint -> raw quote out
         self._live_balance_sol: float | None = None  # RPC wallet balance (live)
         self._rejects_total: int = 0
         self._last_reject: dict[str, Any] | None = None
@@ -392,13 +393,14 @@ class PaperTrader:
                 logs.journal("sell_failed", ca=mint, error=swap.error,
                              sell_fail_count=pos.sell_fail_count,
                              transient=transient)
+                threshold = self._give_up_threshold(pos)
                 logger.warning(
                     "LIVE SELL FAILED %s (%d/%d)%s: %s — keeping position",
-                    mint, pos.sell_fail_count, self.max_sell_failures,
+                    mint, pos.sell_fail_count, threshold,
                     " [transient, not counted]" if transient else "",
                     swap.error,
                 )
-                if not transient and pos.sell_fail_count >= self.max_sell_failures:
+                if not transient and pos.sell_fail_count >= threshold:
                     # Give up: the pool is drained or un-quotable. Write the
                     # position off at its last mark (or entry), free the slot
                     # and alert, instead of retrying a dead token forever.
@@ -419,7 +421,7 @@ class PaperTrader:
                     if self.notifier is not None:
                         await self.notifier.send_alert(
                             "Sell gave up",
-                            f"`{(mint or '')[:10]}…` — {self.max_sell_failures} "
+                            f"`{(mint or '')[:10]}…` — {threshold} "
                             f"failed sells, pool drained. Written off at "
                             f"{pos.exit_px:.3g} SOL/token."
                         )
@@ -443,20 +445,81 @@ class PaperTrader:
         elif self.paper_fill_sim and self.jupiter is not None:
             # Paper sell simulation: quote a real token→SOL swap for the exact
             # token amount the (simulated) buy would have netted, and mark the
-            # exit from those proceeds — the same formula live mode uses. Falls
-            # back to the tick mark when the amount is unknown or the quote
-            # fails, so a transient API issue never corrupts paper PnL.
-            amount = pos.token_amount or self._token_amounts.pop(mint, 0)
+            # exit from those proceeds — the same formula live mode uses. A
+            # failed quote is treated exactly like a failed live sell: the
+            # position stays open (no fabricated tick-mark fill), the failure
+            # is counted toward the give-up writeoff, and the retry backs off —
+            # so paper PnL never books an exit the live wallet could not take.
+            amount = pos.token_amount or self._token_amounts.get(mint, 0)
             if amount > 0:
                 proceeds_raw = await self.jupiter.paper_sell_proceeds(
                     mint, amount, self.sell_slippage_bps
                 )
-                if proceeds_raw and proceeds_raw > 0 and pos.entry_px:
-                    pos.exit_px = pos.entry_px * ((proceeds_raw / 1e9) / pos.size_sol)
-                    logger.info("PAPER SELL %s proceeds=%d sl=%dbps",
-                                mint, proceeds_raw, self.sell_slippage_bps)
-                else:
-                    logger.info("PAPER SELL %s: quote failed — tick mark", mint)
+                fail_reason = (
+                    None
+                    if (proceeds_raw and proceeds_raw > 0)
+                    else "paper_quote_failed"
+                )
+            else:
+                proceeds_raw = 0
+                fail_reason = "no_paper_token_amount"
+            if fail_reason is not None:
+                pos.exit_time = None
+                pos.exit_px = None
+                pos.exit_reason = None
+                transient = self._is_transient_sell_error(fail_reason)
+                if not transient:
+                    pos.sell_fail_count += 1
+                pos.next_sell_retry = time.time() + self.sell_backoff_s
+                logs.journal("sell_failed", ca=mint, error=fail_reason,
+                             sell_fail_count=pos.sell_fail_count,
+                             transient=transient)
+                threshold = self._give_up_threshold(pos)
+                logger.warning(
+                    "PAPER SELL FAILED %s (%d/%d)%s: %s — keeping position",
+                    mint, pos.sell_fail_count, threshold,
+                    " [transient, not counted]" if transient else "",
+                    fail_reason,
+                )
+                if not transient and pos.sell_fail_count >= threshold:
+                    # Give up: the pool is drained or un-quotable. Write the
+                    # position off at its last mark (or entry), free the slot
+                    # and alert, instead of retrying a dead token forever.
+                    logger.error("SELL GIVE-UP %s: %d failures (%s) — writing "
+                                 "position off at last mark",
+                                 mint, pos.sell_fail_count, fail_reason)
+                    pos.exit_time = time.time()
+                    pos.exit_px = pos.last_px if pos.last_px else pos.entry_px
+                    pos.exit_reason = "writeoff"
+                    logs.journal("close", ca=mint, reason="writeoff",
+                                 exit_px=pos.exit_px, pnl_sol=pos.pnl_sol,
+                                 sell_fail_count=pos.sell_fail_count)
+                    self.open.pop(mint, None)
+                    self._token_amounts.pop(mint, None)
+                    self.closed.append(pos)
+                    self._prune_closed()
+                    logs.log_trade(pos.to_dict())
+                    if self.notifier is not None:
+                        await self.notifier.send_alert(
+                            "Sell gave up",
+                            f"`{(mint or '')[:10]}…` — {threshold} "
+                            f"failed sells, pool drained. Written off at "
+                            f"{pos.exit_px:.3g} SOL/token."
+                        )
+                    self._save()
+                    return
+                if self.notifier is not None:
+                    await self.notifier.send_alert(
+                        "Sell failed", f"`{(mint or '')[:10]}…` — {fail_reason}"
+                    )
+                self._save()
+                return
+            pos.sell_fail_count = 0
+            pos.next_sell_retry = 0.0
+            if pos.entry_px:
+                pos.exit_px = pos.entry_px * ((proceeds_raw / 1e9) / pos.size_sol)
+            logger.info("PAPER SELL %s proceeds=%d sl=%dbps",
+                        mint, proceeds_raw, self.sell_slippage_bps)
         self.closed.append(pos)
         self._prune_closed()
         self.open.pop(mint, None)
@@ -474,6 +537,19 @@ class PaperTrader:
                 exit_px=pos.exit_px, balance_before=balance_before,
             )
         self._save()
+
+    def _give_up_threshold(self, pos) -> int:
+        """Sell-failure count that triggers the give-up writeoff for a position.
+
+        Positions past their timeout exit have already sat for the whole hold
+        window, so a dead pool there is written off at
+        ``max_sell_failures_timeout`` (default 3) instead of the general
+        ``max_sell_failures`` (default 6) — freeing the slot sooner without
+        risking premature writeoffs of young positions.
+        """
+        if pos.timeout_s and time.time() - (pos.entry_time or 0) >= pos.timeout_s:
+            return self.max_sell_failures_timeout
+        return self.max_sell_failures
 
     @staticmethod
     def _is_transient_sell_error(error: str) -> bool:
@@ -553,15 +629,17 @@ class PaperTrader:
             entry_px = price
             # Entry-time liquidity re-check (zero-latency, cache only): between
             # the arm-time pool gate and the first trade the pool can drain
-            # (rug in progress). The cached verdict is fresh (<=60s) so this
-            # costs no network call; None means fail-open.
+            # (rug in progress). Fail CLOSED: a missing/stale verdict rejects
+            # the entry — an unverified pool is not a pool we buy.
             if (self.pool_checker is not None and self.jupiter is not None
                     and self.jupiter.live):
                 verdict = self.pool_checker.cached_verdict(mint)
-                if verdict is not None and not verdict[0]:
-                    logger.info("SKIP %s entry: pool drained at entry (%s)",
-                                mint, verdict[1])
-                    logs.journal("skip_entry", ca=mint, reason=f"pool_drained:{verdict[1]}")
+                if verdict is None or not verdict[0]:
+                    reason = verdict[1] if verdict else "no fresh pool verdict"
+                    logger.info("SKIP %s entry: pool gate failed at entry (%s)",
+                                mint, reason)
+                    logs.journal("skip_entry", ca=mint,
+                                 reason=f"pool_drained:{reason}")
                     return
             # Live mode: place the real buy before opening the position.
             if self.jupiter is not None and self.jupiter.live:
@@ -585,9 +663,23 @@ class PaperTrader:
             # Paper fill simulation: fill at the quote's expected price (which
             # already bakes in slippage + price impact) rather than the raw
             # feed tick, and bank the matching raw token amount so paper exits
-            # can simulate a real sell of exactly those tokens.
+            # can simulate a real sell of exactly those tokens. The quote is
+            # refreshed NOW (force=True bypasses the quote cache) so the paper
+            # entry reflects the live orderbook at entry time — never a stale
+            # arm-time quote. A failed refresh skips the entry entirely (no
+            # fabricated fill), mirroring live where an un-quotable buy fails.
             elif self.paper_fill_sim and self.jupiter is not None:
-                out = self._entry_quotes.get(mint, 0)
+                route = await self.jupiter.quote(
+                    mint, int(self.size_sol * 1e9), force=True
+                )
+                if route is None or not route.success:
+                    reason = route.reason if route else "no quote"
+                    logger.info("SKIP %s paper entry: fresh quote failed (%s)",
+                                mint, reason)
+                    logs.journal("skip_entry", ca=mint, reason=f"paper_quote:{reason}")
+                    self._signals_seen.discard(mint)
+                    return
+                out = route.output_amount
                 if out and out > 0:
                     decimals = await self.jupiter.token_decimals(mint)
                     if decimals is None:
@@ -596,7 +688,7 @@ class PaperTrader:
                     if token_amt > 0:
                         entry_px = self.size_sol / token_amt
                         self._token_amounts[mint] = out
-                        logger.info("PAPER FILL %s @ %.12g SOL (quote out=%d)",
+                        logger.info("PAPER FILL %s @ %.12g SOL (fresh quote out=%d)",
                                     mint, entry_px, out)
             pos = Position(
                 ca=mint,
@@ -655,8 +747,9 @@ class PaperTrader:
             logs.journal("skip", ca=sig.ca, name=sig.name, reason="max_positions")
             return
         # Arm-time pool gate: reject when DexPaprika *proves* the pool is
-        # dead/empty (fail-open on API errors). Also apply the signal's own
-        # liquidity snapshot as a cheap first filter.
+        # dead/empty or when it cannot answer (fail closed on API errors —
+        # an unverified pool is not a pool we buy). Also apply the signal's
+        # own liquidity snapshot as a cheap first filter.
         if (self.pool_checker is not None and sig.liq_usd > 0
                 and sig.liq_usd < self.pool_checker.min_liquidity_usd):
             logger.info("SKIP %s (%s): liq $%.0f < $%.0f",
@@ -671,7 +764,7 @@ class PaperTrader:
                 logger.info("SKIP %s (%s): pool gate (%s)", sig.ca, sig.name, reason)
                 logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"pool_gate:{reason}")
                 return
-        # Dev-reputation veto (fail-open).
+        # Dev-reputation veto (fail-closed when enabled).
         if self.pool_checker is not None:
             ok, reason = await self.pool_checker.check_dev_rep(sig.ca, sig.unixtime)
             if not ok:
@@ -689,10 +782,6 @@ class PaperTrader:
                          out_amount=route.output_amount,
                          price_impact_pct=route.price_impact_pct,
                          routes=route.route_count)
-            # Paper fill simulation: remember the quote's expected out so the
-            # entry fill price reflects real slippage + impact instead of the
-            # raw feed tick (a live buy would net roughly this amount).
-            self._entry_quotes[sig.ca] = route.output_amount
         self._signals_seen.add(sig.ca)
         self._signals_info[sig.ca] = sig
         self._names[sig.ca] = sig.name
@@ -740,7 +829,7 @@ class PaperTrader:
     def _prune_stale_signal_state(self, now: float) -> None:
         """Drop signal bookkeeping for mints that can never be entered.
 
-        ``_signals_info`` / ``_names`` / ``_entry_quotes`` / ``_signals_seen``
+        ``_signals_info`` / ``_names`` / ``_signals_seen``
         grow with every armed signal and were never evicted — a real leak on a
         long-running bot. A signal older than ``timeout_s + entry latency`` can
         no longer open a position (the pool will have moved on), so its state is
@@ -756,14 +845,12 @@ class PaperTrader:
         for mint in stale:
             self._signals_info.pop(mint, None)
             self._names.pop(mint, None)
-            self._entry_quotes.pop(mint, None)
             self._signals_seen.discard(mint)
         # Safety net: bound absolute size even if signals keep streaming.
         if len(self._signals_info) > 2000:
             for mint in list(self._signals_info)[: len(self._signals_info) - 2000]:
                 self._signals_info.pop(mint, None)
                 self._names.pop(mint, None)
-                self._entry_quotes.pop(mint, None)
                 self._signals_seen.discard(mint)
 
     def summary(self) -> dict[str, Any]:

@@ -148,6 +148,12 @@ class Settings:
     # (closed at its last mark, slot freed, Telegram alert) instead of
     # retrying every sweep and occupying a position slot indefinitely.
     max_sell_failures: int = 6
+    # Positions past their timeout exit have already sat for the whole hold
+    # window, so a dead pool there is worth writing off much sooner: this many
+    # consecutive sell failures (instead of ``max_sell_failures``) end the
+    # position. Frees the slot faster without risking premature writeoffs of
+    # young positions that may still recover.
+    max_sell_failures_timeout: int = 3
     sell_backoff_s: float = 60.0  # min wait between failed sell retries
     # Trailing stop: once the peak reaches ``trail_activate_mult`` x entry, a
     # stop is ratcheted to peak * (1 - trail_retrace_pct) so a winner that
