@@ -256,11 +256,14 @@ class JupiterSwap:
         return str(self._keypair.pubkey()) if self._keypair is not None else None
 
     def _build_rpc_url(self, env: dict[str, str]) -> str:
-        """Pick an RPC endpoint for live wallet reads (never used in paper)."""
-        rpc = config.get(env, "SOLANA_RPC_URL") or config.get(env, "RPC_URL")
-        if rpc:
-            return rpc
-        base = config.get(env, "HELIUS_BASE_URL", "https://mainnet.helius-rpc.com")
+        """Pick an RPC endpoint for live wallet reads (never used in paper).
+
+        Prefers the Gatekeeper beta router (lowest-latency Helius edge; same
+        keys) when configured, falling back to SOLANA_RPC_URL/RPC_URL and
+        finally HELIUS_BASE_URL. The base URL never embeds a key: the newest
+        ``HELIUS_API_KEYS`` entry is appended here so rotation stays central.
+        A URL that already carries ``api-key=`` (custom RPC) is used as-is.
+        """
         keys = [
             k.strip()
             for k in config.get(
@@ -268,9 +271,18 @@ class JupiterSwap:
             ).split(",")
             if k.strip()
         ]
+        base = (
+            config.get(env, "GATEKEEPER_RPC_URL")
+            or config.get(env, "SOLANA_RPC_URL")
+            or config.get(env, "RPC_URL")
+            or config.get(env, "HELIUS_BASE_URL", "https://beta.helius-rpc.com")
+        )
+        if "api-key=" in base:
+            return base
         if keys:
-            return f"{base.rstrip('/')}/?api-key={keys[0]}"
-        return "https://api.mainnet-beta.solana.com"
+            sep = "&" if "?" in base else "?"
+            return f"{base.rstrip('/')}{sep}api-key={keys[0]}"
+        return base
 
     def _rpc_key_candidates(self) -> list[str]:
         """RPC keys currently out of 429-cooldown, in configured priority order.
@@ -297,10 +309,11 @@ class JupiterSwap:
         return cooled
 
     def _rpc_url_for_key(self, key: str) -> str:
-        if key == self._rpc_url or not self._rpc_keys or "helius-rpc.com" not in self._rpc_url:
-            return key
-        base = self._rpc_url.rsplit("/?", 1)[0]
-        return f"{base}/?api-key={key}"
+        """Endpoint URL using ``key`` — base without any ``?query``, then ``?api-key=``."""
+        if not self._rpc_keys or "helius-rpc.com" not in self._rpc_url:
+            return self._rpc_url if key == self._rpc_url else key
+        base = self._rpc_url.split("?", 1)[0]
+        return f"{base}?api-key={key}"
 
     async def _rpc(self, method: str, params: list) -> Any:
         """POST a JSON-RPC call to the configured RPC (live wallet reads only).

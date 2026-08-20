@@ -119,7 +119,7 @@ class Settings:
     dex_paprika_key: str = ""
     dex_paprika_base_url: str = "https://api.dexpaprika.com"
     helius_api_keys: str = ""              # comma-separated, rotated on 429
-    helius_base_url: str = "https://mainnet.helius-rpc.com"
+    helius_base_url: str = "https://beta.helius-rpc.com"
     dev_rep_enabled: bool = True           # Helius creator/reputation veto
     dev_rep_max_creates_24h: int = 3
     dev_rep_min_age_hours: float = 0.0
@@ -191,7 +191,7 @@ class Settings:
             dex_paprika_key=get(env, "DEX_PAPRIKA_KEY", ""),
             dex_paprika_base_url=get(env, "DEX_PAPRIKA_REST_URL", "https://api.dexpaprika.com"),
             helius_api_keys=get(env, "HELIUS_API_KEYS", get(env, "HELIUS_API_KEY", "")),
-            helius_base_url=get(env, "HELIUS_BASE_URL", "https://mainnet.helius-rpc.com"),
+            helius_base_url=get(env, "HELIUS_BASE_URL", "https://beta.helius-rpc.com"),
             dev_rep_enabled=get_bool(env, "DEV_REP_ENABLED", True),
             dev_rep_max_creates_24h=get_int(env, "DEV_REP_MAX_CREATES_24H", 3),
             dev_rep_min_age_hours=get_float(env, "DEV_REP_MIN_AGE_HOURS", 0.0),

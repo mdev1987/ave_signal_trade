@@ -31,7 +31,7 @@ class PoolChecker:
         dex_paprika_key: Bearer key for api.dexpaprika.com (may be empty).
         dex_paprika_base_url: REST base, e.g. ``https://api.dexpaprika.com``.
         helius_api_keys: Comma-separated Helius RPC keys (rotated on 429).
-        helius_base_url: Helius RPC base, e.g. ``https://mainnet.helius-rpc.com``.
+        helius_base_url: Helius RPC base, e.g. ``https://beta.helius-rpc.com``.
         min_liquidity_usd: Reject pools indexed below this liquidity.
         dev_rep_enabled: Run the Helius creator-reputation veto.
         dev_rep_max_creates_24h: Max token creations by the creator in 24h.
@@ -44,7 +44,7 @@ class PoolChecker:
         dex_paprika_key: str = "",
         dex_paprika_base_url: str = "https://api.dexpaprika.com",
         helius_api_keys: str = "",
-        helius_base_url: str = "https://mainnet.helius-rpc.com",
+        helius_base_url: str = "https://beta.helius-rpc.com",
         min_liquidity_usd: float = 4000.0,
         dev_rep_enabled: bool = True,
         dev_rep_max_creates_24h: int = 3,
