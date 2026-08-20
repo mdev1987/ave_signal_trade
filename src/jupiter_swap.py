@@ -170,17 +170,16 @@ class JupiterSwap:
         # RPC used for real-wallet reads (getBalance, token decimals). Only
         # ever queried in live mode — never in paper/dry-run.
         self._rpc_url = self._build_rpc_url(env)
-        # Rotating RPC key list (Helius) + index; rotation happens on 429 so a
-        # rate-limited key never wedges live wallet reads for long.
+        # Ordered RPC key list (Helius), newest-first: the first key is always
+        # preferred and older keys act as fallbacks when one is 429-limited.
         self._rpc_keys: list[str] = [
             k.strip()
             for k in config.get(env, "HELIUS_API_KEYS", "").split(",")
             if k.strip()
         ]
-        self._rpc_key_idx = 0
         # Per-key 429 cooldown: after a key rate-limits it is skipped for
         # ``_rpc_key_cooldown_s`` (default 60s) so a hammered key gets time to
-        # recover instead of being re-hit on the next rotation turn.
+        # recover instead of being re-hit on every balance refresh.
         self._rpc_key_cooldown_s = float(config.get(
             env, "RPC_KEY_COOLDOWN_S", _DEFAULT_RPC_KEY_COOLDOWN_S,
         ))
@@ -266,10 +265,13 @@ class JupiterSwap:
         return "https://api.mainnet-beta.solana.com"
 
     def _rpc_key_candidates(self) -> list[str]:
-        """RPC keys currently out of 429-cooldown, round-robin rotated.
+        """RPC keys currently out of 429-cooldown, in configured priority order.
 
-        Returns ``[self._rpc_url]`` when no key rotation is configured so the
-        single (possibly custom) endpoint is always tried.
+        Keys in ``HELIUS_API_KEYS`` are ordered newest-first, so the first key
+        is always preferred; a key that answered 429 is skipped (cooldown) and
+        the next one down the list is tried. Returns ``[self._rpc_url]`` when
+        no key rotation is configured so the single (possibly custom) endpoint
+        is always tried.
         """
         if len(self._rpc_keys) <= 1:
             return [self._rpc_url]
@@ -282,11 +284,9 @@ class JupiterSwap:
             # Every key is cooling down: retry them all anyway after the
             # shortest cooldown — a brief 429 storm should not freeze balance.
             cooled = self._rpc_keys
-        # Rotate so the same key is not always first (spreads load evenly).
-        start = self._rpc_key_idx % len(cooled)
-        ordered = cooled[start:] + cooled[:start]
-        self._rpc_key_idx += 1
-        return ordered
+        # Preserve configured order: newest (first) key stays preferred, so
+        # the newest key absorbs the load and older keys only act as fallbacks.
+        return cooled
 
     def _rpc_url_for_key(self, key: str) -> str:
         if key == self._rpc_url or not self._rpc_keys or "helius-rpc.com" not in self._rpc_url:
@@ -299,9 +299,10 @@ class JupiterSwap:
 
         Wrapped in :func:`asyncio.wait_for` so a hung DNS resolver or a dead
         socket can never block the event loop past ``_rpc_timeout_s``. When
-        several Helius keys are configured, a key that answers 429 is put into
-        cooldown (``_rpc_key_cooldown_s``) and skipped on later calls so a
-        rate-limited key never wedges wallet balance refreshes.
+        several Helius keys are configured, the newest (first) key is always
+        tried first; a key that answers 429 is put into cooldown
+        (``_rpc_key_cooldown_s``) and skipped on later calls so a rate-limited
+        key never wedges wallet balance refreshes.
         """
         async def _post(url: str) -> Any:
             resp = await self._client.post(
