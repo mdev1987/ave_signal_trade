@@ -141,6 +141,7 @@ class Settings:
     jupiter_order_timeout_s: float = 20.0
     jupiter_execute_timeout_s: float = 60.0
     rpc_timeout_s: float = 12.0
+    rpc_key_cooldown_s: float = 60.0
     sell_slippage_escalation: tuple[int, ...] = (200, 300, 500, 1000)
     # Paper fill simulation: fill entries at the real Jupiter quote price
     # (slippage + price impact) and mark exits with a simulated sell that
@@ -210,6 +211,7 @@ class Settings:
             jupiter_order_timeout_s=get_float(env, "JUPITER_ORDER_TIMEOUT_S", 20.0),
             jupiter_execute_timeout_s=get_float(env, "JUPITER_EXECUTE_TIMEOUT_S", 60.0),
             rpc_timeout_s=get_float(env, "RPC_TIMEOUT_S", 12.0),
+            rpc_key_cooldown_s=get_float(env, "RPC_KEY_COOLDOWN_S", 60.0),
             sell_slippage_escalation=get_csv_ints(
                 env, "SELL_SLIPPAGE_ESCALATION", (200, 300, 500, 1000)
             ),
@@ -259,6 +261,7 @@ class Settings:
             ("JUPITER_ORDER_TIMEOUT_S", f"{self.jupiter_order_timeout_s:g}"),
             ("JUPITER_EXECUTE_TIMEOUT_S", f"{self.jupiter_execute_timeout_s:g}"),
             ("RPC_TIMEOUT_S", f"{self.rpc_timeout_s:g}"),
+            ("RPC_KEY_COOLDOWN_S", f"{self.rpc_key_cooldown_s:g}"),
             ("SELL_SLIPPAGE_ESCALATION", ",".join(str(v) for v in self.sell_slippage_escalation)),
             ("PAPER_FILL_SIM", "true" if self.paper_fill_sim else "false"),
             ("PUMPAPI_WSS", self.pumpapi_wss),

@@ -66,6 +66,7 @@ _LATENCY_SAMPLES_MAX = 500
 _DEFAULT_ORDER_TIMEOUT_S = 20.0
 _DEFAULT_EXECUTE_TIMEOUT_S = 60.0   # Jupiter lands + confirms the tx server-side
 _DEFAULT_RPC_TIMEOUT_S = 12.0
+_DEFAULT_RPC_KEY_COOLDOWN_S = 60.0    # skip a 429'd RPC key for this long
 _DEFAULT_QUOTE_CACHE_MAX = 500      # bounded cache: (mint, amount) -> QuoteResult
 
 
@@ -177,6 +178,13 @@ class JupiterSwap:
             if k.strip()
         ]
         self._rpc_key_idx = 0
+        # Per-key 429 cooldown: after a key rate-limits it is skipped for
+        # ``_rpc_key_cooldown_s`` (default 60s) so a hammered key gets time to
+        # recover instead of being re-hit on the next rotation turn.
+        self._rpc_key_cooldown_s = float(config.get(
+            env, "RPC_KEY_COOLDOWN_S", _DEFAULT_RPC_KEY_COOLDOWN_S,
+        ))
+        self._rpc_key_cooldown_until: dict[str, float] = {}
         self._order_timeout_s = config.get_float(env, "JUPITER_ORDER_TIMEOUT_S",
                                                  _DEFAULT_ORDER_TIMEOUT_S)
         self._execute_timeout_s = config.get_float(env, "JUPITER_EXECUTE_TIMEOUT_S",
@@ -257,27 +265,43 @@ class JupiterSwap:
             return f"{base.rstrip('/')}/?api-key={keys[0]}"
         return "https://api.mainnet-beta.solana.com"
 
-    def _rpc_endpoint(self) -> str:
-        """Current RPC endpoint, rotating the Helius key on each call.
+    def _rpc_key_candidates(self) -> list[str]:
+        """RPC keys currently out of 429-cooldown, round-robin rotated.
 
-        A single key can be rate-limited (429) for a while; round-robining
-        spreads live wallet reads across every configured key so balance
-        refreshes keep succeeding instead of falling back to a stale cache.
-        Only applies when the endpoint is the Helius API-key URL; a custom
-        ``SOLANA_RPC_URL`` is used as-is.
+        Returns ``[self._rpc_url]`` when no key rotation is configured so the
+        single (possibly custom) endpoint is always tried.
         """
-        if not self._rpc_keys or "helius-rpc.com" not in self._rpc_url:
-            return self._rpc_url
-        base = self._rpc_url.rsplit("/?", 1)[0]
-        key = self._rpc_keys[self._rpc_key_idx % len(self._rpc_keys)]
+        if len(self._rpc_keys) <= 1:
+            return [self._rpc_url]
+        now = time.monotonic()
+        cooled = [
+            k for k in self._rpc_keys
+            if self._rpc_key_cooldown_until.get(k, 0.0) <= now
+        ]
+        if not cooled:
+            # Every key is cooling down: retry them all anyway after the
+            # shortest cooldown — a brief 429 storm should not freeze balance.
+            cooled = self._rpc_keys
+        # Rotate so the same key is not always first (spreads load evenly).
+        start = self._rpc_key_idx % len(cooled)
+        ordered = cooled[start:] + cooled[:start]
         self._rpc_key_idx += 1
+        return ordered
+
+    def _rpc_url_for_key(self, key: str) -> str:
+        if key == self._rpc_url or not self._rpc_keys or "helius-rpc.com" not in self._rpc_url:
+            return key
+        base = self._rpc_url.rsplit("/?", 1)[0]
         return f"{base}/?api-key={key}"
 
     async def _rpc(self, method: str, params: list) -> Any:
         """POST a JSON-RPC call to the configured RPC (live wallet reads only).
 
         Wrapped in :func:`asyncio.wait_for` so a hung DNS resolver or a dead
-        socket can never block the event loop past ``_rpc_timeout_s``.
+        socket can never block the event loop past ``_rpc_timeout_s``. When
+        several Helius keys are configured, a key that answers 429 is put into
+        cooldown (``_rpc_key_cooldown_s``) and skipped on later calls so a
+        rate-limited key never wedges wallet balance refreshes.
         """
         async def _post(url: str) -> Any:
             resp = await self._client.post(
@@ -290,20 +314,31 @@ class JupiterSwap:
                 raise JupiterError(f"rpc {method}: {data['error']}")
             return data.get("result")
 
-        for attempt in range(max(len(self._rpc_keys), 1)):
-            url = self._rpc_endpoint() if len(self._rpc_keys) > 1 else self._rpc_url
-            try:
-                return await asyncio.wait_for(
-                    _post(url), timeout=self._rpc_timeout_s
-                )
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 429 and len(self._rpc_keys) > 1:
-                    continue  # rotate key and retry
-                raise
-            except (TimeoutError, httpx.TimeoutException) as exc:
-                # Timeout is NOT retried per-key: the endpoint is unhealthy;
-                # fail fast so the sweep loop can advance and retry next round.
-                raise JupiterError(f"rpc {method} timed out: {exc}") from exc
+        last_429: httpx.HTTPStatusError | None = None
+        for attempt in range(3):
+            for key in self._rpc_key_candidates():
+                url = self._rpc_url_for_key(key)
+                try:
+                    return await asyncio.wait_for(
+                        _post(url), timeout=self._rpc_timeout_s
+                    )
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 429:
+                        # Rate-limited: cool this key down and try the next one.
+                        now = time.monotonic()
+                        self._rpc_key_cooldown_until[key] = now + self._rpc_key_cooldown_s
+                        last_429 = exc
+                        continue
+                    raise
+                except (TimeoutError, httpx.TimeoutException) as exc:
+                    # Timeout is NOT retried: the endpoint is unhealthy; fail
+                    # fast so the sweep loop can advance and retry next round.
+                    raise JupiterError(f"rpc {method} timed out: {exc}") from exc
+            if last_429 is None:
+                break  # no key left a 429 behind; nothing more to retry
+            # All keys were rate-limited on this pass: give the shortest
+            # cooldown a moment to elapse before one final retry.
+            await asyncio.sleep(0.5 * (attempt + 1))
         raise JupiterError(f"rpc {method}: all RPC keys rate-limited (429)")
 
     async def balance_sol(self) -> float | None:
