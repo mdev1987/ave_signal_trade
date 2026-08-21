@@ -772,7 +772,10 @@ class PaperTrader:
                 logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"dev_rep:{reason}")
                 return
         if self.jupiter is not None:
-            route = await self.jupiter.quote(sig.ca, int(self.size_sol * 1e9))
+            # --- entry-risk gate (paper experiment spec) -----------------
+            # 1) BUY quote – must exist and respect JUPITER_MAX_IMPACT_PCT (5.0)
+            amount_raw = int(self.size_sol * 1e9)
+            route = await self.jupiter.quote(sig.ca, amount_raw)
             if route is None or not route.success:
                 reason = route.reason if route else "quote_exception"
                 logger.info("SKIP %s (%s): no jupiter route (%s)", sig.ca, sig.name, reason)
@@ -782,6 +785,32 @@ class PaperTrader:
                          out_amount=route.output_amount,
                          price_impact_pct=route.price_impact_pct,
                          routes=route.route_count)
+            # 2) Stability gate – same quote must stay within pct bounds for ~1s.
+            #    CATE warned via slippage failure before buy; treat as rug signal.
+            if getattr(self.jupiter, "quote_stability_checks", 0) and self.jupiter.quote_stability_checks > 1:
+                ok, stab_reason = await self.jupiter.check_quote_stability(sig.ca, amount_raw)
+                if not ok:
+                    logger.info("SKIP %s (%s): quote unstable (%s)", sig.ca, sig.name, stab_reason)
+                    logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"unstable:{stab_reason}")
+                    return
+            # 3) SELL quote for the exact token amount the buy would net.
+            #    Direct defense against CATE/ELON/Google-AI: buyable but un-sellable.
+            if getattr(self.jupiter, "require_sell_quote", True):
+                token_out = route.output_amount
+                if token_out and token_out > 0:
+                    sell_q = await self.jupiter.quote_sell(sig.ca, token_out)
+                    if sell_q is None or not sell_q.success:
+                        reason = sell_q.reason if sell_q else "sell_quote_exception"
+                        logger.info("SKIP %s (%s): no sell quote (%s)", sig.ca, sig.name, reason)
+                        logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"no_sell_route:{reason}")
+                        return
+                    logs.journal("sell_route", ca=sig.ca, name=sig.name,
+                                 sell_out=sell_q.output_amount,
+                                 sell_impact=sell_q.price_impact_pct)
+                else:
+                    logger.info("SKIP %s (%s): buy quote outAmount 0 – cannot check sell", sig.ca, sig.name)
+                    logs.journal("skip", ca=sig.ca, name=sig.name, reason="no_sell_route:zero_out")
+                    return
         self._signals_seen.add(sig.ca)
         self._signals_info[sig.ca] = sig
         self._names[sig.ca] = sig.name

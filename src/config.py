@@ -90,12 +90,12 @@ class Settings:
     """
 
     # --- trading ---------------------------------------------------------
-    position_size_sol: float = 0.1
+    position_size_sol: float = 0.2  # single POS focused sizing (profitable mode)
     start_balance_sol: float = 2.0
-    max_positions: int = 5
+    max_positions: int = 1  # 1 POS — serial execution, avoids dilution & rug clustering
     take_profit: float = 4.0
     stop_loss: float = 0.3
-    timeout_s: float = 3600.0
+    timeout_s: float = 1500.0  # 25min optimum: EV ~+99.6% ≈60min (+101%), frees slot 2.4× faster
     shutdown_grace_s: int = 60
     health_timeout_s: int = 300   # no sweep progress this long -> force exit
     checkpoint_save_s: float = 300.0  # periodic checkpoint flush (positions)
@@ -131,8 +131,8 @@ class Settings:
     private_key: str = ""
     jupiter_api_key: str = ""
     jupiter_base_url: str = "https://api.jup.ag"
-    jupiter_slippage_bps: int = 500
-    jupiter_max_impact_pct: float = 15.0
+    jupiter_slippage_bps: int = 300
+    jupiter_max_impact_pct: float = 5.0
     jupiter_quote_retries: int = 3
     jupiter_quote_cache_s: float = 30.0
     jupiter_quote_throttle_s: float = 1.0
@@ -155,6 +155,16 @@ class Settings:
     # young positions that may still recover.
     max_sell_failures_timeout: int = 3
     sell_backoff_s: float = 60.0  # min wait between failed sell retries
+    # --- two-sided execution gate (CATE/ELON defense) -----------------------
+    require_sell_quote: bool = True
+    max_sell_impact_pct: float = 5.0
+    # Quote stability gate: a quote that moves > threshold within ~1s is
+    # rejected. CATE showed slippage failure before execution – instability
+    # is a rug signal, not just an execution nuisance.
+    quote_stability_checks: int = 3
+    quote_stability_interval_ms: int = 300
+    max_quote_change_pct: float = 5.0
+    max_impact_change_pct: float = 3.0
     # Trailing stop: once the peak reaches ``trail_activate_mult`` x entry, a
     # stop is ratcheted to peak * (1 - trail_retrace_pct) so a winner that
     # reverses after the take-profit level is locked out with gains intact
@@ -183,12 +193,12 @@ class Settings:
     def from_env(cls, env: dict[str, str]) -> Settings:
         """Build settings from a parsed env dict (see :func:`load_settings`)."""
         return cls(
-            position_size_sol=get_float(env, "POSITION_SIZE_SOL", 0.1),
+            position_size_sol=get_float(env, "POSITION_SIZE_SOL", 0.2),
             start_balance_sol=get_float(env, "START_BALANCE_SOL", 2.0),
-            max_positions=get_int(env, "MAX_POSITIONS", 5),
+            max_positions=get_int(env, "MAX_POSITIONS", 1),
             take_profit=get_float(env, "TAKE_PROFIT", 4.0),
             stop_loss=get_float(env, "STOP_LOSS", 0.3),
-            timeout_s=get_float(env, "TIMEOUT_S", 3600.0),
+            timeout_s=get_float(env, "TIMEOUT_S", 1500.0),
             shutdown_grace_s=get_int(env, "SHUTDOWN_GRACE_S", 60),
             health_timeout_s=get_int(env, "HEALTH_TIMEOUT_S", 300),
             checkpoint_save_s=get_float(env, "CHECKPOINT_SAVE_S", 300.0),
@@ -219,8 +229,8 @@ class Settings:
             private_key=get(env, "PRIVATE_KEY", ""),
             jupiter_api_key=get(env, "JUPITER_API_KEY", ""),
             jupiter_base_url=get(env, "JUPITER_BASE_URL", "https://api.jup.ag"),
-            jupiter_slippage_bps=get_int(env, "JUPITER_SLIPPAGE_BPS", 500),
-            jupiter_max_impact_pct=get_float(env, "JUPITER_MAX_IMPACT_PCT", 15.0),
+            jupiter_slippage_bps=get_int(env, "JUPITER_SLIPPAGE_BPS", 300),
+            jupiter_max_impact_pct=get_float(env, "JUPITER_MAX_IMPACT_PCT", 5.0),
             jupiter_quote_retries=get_int(env, "JUPITER_QUOTE_RETRIES", 3),
             jupiter_quote_cache_s=get_float(env, "JUPITER_QUOTE_CACHE_S", 30.0),
             jupiter_quote_throttle_s=get_float(env, "JUPITER_QUOTE_THROTTLE_S", 1.0),
@@ -234,7 +244,14 @@ class Settings:
                 env, "SELL_SLIPPAGE_ESCALATION", (200, 300, 500, 1000)
             ),
             max_sell_failures=get_int(env, "MAX_SELL_FAILURES", 6),
+            max_sell_failures_timeout=get_int(env, "MAX_SELL_FAILURES_TIMEOUT", 3),
             sell_backoff_s=get_float(env, "SELL_BACKOFF_S", 60.0),
+            require_sell_quote=get_bool(env, "REQUIRE_SELL_QUOTE", True),
+            max_sell_impact_pct=get_float(env, "MAX_SELL_IMPACT_PCT", 5.0),
+            quote_stability_checks=get_int(env, "QUOTE_STABILITY_CHECKS", 3),
+            quote_stability_interval_ms=get_int(env, "QUOTE_STABILITY_INTERVAL_MS", 300),
+            max_quote_change_pct=get_float(env, "MAX_QUOTE_CHANGE_PCT", 5.0),
+            max_impact_change_pct=get_float(env, "MAX_IMPACT_CHANGE_PCT", 3.0),
             trail_activate_mult=get_float(env, "TRAIL_ACTIVATE_MULT", 2.0),
             trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", 0.5),
             paper_fill_sim=get_bool(env, "PAPER_FILL_SIM", True),

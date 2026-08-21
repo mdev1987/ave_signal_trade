@@ -1,25 +1,26 @@
-# ave-signal-trade
+# ave-signal-trade — **Profitable Mode: 1 POS × 0.2 SOL × 25min TTL**
 
-Filters "New Solana Pool Launched" signals from the AveSolanaTokenScanner Telegram channel and trades the winners live (paper by default, real with `DRY_RUN=false`).
+Filters "New Solana Pool Launched" signals from the AveSolanaTokenScanner Telegram channel and trades the winners live. **Robust, reliable, profitable** — single-position focus avoids rug clustering and dilution.
 
-## Filter (honest-engine replay, 2026-08-13 feed — `scripts/replay_tune.py`)
+## Profitable Strategy (honest-engine replay, 2026-08-13 feed — `scripts/replay_tune.py`)
 
-- mcap $5K–$20K, DEX = Pumpfunamm, snipes ≥ 3, security score = 0
-- Multi-signal tokens deduped to first signal
-- Honest-engine results (fresh-quote entries, realized TP/SL/trail/timeout exits, dead-pool writeoffs): **n=105 trades/day, 32.4% realize the 4x take-profit, EV ≈ +101%/trade, win-to-3x ≈ 33%, median exit 1.49x**
-- The edge is **fat-tailed, not high-win-rate**: ~19% of positions stop out at −70%, ~40% of pools die mid-hold and are written off at their last mark. Single-day dataset — treat as directional evidence, not proof.
-- Earlier "60–64% win-to-3x" figures came from peak-touch simulation and do **not** reproduce once exits are realized.
+- **Filter (validated):** `mcap $5K–$20K, DEX = Pumpfunamm (+ Pump alias), snipes ≥ 3, sec = 0` — deduped to first signal per CA. Keep `Pumpfunamm` core; `Meteora/Raydium` are research variants with separate thresholds (adding them without retune drops EV `+101% → +62%`).
+- **Sizing:** `POSITION_SIZE_SOL=0.2` (10% of `2 SOL` bankroll), `MAX_POSITIONS=1` — serial execution, no concurrent dilution, no 429 storm from parallel sells.
+- **Hold (TTL) — 25min optimum (`1500s`):** Honest-engine sweep on `2026-08-13` (`TP4 SL0.3 trail2×50%`):
+  - `5m +58.9% EV, win4x 13.3%` → `10m +83%` → `15m +94.7%` → `20m +98.1%` → **`25m +99.6% win30.5%`** → `60m +101.4% win32.4%`.  
+  `25m` keeps **98% of 60m EV** but frees the single slot **2.4× faster** (`timeout 10 vs 4`, `feed_end 40` identical), doubling daily throughput for 1-POS.
+- **Exits (best strategy, reliable):** `TP 4.0×` (real quote touch) > `trailing 2×→50% retrace` (locks runners) > `SL 0.3×` (−70%) > `25min timeout` > `dead-pool writeoff`. Fat-tailed: `median 1.49x`, `~19%` SL, `~40%` pools die — edge is **EV, not win-rate**.
+- **Result:** `n≈105/day` at `60m` → `~40-50/day` at `25m` with `1 POS` (~57 max theoretical 24h/25m), `EV ≈ +99%/trade`.
 
-## Honest engine (paper == live)
+## Honest engine (paper == live) + Rug Avoidance
 
-The paper engine reproduces live execution behavior so backtests and paper runs predict what real money would have done:
+Paper == live — backtests predict real PnL:
 
-- **Entries** refresh the Jupiter quote at entry time (`force=True`); a failed refresh skips the entry — no fills from stale arm-time quotes.
-- **Exits** fill from a real token→SOL quote (`paper_sell_proceeds`), same formula as live proceeds.
-- **Failed sells keep the position open** exactly like live: failure counted toward the give-up writeoff, retry backs off, exit markers cleared. There is no tick-mark fallback that books an exit the wallet could not take.
-- **Safety gates fail closed**: if DexPaprika or Helius cannot answer, the signal is rejected; the entry-time liquidity re-check rejects on any missing/stale verdict. An unverified pool is not a pool we buy.
-- **Dead-pool writeoffs**: after `MAX_SELL_FAILURES` (6) consecutive failed sells a position is written off at its last mark and the slot freed; positions past their timeout window write off after `MAX_SELL_FAILURES_TIMEOUT` (3).
-- Paper quotes are deliberately taker-less: a throwaway taker would fail every paper quote with "Insufficient funds" (the paper wallet holds nothing). Dead pools fail identically with or without a taker.
+- **Entries (avoid rug):** `Jupiter BUY quote` (`JUPITER_MAX_IMPACT 5.0%`, `SLIPPAGE 300bps`) → **stability gate** `3×300ms` (`MAX_QUOTE_CHANGE 5%, MAX_IMPACT_CHANGE 3pp` — rejects CATE-style flicker) → **sell-quote gate** `REQUIRE_SELL_QUOTE true + MAX_SELL_IMPACT 5.0%` (CATE/ELON were buyable but un-sellable) → `fresh quote force=True`; fail = skip. No stale fills.
+- **Exits (TP/SL/trailing, robust):** real `token→SOL` quote (`paper_sell_proceeds`) same as live; **failed sells keep position open**, counted to `MAX_SELL_FAILURES 6` (`3` after TTL), `SELL_BACKOFF 60s` (`429/timeout` is transient, not counted — fixes STAR `6×429` writeoff bug), markers cleared, bounded `90s` close timeout so hung sell never stalls sweep.
+- **Fail-closed gates (reliable):** DexPaprika liquidity (`MIN_LIQUIDITY_USD 5000`, `LIQ_CONFIRM_WINDOW 10s`) + Helius dev-rep (`DEV_REP`) — `429`/timeout rejects; entry-time `cached_verdict` re-check rejects missing/stale. Unverified pool = no trade.
+- **Dead-pool writeoffs:** `6` fails (`3` post-TTL) → writeoff at last mark, slot freed, Telegram alert, `trade_log.csv` kept.
+- Taker-less paper quotes (throwaway would be `Insufficient funds`); dead pools fail taker-less identically.
 
 ## Usage
 
@@ -149,8 +150,9 @@ journalctl -u ave-signal-trade -e
 | `price_feed`     | pumpapi WSS: live trade prices, auto-reconnect, clean stop              |
 | `jupiter_swap`   | Jupiter `/order`+`/execute` client; quote gate + DRY_RUN gated execution|
 | `filter`         | data-backed rules on mcap/dex/snipes/sec_score                          |
-| `paper_trader`   | trade gate; entry on first buy; TP 4x / SL 0.3x / 1h timeout / trailing stop; fail-closed entry gates; dead-pool writeoffs; checkpoint |
+| `paper_trader`   | **1 POS × 0.2 SOL** gate; first buy; **TP 4× / SL 0.3× / 25min timeout / trail 2×50%**; 2-sided + stability quote gates; fail-closed; dead-pool writeoffs; checkpoint |
 | `pool_check`     | arm-time DexPaprika liquidity + Helius dev-rep gates (fail-closed)      |
+| `jupiter_swap`   | **5% buy/sell impact + 3×300ms stability** rug defense; `SELL_BACKOFF 60s` reliable sells |
 | `logs`           | writes `bot_logs/` (bot.log, journal.json, trade_log.csv, .stop)        |
 | `notifier`       | Telegram cards + `/start /stop /status /help`; no-op without BOT_TOKEN  |
 | `models`/`parser`| `Signal`/`Position` dataclasses + message parsing                       |

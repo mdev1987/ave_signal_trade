@@ -146,8 +146,8 @@ class JupiterSwap:
         dry_run: bool = True,
         private_key: str = "",
         base_url: str = "https://api.jup.ag",
-        slippage_bps: int = 500,
-        max_price_impact_pct: float = 15.0,
+        slippage_bps: int = 300,
+        max_price_impact_pct: float = 5.0,
         retries: int = 3,
     ) -> None:
         env = config.load_env()
@@ -161,6 +161,25 @@ class JupiterSwap:
             config.get(env, "JUPITER_MAX_IMPACT_PCT", max_price_impact_pct)
         )
         self._retries = int(config.get(env, "JUPITER_QUOTE_RETRIES", retries))
+        # Two-sided execution + stability gate (CATE/ELON defense).
+        # These are read here so JupiterSwap can be used standalone;
+        # PaperTrader also reads them via Settings for single-source config.
+        self.require_sell_quote = config.get_bool(env, "REQUIRE_SELL_QUOTE", True)
+        self.max_sell_impact_pct = float(
+            config.get(env, "MAX_SELL_IMPACT_PCT", 5.0)
+        )
+        self.quote_stability_checks = int(
+            config.get(env, "QUOTE_STABILITY_CHECKS", 3)
+        )
+        self.quote_stability_interval_ms = int(
+            config.get(env, "QUOTE_STABILITY_INTERVAL_MS", 300)
+        )
+        self.max_quote_change_pct = float(
+            config.get(env, "MAX_QUOTE_CHANGE_PCT", 5.0)
+        )
+        self.max_impact_change_pct = float(
+            config.get(env, "MAX_IMPACT_CHANGE_PCT", 3.0)
+        )
         self._quote_cache_s = config.get_float(env, "JUPITER_QUOTE_CACHE_S", 30.0)
         self._quote_throttle_s = config.get_float(env, "JUPITER_QUOTE_THROTTLE_S", 1.0)
         self._quote_retry_delay_s = config.get_float(env, "JUPITER_QUOTE_RETRY_DELAY_S", 1.0)
@@ -770,6 +789,121 @@ class JupiterSwap:
                 for k in list(self._quote_cache)[: max(len(self._quote_cache) - self._quote_cache_max, 0)]:
                     self._quote_cache.pop(k, None)
         return result
+
+    async def quote_sell(
+        self,
+        mint: str,
+        token_amount_raw: int,
+        slippage_bps: int | None = None,
+    ) -> QuoteResult | None:
+        """Verify that the *sell* side is quotable for the exact token amount.
+
+        This is the second half of the two-sided execution gate: a token may
+        be buyable (SOL→TOKEN route exists) but un-sellable (TOKEN→SOL has no
+        route, or price impact > cap). CATE/ELON/Google-AI all passed the buy
+        quote but failed every sell quote with ``Failed to get quotes``.
+        ``slippage_bps`` defaults to the buy slippage; callers that want the
+        escalation ladder should quote explicitly per rung via ``_do_quote_sell``.
+        """
+        slippage = slippage_bps if slippage_bps is not None else self._slippage_bps
+        return await self._do_quote_sell(mint, token_amount_raw, slippage)
+
+    async def _do_quote_sell(
+        self, mint: str, amount_raw: int, slippage_bps: int
+    ) -> QuoteResult:
+        """Single TOKEN→SOL order fetch + impact gate."""
+        self._qstats["quotes"] += 1
+        await self._quote_slot()
+        t0 = time.monotonic()
+        try:
+            # Always quote with taker in live mode so the route reflects the
+            # actual wallet's token balance/liquidity; in paper mode the taker
+            # is omitted (same as buy side) – the route check is identical and
+            # a drained pool still returns ``Failed to get quotes``.
+            if self._paper_quoting:
+                order = await self._order(mint, BASE_MINT, amount_raw, slippage_bps)
+            else:
+                # For live sell-quote we need a taker but may not have keypair
+                # during tests – fall back to taker-less if no key.
+                taker = str(self._keypair.pubkey()) if self._keypair else None
+                order = await self._order(mint, BASE_MINT, amount_raw, slippage_bps, taker)
+        except httpx.TimeoutException as exc:
+            reason = "quote_timeout"
+            self._qstats[reason] += 1
+            log.warning("sell-quote timeout for %s: %s", mint, exc)
+            return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, reason)
+        except JupiterError as exc:
+            reason = self._classify_error(exc)
+            self._qstats[reason] += 1
+            log.info("sell-quote %s for %s: %s", reason, mint, exc)
+            return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, reason)
+        except httpx.RequestError as exc:
+            self._qstats["quote_http_error"] += 1
+            log.warning("sell-quote http error for %s: %s", mint, exc)
+            return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, "quote_http_error")
+        except Exception:
+            self._qstats["quote_exception"] += 1
+            log.exception("sell-quote exception for %s", mint)
+            return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, "quote_exception")
+
+        latency_ms = (time.monotonic() - t0) * 1000
+        self._record_latency(latency_ms)
+        fetched_at = time.monotonic()
+        out = int(order.get("outAmount") or order.get("actualOutAmount") or 0)
+        impact = abs(float(order.get("priceImpact") or 0.0))
+        if impact == 0.0 and order.get("priceImpactPct"):
+            impact = abs(float(order["priceImpactPct"])) * 100.0
+        route = order.get("routePlan") or order.get("routes") or []
+        if out <= 0 or not route:
+            self._qstats["quote_no_route"] += 1
+            return QuoteResult(False, order, amount_raw, out, impact, len(route), latency_ms, "quote_no_route", fetched_at)
+        # Sell impact is checked against the tighter sell cap when set.
+        cap = self.max_sell_impact_pct if self.max_sell_impact_pct > 0 else self._max_impact
+        if impact > cap:
+            self._qstats["quote_impact"] += 1
+            return QuoteResult(False, order, amount_raw, out, impact, len(route), latency_ms, "quote_impact", fetched_at)
+        self._qstats["ok"] += 1
+        return QuoteResult(True, order, amount_raw, out, impact, len(route), latency_ms, "ok", fetched_at)
+
+    async def check_quote_stability(
+        self, mint: str, amount_raw: int
+    ) -> tuple[bool, str]:
+        """Stability gate: the same quote sampled N times must stay within pct bounds.
+
+        Returns ``(ok, reason)``. ``MAX_QUOTE_CHANGE_PCT`` bounds the
+        ``outAmount`` drift, ``MAX_IMPACT_CHANGE_PCT`` bounds the impact drift.
+        A pump-and-dump that loses ``-27%/-61%`` in 2s (vs healthy ``±1%``)
+        is rejected here before any buy. Uses ``force=True``-like behaviour
+        (bypasses cache) so each sample hits Jupiter.
+        """
+        checks = max(self.quote_stability_checks, 1)
+        interval_s = max(self.quote_stability_interval_ms, 0) / 1000.0
+        outs: list[int] = []
+        impacts: list[float] = []
+        for i in range(checks):
+            q = await self._do_quote(mint, amount_raw, self._slippage_bps)
+            if not q.success:
+                return False, f"stability_no_quote:{q.reason}"
+            outs.append(q.output_amount)
+            impacts.append(q.price_impact_pct)
+            if i + 1 < checks and interval_s > 0:
+                await asyncio.sleep(interval_s)
+        if not outs:
+            return False, "stability_no_samples"
+        base_out = outs[0]
+        base_impact = impacts[0]
+        if base_out == 0:
+            return False, "stability_zero_out"
+        for out in outs[1:]:
+            drift = abs(out - base_out) / base_out * 100.0
+            if drift > self.max_quote_change_pct:
+                return False, f"quote_drift:{drift:.1f}%>{self.max_quote_change_pct:.0f}%"
+        for imp in impacts[1:]:
+            drift = abs(imp - base_impact)
+            # impact is already a pct; drift is absolute pp difference.
+            if drift > self.max_impact_change_pct:
+                return False, f"impact_drift:{drift:.1f}pp>{self.max_impact_change_pct:.0f}pp"
+        return True, ""
 
     # ------------------------------------------------------------- high level
     async def buy(self, mint: str, amount_sol: float) -> SwapResult:
