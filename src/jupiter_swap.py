@@ -259,6 +259,11 @@ class JupiterSwap:
         self._lat_count = 0
         self._lat_max = 0.0
         self._lat_samples: deque = deque(maxlen=_LATENCY_SAMPLES_MAX)
+        # Last known live wallet SOL balance (updated by balance_sol()). Used
+        # for the pre-flight insufficient-funds check in _do_quote so a 0.025
+        # SOL wallet does not waste 3×1s retries on a 0.02 SOL quote that
+        # Jupiter will reject as generic 400 "Failed to get quotes".
+        self._live_balance_sol: float | None = None
 
     async def close(self) -> None:
         """Release the underlying HTTP client."""
@@ -388,7 +393,9 @@ class JupiterSwap:
             return None
         try:
             result = await self._rpc("getBalance", [str(self._keypair.pubkey())])
-            return float(result.get("value", 0)) / 1e9
+            bal = float(result.get("value", 0)) / 1e9
+            self._live_balance_sol = bal
+            return bal
         except Exception as e:  # noqa: BLE001
             log.warning("balance_sol failed: %s", e)
             return None
@@ -642,23 +649,54 @@ class JupiterSwap:
     def _classify_error(self, exc: JupiterError) -> str:
         """Map a Jupiter order failure to a skip-taxonomy reason."""
         st = exc.status
-        if "insufficient" in str(exc).lower():
+        msg = str(exc).lower()
+        if "insufficient" in msg:
             return "quote_insufficient_funds"
         if st == 429:
             return "quote_rate_limited"
         if st and 500 <= st < 600:
             return "quote_http_error"
         if st and 400 <= st < 500:
+            # Keep explicit insufficient handling above; generic 400 without
+            # "insufficient" and without balance proof is conservatively a route
+            # miss (rugged pool) not a wallet issue — paper quote would also fail
+            # if it were truly unroutable, but paper succeeds for these mints.
+            # The insufficient case is handled at call-site via amount vs balance.
             return (
-                "quote_no_route" if "route" in str(exc).lower() else "quote_http_error"
+                "quote_no_route" if "route" in msg or "failed to get quotes" in msg else "quote_http_error"
             )
-        if "route" in str(exc).lower():
+        if "route" in msg:
             return "quote_no_route"
         return "quote_invalid_response"
 
     async def _do_quote(self, mint: str, amount_raw: int, slippage_bps: int) -> QuoteResult:
         """Fetch one order and validate it against the quote-gate rules."""
         self._qstats["quotes"] += 1
+        # Pre-flight insufficient-funds check (live only). Wallet 0.025 SOL
+        # + size 0.02 SOL leaves <2M after ATA rent 4.07M (payer+spl) + fees,
+        # so Jupiter returns generic 400 "Failed to get quotes" that looks like
+        # no_route. Fail fast with quote_insufficient_funds (non-retryable)
+        # when the amount clearly exceeds the last known live balance.
+        # Rent is 4_078_560 (ATA + WSOL), plus 0.005 SOL dust buffer per
+        # Helius docs. Using 5M buffer catches 0.02 on 0.025 wallet while
+        # leaving 0.01 (10M+5M=15M<25M) to pass for healthy pools.
+        if not self._paper_quoting and self._live_balance_sol is not None:
+            # Buffer: ATA 2_039_280*2 + fee 10bps + sig/prio ~10k + dust 2M
+            buffer_lamports = 6_000_000
+            try:
+                bal_lamports = int(self._live_balance_sol * 1e9)
+                if amount_raw + buffer_lamports > bal_lamports:
+                    reason = "quote_insufficient_funds"
+                    self._qstats[reason] += 1
+                    log.warning(
+                        "quote %s for %s: amount %d + buffer %d > balance %d "
+                        "(%.4f SOL) — skipping Jupiter call",
+                        reason, mint, amount_raw, buffer_lamports,
+                        bal_lamports, self._live_balance_sol,
+                    )
+                    return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, reason)
+            except Exception:
+                pass  # balance check is best-effort; fall through to Jupiter
         await self._quote_slot()
         t0 = time.monotonic()
         try:
