@@ -1,8 +1,12 @@
-"""Live price feed over the pumpapi.io WebSocket.
+"""Live price + pool-state feed over the pumpapi.io WebSocket.
 
-The stream delivers every event for all pools (buys, sells, creates, ...).
-The feed filters to ``buy``/``sell`` events, keeps the latest price per mint,
-and lets callers await a fresh price tick for a specific contract address.
+The stream delivers every event for all pools (buys, sells, creates, liquidity
+add/remove, migrations, ...). The feed keeps the latest price per mint AND a
+bounded per-mint rug-feature state parsed from fields the stream carries on
+every event (``burnedLiquidity``, ``quoteInPool``, ``poolCreatedBy``, mint/
+freeze authority) — zero-latency pool intelligence that needs no external API.
+Callers use :meth:`pool_state` at the entry moment to veto freshly-drained or
+unburned-LP pools.
 """
 
 from __future__ import annotations
@@ -10,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 
@@ -18,6 +23,21 @@ import websockets
 logger = logging.getLogger(__name__)
 
 EventCallback = Callable[[dict], Awaitable[None]]
+
+# Event actions that signal liquidity leaving a pool (pumpapi stream).
+_LIQ_REMOVE_ACTIONS = {"remove", "removeliquidity", "remove_liquidity"}
+
+
+def _pct_of(raw) -> float | None:
+    """Parse ``burnedLiquidity``-style values ("100%", 100, 0.85) to percent."""
+    if raw is None:
+        return None
+    try:
+        s = str(raw).strip().rstrip("%")
+        v = float(s)
+    except (TypeError, ValueError):
+        return None
+    return v
 
 
 class PriceFeed:
@@ -50,6 +70,13 @@ class PriceFeed:
         self.recv_timeout_s = recv_timeout_s
         self.max_prices = max_prices
         self.prices: OrderedDict[str, float] = OrderedDict()
+        # Per-mint rug-feature state from stream fields (LRU-bounded):
+        #   quote_in_pool      actual SOL reserves at last event
+        #   burned_pct         LP burn percent ("100%" -> 100.0); None unknown
+        #   pool_created_by    e.g. "pump" (trusted migration) when present
+        #   mint_authority_set / freeze_authority_set
+        #   liq_removed_ts     last liquidity-REMOVAL event time for this mint
+        self._pool_state: OrderedDict[str, dict] = OrderedDict()
         self._new_trades: dict[str, asyncio.Event] = {}
         self._stop = asyncio.Event()
 
@@ -65,10 +92,51 @@ class PriceFeed:
             return None
 
     def _mint_of(self, event: dict) -> str | None:
-        """Return the token mint for buy/sell events (or None)."""
-        if event.get("action") not in ("buy", "sell"):
-            return None
-        return event.get("mint") or (event.get("pool") or {}).get("mint")
+        """Return the token mint for any event that carries one."""
+        mint = event.get("mint") or (event.get("pool") or {}).get("mint")
+        return mint if isinstance(mint, str) and mint else None
+
+    def _update_pool_state(self, event: dict, mint: str) -> None:
+        """Fold one raw event's pool/rug fields into per-mint state.
+
+        Every field is best-effort: the stream attaches them to most events
+        (buys/sells included), so state converges within the first tick after
+        connect — no extra subscription, no API call, no added latency.
+        """
+        st = self._pool_state.get(mint)
+        if st is None:
+            if len(self._pool_state) >= self.max_prices:
+                self._pool_state.popitem(last=False)
+            st = {}
+        action = str(event.get("action") or "").lower()
+        qi = event.get("quoteInPool")
+        if qi is not None:
+            try:
+                st["quote_in_pool"] = float(qi)
+            except (TypeError, ValueError):
+                pass
+        burned = _pct_of(event.get("burnedLiquidity"))
+        if burned is not None:
+            st["burned_pct"] = burned
+        pcr = event.get("poolCreatedBy")
+        if isinstance(pcr, str) and pcr:
+            st["pool_created_by"] = pcr
+        for key, field in (("mint_authority_set", "mintAuthority"),
+                           ("freeze_authority_set", "freezeAuthority")):
+            if field in event:
+                # Explicit null = authority revoked (good); only a missing
+                # key stays unknown.
+                st[key] = bool(event[field])
+        if action in _LIQ_REMOVE_ACTIONS:
+            st["liq_removed_ts"] = time.time()
+        st["ts"] = time.time()
+        self._pool_state[mint] = st
+        self._pool_state.move_to_end(mint)
+
+    def pool_state(self, mint: str) -> dict | None:
+        """Latest known pool/rug-feature state for ``mint`` (None if unseen)."""
+        st = self._pool_state.get(mint)
+        return dict(st) if st else None
 
     async def _handle(self, event: dict) -> None:
         """Update price state for a single event and wake waiters."""
@@ -78,6 +146,13 @@ class PriceFeed:
             except Exception:
                 logger.exception("on_event callback failed")
         mint = self._mint_of(event)
+        if mint:
+            # Pool/rug features ride on most events — fold them in first so
+            # state exists even for mints whose price is unusable.
+            try:
+                self._update_pool_state(event, mint)
+            except Exception:
+                logger.exception("pool-state update failed")
         price = self._price_of(event)
         if mint and price and price > 0:
             self.prices[mint] = price

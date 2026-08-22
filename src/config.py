@@ -142,6 +142,12 @@ class Settings:
     scam_damper_enabled: bool = True
     scam_damper_max_cas: int = 3
     scam_damper_window_min: float = 360.0
+    # PumpAPI pool-state vetoes (zero latency, parsed from the stream we
+    # already subscribe to). A liquidity REMOVAL seen within the veto window
+    # rejects outright; burned-LP below MIN_BURNED_LIQ_PCT rejects when >0
+    # (0 = log-only until measured — pumpapi docs flag 0% as rug-able).
+    liq_remove_veto_s: float = 120.0
+    min_burned_liq_pct: float = 0.0
 
     # --- jupiter ---------------------------------------------------------
     dry_run: bool = True
@@ -257,6 +263,8 @@ class Settings:
             scam_damper_enabled=get_bool(env, "SCAM_DAMPER_ENABLED", True),
             scam_damper_max_cas=get_int(env, "SCAM_DAMPER_MAX_CAS", 3),
             scam_damper_window_min=get_float(env, "SCAM_DAMPER_WINDOW_MIN", 360.0),
+            liq_remove_veto_s=get_float(env, "LIQ_REMOVE_VETO_S", 120.0),
+            min_burned_liq_pct=get_float(env, "MIN_BURNED_LIQ_PCT", 0.0),
             dry_run=get_bool(env, "DRY_RUN", True),
             private_key=get(env, "PRIVATE_KEY", ""),
             jupiter_api_key=get(env, "JUPITER_API_KEY", ""),
@@ -354,6 +362,8 @@ class Settings:
             ("SCAM_DAMPER_ENABLED", "true" if self.scam_damper_enabled else "false"),
             ("SCAM_DAMPER_MAX_CAS", str(self.scam_damper_max_cas)),
             ("SCAM_DAMPER_WINDOW_MIN", f"{self.scam_damper_window_min:g}"),
+            ("LIQ_REMOVE_VETO_S", f"{self.liq_remove_veto_s:g}"),
+            ("MIN_BURNED_LIQ_PCT", f"{self.min_burned_liq_pct:g}"),
             ("BOT_TOKEN", self.bot_token),
             ("CHAT_ID", self.chat_id),
             ("TELEGRAM_API_ID", self.telegram_api_id),

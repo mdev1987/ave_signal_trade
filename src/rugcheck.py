@@ -27,6 +27,8 @@ from typing import Any
 
 import httpx
 
+import logs
+
 logger = logging.getLogger(__name__)
 
 
@@ -140,6 +142,32 @@ class RugChecker:
         while len(self._cache) > self._cache_max:
             self._cache.pop(next(iter(self._cache)), None)
 
+    # Feature needles (lowercase substrings) tracked as measurable outcomes.
+    _FEATURES = ("lp unlocked", "mint authority", "freeze authority")
+
+    @classmethod
+    def features(cls, summary: dict[str, Any] | None) -> dict[str, bool]:
+        """Per-risk boolean features for outcome research.
+
+        Returns ``{"report_missing": ..., "lp_unlocked": ...,
+        "mint_authority": ..., "freeze_authority": ...}`` so every evaluation
+        can be journaled and later correlated with trade results — the
+        reviewer's point being that mint/freeze authority vetoes go beyond
+        the LP-unlocked evidence and their false-positive rate must be
+        measured, not assumed.
+        """
+        missing = summary is None
+        names = " | ".join(
+            str(r.get("name") or "").lower() for r in ((summary or {}).get("risks") or [])
+        )
+        return {
+            "report_missing": missing,
+            **{
+                feat.replace(" ", "_"): (not missing and feat in names)
+                for feat in cls._FEATURES
+            },
+        }
+
     def evaluate(
         self, mint: str, summary: dict[str, Any] | None
     ) -> tuple[bool, str]:
@@ -167,7 +195,13 @@ class RugChecker:
         return True, ""
 
     async def check(self, mint: str) -> tuple[bool, str]:
-        """Full gate: fetch (cached) then evaluate.
+        """Full gate: fetch (cached) then evaluate, and journal the features.
+
+        Every evaluation is journaled as a ``rugcheck`` event with the
+        per-risk boolean features (``report_missing``, ``lp_unlocked``,
+        ``mint_authority``, ``freeze_authority``) plus the verdict — so the
+        veto list's false-positive rate can be measured against realized
+        trades instead of assumed.
 
         Args:
             mint: Token contract address.
@@ -181,8 +215,14 @@ class RugChecker:
             logger.warning("rugcheck gate error %s: %s", mint, e)
             summary = None
             if self.fail_closed:
-                return False, "gate error"
+                ok, reason = False, "gate error"
+                flags = self.features(None)
+                logs.journal("rugcheck", ca=mint, ok=ok, reason=reason, **flags)
+                return ok, reason
         ok, reason = self.evaluate(mint, summary)
+        flags = self.features(summary)
+        logs.journal("rugcheck", ca=mint, ok=ok,
+                     reason=reason or None, veto_risks=list(self.veto_risks), **flags)
         if not ok:
             logger.info("rugcheck VETO %s: %s", mint, reason)
         return ok, reason

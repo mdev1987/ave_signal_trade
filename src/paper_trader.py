@@ -114,6 +114,8 @@ class PaperTrader:
         sell_backoff_s: float = 60.0,
         trail_activate_mult: float = 2.0,
         trail_retrace_pct: float = 0.5,
+        liq_remove_veto_s: float = 120.0,
+        min_burned_liq_pct: float = 0.0,
         progress_cb=None,
     ) -> None:
         self.feed = feed
@@ -146,6 +148,12 @@ class PaperTrader:
         self.sell_backoff_s = sell_backoff_s
         self.trail_activate_mult = trail_activate_mult
         self.trail_retrace_pct = trail_retrace_pct
+        # PumpAPI pool-state vetoes (zero latency, from the stream we already
+        # subscribe to): a liquidity REMOVAL seen within liq_remove_veto_s
+        # rejects outright; burned-LP below min_burned_liq_pct rejects when
+        # >0 (0 keeps it log-only until measured). Unknown state = pass.
+        self.liq_remove_veto_s = liq_remove_veto_s
+        self.min_burned_liq_pct = min_burned_liq_pct
         # Hard cap on one close operation (live sell: quote + execute + confirm).
         # Bounded so a hung sell can never stall the whole sweep loop.
         self._close_timeout_s = 90.0
@@ -581,6 +589,94 @@ class PaperTrader:
         return "http 400" in low and "insufficient" in low
 
     # ------------------------------------------------------------------- events
+    async def _validated_entry(self, mint: str) -> tuple[Any | None, str]:
+        """Run the full execution gate at the ENTRY moment and return the order.
+
+        Sequence (reviewer-specified architecture):
+
+        1. FINAL buy ``/order`` for ``size_sol`` (fresh, cache-bypassed)
+        2. stability burst measured AGAINST that quote
+        3. sell ``/order`` for exactly that quote's output amount
+
+        The returned :class:`QuoteResult.order` is then executed as-is by the
+        caller (:meth:`jupiter.execute_order`) or used as the paper fill — so
+        the validated market state and the executed market state are the same.
+
+        Returns:
+            ``(final_quote, "")`` on success, ``(None, skip_reason)`` otherwise.
+        """
+        # Zero-latency pool gate from the PumpAPI stream state (no API call):
+        # a liquidity REMOVAL observed within the veto window means the pool
+        # is being drained right now — the exact failure mode of TONK/NEX Ai.
+        st = self.feed.pool_state(mint) if self.feed is not None else None
+        if st:
+            logs.journal(
+                "poolfeat", ca=mint,
+                quote_in_pool=st.get("quote_in_pool"),
+                burned_pct=st.get("burned_pct"),
+                pool_created_by=st.get("pool_created_by"),
+                mint_authority_set=st.get("mint_authority_set"),
+                freeze_authority_set=st.get("freeze_authority_set"),
+            )
+            removed_s_ago = (
+                time.time() - st["liq_removed_ts"]
+                if st.get("liq_removed_ts") else None
+            )
+            if (self.liq_remove_veto_s > 0 and removed_s_ago is not None
+                    and removed_s_ago <= self.liq_remove_veto_s):
+                reason = f"liq_removed:{removed_s_ago:.0f}s_ago"
+                logger.info("SKIP %s entry: %s", mint, reason)
+                logs.journal("skip_entry", ca=mint, reason=reason)
+                return None, reason
+            burned = st.get("burned_pct")
+            if self.min_burned_liq_pct > 0 and (
+                    burned is None or burned < self.min_burned_liq_pct):
+                reason = f"unburned_lp:{burned if burned is not None else 'unknown'}"
+                logger.info("SKIP %s entry: %s (<%.0f%%)", mint, reason,
+                            self.min_burned_liq_pct)
+                logs.journal("skip_entry", ca=mint, reason=reason)
+                return None, reason
+        amount_raw = int(self.size_sol * 1e9)
+        final = await self.jupiter.quote(mint, amount_raw, force=True)
+        if final is None or not final.success:
+            reason = final.reason if final else "quote_exception"
+            logger.info("SKIP %s entry: no route (%s)", mint, reason)
+            logs.journal("skip_entry", ca=mint, reason=f"no_route:{reason}")
+            return None, reason
+        logs.journal("route", ca=mint, out_amount=final.output_amount,
+                     price_impact_pct=final.price_impact_pct,
+                     routes=final.route_count,
+                     router=final.router or None, mode=final.mode or None,
+                     slippage_bps=final.slippage_bps)
+        # Stability burst: drift measured against THE executable quote.
+        checks = getattr(self.jupiter, "quote_stability_checks", 0)
+        if checks and checks > 1:
+            ok, stab_reason = await self.jupiter.check_quote_stability(
+                mint, amount_raw, base=final
+            )
+            if not ok:
+                logger.info("SKIP %s entry: unstable (%s)", mint, stab_reason)
+                logs.journal("skip_entry", ca=mint, reason=f"unstable:{stab_reason}")
+                return None, stab_reason
+        # Sell-side gate on the FINAL output (CATE/ELON defense).
+        if getattr(self.jupiter, "require_sell_quote", True):
+            if final.output_amount <= 0:
+                logger.info("SKIP %s entry: zero out – cannot check sell", mint)
+                logs.journal("skip_entry", ca=mint, reason="no_sell_route:zero_out")
+                return None, "zero_out"
+            sell_q = await self.jupiter.quote_sell(mint, final.output_amount)
+            if sell_q is None or not sell_q.success:
+                reason = sell_q.reason if sell_q else "sell_quote_exception"
+                logger.info("SKIP %s entry: no sell route (%s)", mint, reason)
+                logs.journal("skip_entry", ca=mint, reason=f"no_sell_route:{reason}")
+                return None, reason
+            logs.journal("sell_route", ca=mint,
+                         sell_out=sell_q.output_amount,
+                         sell_impact=sell_q.price_impact_pct,
+                         router=sell_q.router or None, mode=sell_q.mode or None,
+                         slippage_bps=sell_q.slippage_bps)
+        return final, ""
+
     async def on_event(self, event: dict) -> None:
         """Async feed callback: fill entries and update open positions.
 
@@ -646,9 +742,15 @@ class PaperTrader:
                     logs.journal("skip_entry", ca=mint,
                                  reason=f"pool_drained:{reason}")
                     return
-            # Live mode: place the real buy before opening the position.
+            # --- FINAL ENTRY GATE: validate the exact order we execute ---
+            final = None
+            if self.jupiter is not None:
+                final, _skip_reason = await self._validated_entry(mint)
+                if final is None:
+                    return
+            # Live mode: execute THE validated order (never a fresh quote).
             if self.jupiter is not None and self.jupiter.live:
-                swap = await self.jupiter.buy(mint, self.size_sol)
+                swap = await self.jupiter.execute_order(final.order)
                 if not swap.success:
                     logger.warning("LIVE BUY FAILED %s: %s", mint, swap.error)
                     logs.journal("buy_failed", ca=mint, error=swap.error)
@@ -665,26 +767,11 @@ class PaperTrader:
                         entry_px = self.size_sol / token_amt
                 logger.info("LIVE BUY %s @ %.12g SOL (sig=%s)",
                             mint, entry_px, swap.signature[:16])
-            # Paper fill simulation: fill at the quote's expected price (which
-            # already bakes in slippage + price impact) rather than the raw
-            # feed tick, and bank the matching raw token amount so paper exits
-            # can simulate a real sell of exactly those tokens. The quote is
-            # refreshed NOW (force=True bypasses the quote cache) so the paper
-            # entry reflects the live orderbook at entry time — never a stale
-            # arm-time quote. A failed refresh skips the entry entirely (no
-            # fabricated fill), mirroring live where an un-quotable buy fails.
+            # Paper fill simulation: fill from THE validated final quote's
+            # output (slippage + impact baked in) — the same numbers a live
+            # buy would have executed against, not a second fresh quote.
             elif self.paper_fill_sim and self.jupiter is not None:
-                route = await self.jupiter.quote(
-                    mint, int(self.size_sol * 1e9), force=True
-                )
-                if route is None or not route.success:
-                    reason = route.reason if route else "no quote"
-                    logger.info("SKIP %s paper entry: fresh quote failed (%s)",
-                                mint, reason)
-                    logs.journal("skip_entry", ca=mint, reason=f"paper_quote:{reason}")
-                    self._signals_seen.discard(mint)
-                    return
-                out = route.output_amount
+                out = final.output_amount
                 if out and out > 0:
                     decimals = await self.jupiter.token_decimals(mint)
                     if decimals is None:
@@ -693,7 +780,7 @@ class PaperTrader:
                     if token_amt > 0:
                         entry_px = self.size_sol / token_amt
                         self._token_amounts[mint] = out
-                        logger.info("PAPER FILL %s @ %.12g SOL (fresh quote out=%d)",
+                        logger.info("PAPER FILL %s @ %.12g SOL (final quote out=%d)",
                                     mint, entry_px, out)
             pos = Position(
                 ca=mint,
@@ -735,12 +822,12 @@ class PaperTrader:
     async def offer(self, sig: Signal, quiet: bool = False) -> None:
         """Mark a passing signal as eligible for entry on first trade.
 
-        Rejects the signal when the trade gate is closed, or when Jupiter has
-        no usable route (quote gate, never executed in paper mode).
-
-        Args:
-            sig: A filtered signal that passed all rules.
-            quiet: Suppress the Telegram arm card (used during backfill).
+        Arm-time applies only the CHEAP gates (trade gate, slot limit, pool
+        liquidity, dev-rep, RugCheck). All Jupiter execution validation
+        (final buy quote, stability burst, sell-side quote) moved to the
+        actual entry moment in :meth:`on_event` — validating Quote A at arm
+        time and executing Quote B seconds later left a gap where the
+        validated route and the executed route could differ entirely.
         """
         if not self.gate_open:
             logger.info("SKIP %s (%s): gate closed", sig.ca, sig.name)
@@ -784,46 +871,9 @@ class PaperTrader:
                 logger.info("SKIP %s (%s): rugcheck (%s)", sig.ca, sig.name, reason)
                 logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"rugcheck:{reason}")
                 return
-        if self.jupiter is not None:
-            # --- entry-risk gate (paper experiment spec) -----------------
-            # 1) BUY quote – must exist and respect JUPITER_MAX_IMPACT_PCT (5.0)
-            amount_raw = int(self.size_sol * 1e9)
-            route = await self.jupiter.quote(sig.ca, amount_raw)
-            if route is None or not route.success:
-                reason = route.reason if route else "quote_exception"
-                logger.info("SKIP %s (%s): no jupiter route (%s)", sig.ca, sig.name, reason)
-                logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"no_route:{reason}")
-                return
-            logs.journal("route", ca=sig.ca, name=sig.name,
-                         out_amount=route.output_amount,
-                         price_impact_pct=route.price_impact_pct,
-                         routes=route.route_count)
-            # 2) Stability gate – same quote must stay within pct bounds for ~1s.
-            #    CATE warned via slippage failure before buy; treat as rug signal.
-            if getattr(self.jupiter, "quote_stability_checks", 0) and self.jupiter.quote_stability_checks > 1:
-                ok, stab_reason = await self.jupiter.check_quote_stability(sig.ca, amount_raw)
-                if not ok:
-                    logger.info("SKIP %s (%s): quote unstable (%s)", sig.ca, sig.name, stab_reason)
-                    logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"unstable:{stab_reason}")
-                    return
-            # 3) SELL quote for the exact token amount the buy would net.
-            #    Direct defense against CATE/ELON/Google-AI: buyable but un-sellable.
-            if getattr(self.jupiter, "require_sell_quote", True):
-                token_out = route.output_amount
-                if token_out and token_out > 0:
-                    sell_q = await self.jupiter.quote_sell(sig.ca, token_out)
-                    if sell_q is None or not sell_q.success:
-                        reason = sell_q.reason if sell_q else "sell_quote_exception"
-                        logger.info("SKIP %s (%s): no sell quote (%s)", sig.ca, sig.name, reason)
-                        logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"no_sell_route:{reason}")
-                        return
-                    logs.journal("sell_route", ca=sig.ca, name=sig.name,
-                                 sell_out=sell_q.output_amount,
-                                 sell_impact=sell_q.price_impact_pct)
-                else:
-                    logger.info("SKIP %s (%s): buy quote outAmount 0 – cannot check sell", sig.ca, sig.name)
-                    logs.journal("skip", ca=sig.ca, name=sig.name, reason="no_sell_route:zero_out")
-                    return
+        # NOTE: Jupiter validation (buy quote, stability, sell quote) is NOT
+        # done here anymore. It runs at the ENTRY MOMENT in on_event() so the
+        # validated order IS the executed order — see _validated_entry().
         self._signals_seen.add(sig.ca)
         self._signals_info[sig.ca] = sig
         self._names[sig.ca] = sig.name

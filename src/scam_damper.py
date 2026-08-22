@@ -31,9 +31,15 @@ def normalize_name(name: str) -> str:
 class ScamDamper:
     """Rolling-window name-frequency veto used by the live signal path.
 
+    Semantics: the CURRENT signal is recorded first, so ``max_cas=N`` rejects
+    **once the current signal makes the distinct-CA count reach N** — i.e.
+    with N=3 it is the *third* distinct CA of a name that gets rejected, not
+    the fourth. That is intentional (conservative for relaunch farms).
+
     Args:
         max_cas: Distinct CAs sharing one normalized name within the window
-            before new signals with that name are rejected.
+            before new signals with that name are rejected (count includes
+            the current signal).
         window_s: Rolling window length in seconds.
     """
 

@@ -42,6 +42,14 @@ def get_filter() -> dict:
                     overrides[key] = int(raw)
                 except ValueError:
                     pass
+        # Allowed DEX set as CSV (``FILTER_DEXS=Pumpfunamm`` or
+        # ``Pumpfunamm,Raydium``). Replaces the default set wholesale so
+        # DEX experiments need no code changes; membership stays exact.
+        dexes_raw = env.get("FILTER_DEXS")
+        if dexes_raw is not None and dexes_raw.strip():
+            overrides["dexes"] = {
+                d.strip() for d in dexes_raw.split(",") if d.strip()
+            }
     return {**FILTER, **overrides}
 
 REASONS = {

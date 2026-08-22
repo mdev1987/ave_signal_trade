@@ -279,6 +279,14 @@ async def _trade_loop(
             "rugcheck gate ON (veto=%s fail_closed=%s)",
             list(rug_checker.veto_risks), rug_checker.fail_closed,
         )
+    # Log the active filter tier so L1 (production core) and L2 (experiment)
+    # runs are distinguishable in bot.log/journal when comparing outcomes.
+    rules = filt.get_filter()
+    logger.info(
+        "filter tier: mcap $%s-%s snipes>=%s sec<=%s dex=%s",
+        rules["mcap_usd_min"], rules["mcap_usd_max"], rules["snipes_min"],
+        rules["sec_score_max"], sorted(rules["dexes"]),
+    )
     # Health watchdog: if the sweep loop stops making progress (wedged event
     # loop, hung I/O), force-exit so systemd/no-supervisor restarts it. The
     # checkpoint is saved every CHECKPOINT_SAVE_S in run_sweep, so a forced
@@ -330,6 +338,8 @@ async def _trade_loop(
         sell_backoff_s=s.sell_backoff_s,
         trail_activate_mult=s.trail_activate_mult,
         trail_retrace_pct=s.trail_retrace_pct,
+        liq_remove_veto_s=s.liq_remove_veto_s,
+        min_burned_liq_pct=s.min_burned_liq_pct,
         progress_cb=_mark_progress,
     )
     seen_cas: set[str] = set()

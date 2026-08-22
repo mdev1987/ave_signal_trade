@@ -115,6 +115,10 @@ class QuoteResult:
     #   "quote_insufficient_funds" taker lacks balance to assemble the order
     #   "quote_exception"        unexpected error while quoting
 
+    router: str = ""  # "metis" | "jupiterz" | "dflow" | "okx" (route diagnostics)
+    mode: str = ""  # "ultra" (RTSE, all routers) | "manual" (optional params set)
+    slippage_bps: int | None = None  # applied slippage (RTSE-chosen when omitted)
+
     @property
     def retryable(self) -> bool:
         """True when a retry could plausibly succeed (route not ready yet)."""
@@ -157,6 +161,13 @@ class JupiterSwap:
         if api_key:
             self._headers["x-api-key"] = api_key
         self._slippage_bps = int(config.get(env, "JUPITER_SLIPPAGE_BPS", slippage_bps))
+        # RTSE (Real-Time Slippage Estimator): omit slippageBps on BUY /order
+        # so Jupiter applies optimized slippage in ultra mode with all routers
+        # eligible. Verified against Jupiter's routing-impact matrix: any
+        # optional param (incl. slippageBps) flips /order to "manual" mode,
+        # which may restrict routing. Sells keep explicit slippage because
+        # execution certainty dominates on exits.
+        self._buy_rtse = config.get_bool(env, "JUPITER_ORDER_RTSE", True)
         self._max_impact = float(
             config.get(env, "JUPITER_MAX_IMPACT_PCT", max_price_impact_pct)
         )
@@ -211,8 +222,8 @@ class JupiterSwap:
                                                    _DEFAULT_EXECUTE_TIMEOUT_S)
         self._rpc_timeout_s = config.get_float(env, "RPC_TIMEOUT_S",
                                                _DEFAULT_RPC_TIMEOUT_S)
-        self._quote_cache_max = int(config.get(env, "QUOTE_CACHE_MAX",
-                                               _DEFAULT_QUOTE_CACHE_MAX))
+        self._quote_cache_max = int(config.get(env, "JUPITER_QUOTE_CACHE_MAX",
+                                                _DEFAULT_QUOTE_CACHE_MAX))
 
         key = private_key or config.get(env, "PRIVATE_KEY")
         self._keypair: Keypair | None = None
@@ -500,10 +511,21 @@ class JupiterSwap:
         input_mint: str,
         output_mint: str,
         amount: int,
-        slippage_bps: int,
+        slippage_bps: int | None,
         taker: str | None = None,
     ) -> dict:
         """Request a swap quote (and, with a taker, an assembled transaction).
+
+        Args:
+            slippage_bps: Explicit slippage cap in bps, or ``None`` to omit
+                the parameter entirely. On ``/order`` an omitted slippage
+                enables Jupiter's RTSE (Real-Time Slippage Estimator) in
+                **ultra** mode with ALL routers eligible (Metis / JupiterZ
+                RFQ / Dflow / OKX); passing any optional param such as
+                ``slippageBps`` flips the response to **manual** mode which
+                may restrict routing (per Jupiter's routing-impact matrix).
+                Buys default to RTSE (``JUPITER_ORDER_RTSE=true``); sells keep
+                explicit slippage because execution certainty dominates.
 
         Live mode passes ``taker`` so Jupiter builds an executable transaction.
         Paper mode deliberately omits it: a throwaway taker would make Jupiter
@@ -517,8 +539,9 @@ class JupiterSwap:
             "inputMint": input_mint,
             "outputMint": output_mint,
             "amount": str(amount),
-            "slippageBps": slippage_bps,
         }
+        if slippage_bps is not None:
+            params["slippageBps"] = str(slippage_bps)
         if taker is not None:
             params["taker"] = str(taker)
 
@@ -628,15 +651,24 @@ class JupiterSwap:
         )
 
     # ------------------------------------------------------------------- quote
-    async def _quote_slot(self) -> None:
-        """Throttle all quote requests to N/sec (Jupiter free tier)."""
+    async def _quote_slot(self, min_spacing: float | None = None) -> None:
+        """Throttle quote requests (Jupiter free tier).
+
+        Args:
+            min_spacing: Override the global spacing for this request. The
+                stability burst passes ``QUOTE_STABILITY_INTERVAL_MS`` here so
+                its samples run at the configured cadence (~300ms) instead of
+                the 1s global throttle — a genuine short stability window
+                rather than a multi-second stall on a fresh launch.
+        """
+        spacing = self._quote_throttle_s if min_spacing is None else min_spacing
         async with self._quote_lock:
             now = time.monotonic()
             wait = self._next_quote_ts - now
             if wait > 0:
                 await asyncio.sleep(wait)
                 now = time.monotonic()
-            self._next_quote_ts = now + self._quote_throttle_s
+            self._next_quote_ts = now + spacing
 
     def _record_latency(self, ms: float) -> None:
         self._lat_sum += ms
@@ -667,8 +699,19 @@ class JupiterSwap:
             return "quote_no_route"
         return "quote_invalid_response"
 
-    async def _do_quote(self, mint: str, amount_raw: int, slippage_bps: int) -> QuoteResult:
-        """Fetch one order and validate it against the quote-gate rules."""
+    async def _do_quote(
+        self,
+        mint: str,
+        amount_raw: int,
+        slippage_bps: int,
+        min_spacing: float | None = None,
+    ) -> QuoteResult:
+        """Fetch one order and validate it against the quote-gate rules.
+
+        Args:
+            min_spacing: Optional throttle override (see :meth:`_quote_slot`);
+                ``None`` uses the global ``JUPITER_QUOTE_THROTTLE_S``.
+        """
         self._qstats["quotes"] += 1
         # Pre-flight insufficient-funds check (live only). Wallet 0.025 SOL
         # + size 0.02 SOL leaves <2M after ATA rent 4.07M (payer+spl) + fees,
@@ -695,17 +738,19 @@ class JupiterSwap:
                     return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, reason)
             except Exception:
                 pass  # balance check is best-effort; fall through to Jupiter
-        await self._quote_slot()
+        await self._quote_slot(min_spacing)
         t0 = time.monotonic()
         try:
+            # RTSE buy: omit slippageBps -> ultra mode, all routers eligible.
+            buy_slip = None if self._buy_rtse else self._slippage_bps
             if self._paper_quoting:
-                order = await self._order(BASE_MINT, mint, amount_raw, slippage_bps)
+                order = await self._order(BASE_MINT, mint, amount_raw, buy_slip)
             else:
                 order = await self._order(
                     BASE_MINT,
                     mint,
                     amount_raw,
-                    slippage_bps,
+                    buy_slip,
                     str(self._keypair.pubkey()),
                 )
         except httpx.TimeoutException as exc:
@@ -739,44 +784,34 @@ class JupiterSwap:
         impact = abs(float(order.get("priceImpact") or 0.0))
         if impact == 0.0 and order.get("priceImpactPct"):
             impact = abs(float(order["priceImpactPct"])) * 100.0
+        router = str(order.get("router") or "")
+        mode = str(order.get("mode") or "")
+        try:
+            slip_bps: int | None = (
+                int(order["slippageBps"]) if order.get("slippageBps") is not None else None
+            )
+        except (TypeError, ValueError):
+            slip_bps = None
         route = order.get("routePlan") or order.get("routes") or []
         if out <= 0 or not route:
             self._qstats["quote_no_route"] += 1
             return QuoteResult(
-                False,
-                order,
-                amount_raw,
-                out,
-                impact,
-                len(route),
-                latency_ms,
-                "quote_no_route",
-                fetched_at,
+                False, order, amount_raw, out, impact, len(route),
+                latency_ms, "quote_no_route", fetched_at,
+                router=router, mode=mode, slippage_bps=slip_bps,
             )
         if impact > self._max_impact:
             self._qstats["quote_impact"] += 1
             return QuoteResult(
-                False,
-                order,
-                amount_raw,
-                out,
-                impact,
-                len(route),
-                latency_ms,
-                "quote_impact",
-                fetched_at,
+                False, order, amount_raw, out, impact, len(route),
+                latency_ms, "quote_impact", fetched_at,
+                router=router, mode=mode, slippage_bps=slip_bps,
             )
         self._qstats["ok"] += 1
         return QuoteResult(
-            True,
-            order,
-            amount_raw,
-            out,
-            impact,
-            len(route),
-            latency_ms,
-            "ok",
-            fetched_at,
+            True, order, amount_raw, out, impact, len(route),
+            latency_ms, "ok", fetched_at,
+            router=router, mode=mode, slippage_bps=slip_bps,
         )
 
     async def quote(
@@ -889,40 +924,69 @@ class JupiterSwap:
         impact = abs(float(order.get("priceImpact") or 0.0))
         if impact == 0.0 and order.get("priceImpactPct"):
             impact = abs(float(order["priceImpactPct"])) * 100.0
+        try:
+            slip_bps: int | None = (
+                int(order["slippageBps"]) if order.get("slippageBps") is not None else None
+            )
+        except (TypeError, ValueError):
+            slip_bps = None
+        diag = {"router": str(order.get("router") or ""),
+                "mode": str(order.get("mode") or ""), "slippage_bps": slip_bps}
         route = order.get("routePlan") or order.get("routes") or []
         if out <= 0 or not route:
             self._qstats["quote_no_route"] += 1
-            return QuoteResult(False, order, amount_raw, out, impact, len(route), latency_ms, "quote_no_route", fetched_at)
+            return QuoteResult(False, order, amount_raw, out, impact, len(route), latency_ms, "quote_no_route", fetched_at, **diag)
         # Sell impact is checked against the tighter sell cap when set.
         cap = self.max_sell_impact_pct if self.max_sell_impact_pct > 0 else self._max_impact
         if impact > cap:
             self._qstats["quote_impact"] += 1
-            return QuoteResult(False, order, amount_raw, out, impact, len(route), latency_ms, "quote_impact", fetched_at)
+            return QuoteResult(False, order, amount_raw, out, impact, len(route), latency_ms, "quote_impact", fetched_at, **diag)
         self._qstats["ok"] += 1
-        return QuoteResult(True, order, amount_raw, out, impact, len(route), latency_ms, "ok", fetched_at)
+        return QuoteResult(True, order, amount_raw, out, impact, len(route), latency_ms, "ok", fetched_at, **diag)
 
     async def check_quote_stability(
-        self, mint: str, amount_raw: int
+        self,
+        mint: str,
+        amount_raw: int,
+        base: QuoteResult | None = None,
     ) -> tuple[bool, str]:
         """Stability gate: the same quote sampled N times must stay within pct bounds.
 
+        Args:
+            base: The already-fetched FINAL entry quote. When given it is
+                reused as sample #1 (no extra request) and all drift is
+                measured against it — so the gate validates the exact order
+                that is about to be executed, not a throwaway first sample.
+                When omitted, ``checks`` fresh quotes are taken.
+
         Returns ``(ok, reason)``. ``MAX_QUOTE_CHANGE_PCT`` bounds the
-        ``outAmount`` drift, ``MAX_IMPACT_CHANGE_PCT`` bounds the impact drift.
-        A pump-and-dump that loses ``-27%/-61%`` in 2s (vs healthy ``±1%``)
-        is rejected here before any buy. Uses ``force=True``-like behaviour
-        (bypasses cache) so each sample hits Jupiter.
+        ``outAmount`` drift, ``MAX_IMPACT_CHANGE_PCT`` bounds the impact
+        drift. A pump-and-dump that loses ``-27%/-61%`` in 2s (vs healthy
+        ``±1%``) is rejected here before any buy.
+
+        Samples are spaced at ``QUOTE_STABILITY_INTERVAL_MS`` (not the global
+        1s throttle) so the whole window costs ~600ms for the default
+        3×300ms config — fast enough to run inside a launch entry.
         """
         checks = max(self.quote_stability_checks, 1)
         interval_s = max(self.quote_stability_interval_ms, 0) / 1000.0
         outs: list[int] = []
         impacts: list[float] = []
-        for i in range(checks):
-            q = await self._do_quote(mint, amount_raw, self._slippage_bps)
+        if base is not None:
+            if not base.success or base.output_amount <= 0:
+                return False, "stability_no_quote:bad_base"
+            outs.append(base.output_amount)
+            impacts.append(base.price_impact_pct)
+        samples_needed = max(checks - len(outs), 0)
+        for i in range(samples_needed):
+            q = await self._do_quote(
+                mint, amount_raw, self._slippage_bps, min_spacing=interval_s
+            )
             if not q.success:
                 return False, f"stability_no_quote:{q.reason}"
             outs.append(q.output_amount)
             impacts.append(q.price_impact_pct)
-            if i + 1 < checks and interval_s > 0:
+            if i + 1 < samples_needed and interval_s > 0:
                 await asyncio.sleep(interval_s)
         if not outs:
             return False, "stability_no_samples"
@@ -942,8 +1006,29 @@ class JupiterSwap:
         return True, ""
 
     # ------------------------------------------------------------- high level
+    async def execute_order(self, order: dict | None) -> SwapResult:
+        """Execute an ALREADY-VALIDATED ``/order`` payload — never re-quotes.
+
+        This closes the final-quote gap: the caller passes the exact
+        ``QuoteResult.order`` that just passed the entry gates, so the market
+        state that was validated (route, impact, stability, sellability) is
+        byte-for-byte the transaction that lands on chain. In paper mode the
+        taker-less order carries no transaction and this returns a failure
+        mirroring live's "nothing to execute".
+        """
+        if not order or not order.get("transaction"):
+            return SwapResult(
+                False, "", 0, 0,
+                "paper quote: no transaction to execute",
+            )
+        return await self.execute(order)
+
     async def buy(self, mint: str, amount_sol: float) -> SwapResult:
         """Buy ``amount_sol`` SOL worth of ``mint``, via a verified quote.
+
+        Legacy convenience path: quotes fresh then executes. The live entry
+        pipeline uses :meth:`quote` + :meth:`execute_order` instead so the
+        validated quote IS the executed order.
 
         Args:
             mint: Token contract address to buy.
