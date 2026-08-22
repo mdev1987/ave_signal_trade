@@ -28,6 +28,7 @@ from jupiter_swap import JupiterSwap
 from models import Position, Signal
 from pool_check import PoolChecker
 from price_feed import PriceFeed
+from rugcheck import RugChecker
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,8 @@ class PaperTrader:
         start_balance_sol: Starting paper balance for /status reporting.
         max_positions: Maximum concurrent open positions (new entries skip).
         pool_checker: Optional :class:`PoolChecker` for arm-time gates.
+        rug_checker: Optional :class:`RugChecker` arm-time security veto
+            (RugCheck danger risks, e.g. unlocked LP).
         entry_latency_s: Wait this many seconds after the signal before a
             first buy may open a position (lets the pool settle + get indexed).
         max_entry_mult: Skip entry if the observed price is already above
@@ -93,6 +96,7 @@ class PaperTrader:
         stop_loss: float = 0.5,
         timeout_s: float = 3600.0,
         pool_checker: PoolChecker | None = None,
+        rug_checker: RugChecker | None = None,
         entry_latency_s: float = 2.0,
         max_entry_mult: float = 5.0,
         max_entry_peak_pct: float = 0.0,
@@ -123,6 +127,7 @@ class PaperTrader:
         self.stop_loss = stop_loss
         self.timeout_s = timeout_s
         self.pool_checker = pool_checker
+        self.rug_checker = rug_checker
         self.entry_latency_s = entry_latency_s
         self.max_entry_mult = max_entry_mult
         self.max_entry_peak_pct = max_entry_peak_pct
@@ -770,6 +775,14 @@ class PaperTrader:
             if not ok:
                 logger.info("SKIP %s (%s): dev-rep (%s)", sig.ca, sig.name, reason)
                 logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"dev_rep:{reason}")
+                return
+        # RugCheck security veto (fail-open: a missing report at snipe time is
+        # normal; only an explicit danger risk — e.g. unlocked LP — vetoes).
+        if self.rug_checker is not None:
+            ok, reason = await self.rug_checker.check(sig.ca)
+            if not ok:
+                logger.info("SKIP %s (%s): rugcheck (%s)", sig.ca, sig.name, reason)
+                logs.journal("skip", ca=sig.ca, name=sig.name, reason=f"rugcheck:{reason}")
                 return
         if self.jupiter is not None:
             # --- entry-risk gate (paper experiment spec) -----------------

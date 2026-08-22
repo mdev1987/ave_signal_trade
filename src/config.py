@@ -125,6 +125,23 @@ class Settings:
     dev_rep_min_age_hours: float = 0.0
     dev_rep_cache_ttl_min: float = 10.0
     dev_rep_timeout_s: float = 2.5
+    # RugCheck pre-trade gate (arm-time token security veto). Fail-open by
+    # default: sec-0 snipes race RugCheck's indexer, so a missing report must
+    # not reject — only an explicit danger risk (e.g. "Large Amount of LP
+    # Unlocked", the signature of the 2026-08-20 live LP-pull rugs) vetoes.
+    rugcheck_enabled: bool = True
+    rugcheck_api_key: str = ""
+    rugcheck_base_url: str = "https://api.rugcheck.xyz"
+    rugcheck_veto_risks: tuple[str, ...] = ("lp unlocked",)
+    rugcheck_max_score: float = 0.0        # score_normalised ceiling; 0 = off
+    rugcheck_timeout_s: float = 2.0
+    rugcheck_cache_ttl_s: float = 120.0
+    rugcheck_fail_closed: bool = False
+    # Serial-relaunch damper: same token name on >= N distinct CAs within the
+    # window => reject (NEX Ai x5 / 牛来 x20 relaunch farms, 2026-08-20 rugs).
+    scam_damper_enabled: bool = True
+    scam_damper_max_cas: int = 3
+    scam_damper_window_min: float = 360.0
 
     # --- jupiter ---------------------------------------------------------
     dry_run: bool = True
@@ -225,6 +242,21 @@ class Settings:
             dev_rep_min_age_hours=get_float(env, "DEV_REP_MIN_AGE_HOURS", 0.0),
             dev_rep_cache_ttl_min=get_float(env, "DEV_REP_CACHE_TTL_MIN", 10.0),
             dev_rep_timeout_s=get_float(env, "DEV_REP_TIMEOUT_S", 2.5),
+            rugcheck_enabled=get_bool(env, "RUGCHECK_ENABLED", True),
+            rugcheck_api_key=get(env, "RUGCHECK_API_KEY", ""),
+            rugcheck_base_url=get(env, "RUGCHECK_BASE_URL", "https://api.rugcheck.xyz"),
+            rugcheck_veto_risks=tuple(
+                s.strip().lower()
+                for s in get(env, "RUGCHECK_VETO_RISKS", "lp unlocked").split(",")
+                if s.strip()
+            ),
+            rugcheck_max_score=get_float(env, "RUGCHECK_MAX_SCORE", 0.0),
+            rugcheck_timeout_s=get_float(env, "RUGCHECK_TIMEOUT_S", 2.0),
+            rugcheck_cache_ttl_s=get_float(env, "RUGCHECK_CACHE_TTL_S", 120.0),
+            rugcheck_fail_closed=get_bool(env, "RUGCHECK_FAIL_CLOSED", False),
+            scam_damper_enabled=get_bool(env, "SCAM_DAMPER_ENABLED", True),
+            scam_damper_max_cas=get_int(env, "SCAM_DAMPER_MAX_CAS", 3),
+            scam_damper_window_min=get_float(env, "SCAM_DAMPER_WINDOW_MIN", 360.0),
             dry_run=get_bool(env, "DRY_RUN", True),
             private_key=get(env, "PRIVATE_KEY", ""),
             jupiter_api_key=get(env, "JUPITER_API_KEY", ""),
@@ -311,6 +343,17 @@ class Settings:
             ("PUMPAPI_RECONNECT_S", f"{self.pumpapi_reconnect_s:g}"),
             ("PRICE_WAIT_TIMEOUT_S", f"{self.price_wait_timeout_s:g}"),
             ("PUMPAPI_RECV_TIMEOUT_S", f"{self.pumpapi_recv_timeout_s:g}"),
+            ("RUGCHECK_ENABLED", "true" if self.rugcheck_enabled else "false"),
+            ("RUGCHECK_API_KEY", self.rugcheck_api_key),
+            ("RUGCHECK_BASE_URL", self.rugcheck_base_url),
+            ("RUGCHECK_VETO_RISKS", ",".join(self.rugcheck_veto_risks)),
+            ("RUGCHECK_MAX_SCORE", f"{self.rugcheck_max_score:g}"),
+            ("RUGCHECK_TIMEOUT_S", f"{self.rugcheck_timeout_s:g}"),
+            ("RUGCHECK_CACHE_TTL_S", f"{self.rugcheck_cache_ttl_s:g}"),
+            ("RUGCHECK_FAIL_CLOSED", "true" if self.rugcheck_fail_closed else "false"),
+            ("SCAM_DAMPER_ENABLED", "true" if self.scam_damper_enabled else "false"),
+            ("SCAM_DAMPER_MAX_CAS", str(self.scam_damper_max_cas)),
+            ("SCAM_DAMPER_WINDOW_MIN", f"{self.scam_damper_window_min:g}"),
             ("BOT_TOKEN", self.bot_token),
             ("CHAT_ID", self.chat_id),
             ("TELEGRAM_API_ID", self.telegram_api_id),

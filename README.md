@@ -19,6 +19,8 @@ Paper == live — backtests predict real PnL:
 - **Entries (avoid rug):** `Jupiter BUY quote` (`JUPITER_MAX_IMPACT 5.0%`, `SLIPPAGE 300bps`) → **stability gate** `3×300ms` (`MAX_QUOTE_CHANGE 5%, MAX_IMPACT_CHANGE 3pp` — rejects CATE-style flicker) → **sell-quote gate** `REQUIRE_SELL_QUOTE true + MAX_SELL_IMPACT 5.0%` (CATE/ELON were buyable but un-sellable) → `fresh quote force=True`; fail = skip. No stale fills.
 - **Exits (TP/SL/trailing, robust):** real `token→SOL` quote (`paper_sell_proceeds`) same as live; **failed sells keep position open**, counted to `MAX_SELL_FAILURES 6` (`3` after TTL), `SELL_BACKOFF 60s` (`429/timeout` is transient, not counted — fixes STAR `6×429` writeoff bug), markers cleared, bounded `90s` close timeout so hung sell never stalls sweep.
 - **Fail-closed gates (reliable):** DexPaprika liquidity (`MIN_LIQUIDITY_USD 5000`, `LIQ_CONFIRM_WINDOW 10s`) + Helius dev-rep (`DEV_REP`) — `429`/timeout rejects; entry-time `cached_verdict` re-check rejects missing/stale. Unverified pool = no trade.
+- **RugCheck gate (arm-time, fail-open):** `GET /v1/tokens/{mint}/report/summary` (cached `RUGCHECK_CACHE_TTL_S 120`); vetoes only on explicit danger risks (`RUGCHECK_VETO_RISKS=lp unlocked,mint authority,freeze authority`). A missing report ADMITS the token — sec-0 snipes race RugCheck's indexer, and fail-closed there would kill every entry. Evidence (`scripts/rugcheck_validate.py` on the 2026-08-20 live rugs): every LP-pull rug (TONK/NEX Ai#2/牛来) carried "Large Amount of LP Unlocked"; winners never did (+0.074 SOL PnL preserved). Scores are NOT used by default — winners and rugs both score ~65.
+- **Serial-relaunch damper:** the same normalized token name on `SCAM_DAMPER_MAX_CAS 3` distinct CAs within `SCAM_DAMPER_WINDOW_MIN 360` is rejected after the base filter ("NEX Ai" x5+, "牛来" x20 relaunch farms). Replay on the 08-20 stream: damps 24/63 passing signals incl. the live NEX Ai rug.
 - **Dead-pool writeoffs:** `6` fails (`3` post-TTL) → writeoff at last mark, slot freed, Telegram alert, `trade_log.csv` kept.
 - Taker-less paper quotes (throwaway would be `Insufficient funds`); dead pools fail taker-less identically.
 
@@ -29,6 +31,7 @@ uv run main.py scan                       # offline filter + win-rate cross-chec
 uv run main.py trade                      # live trading (paper by default)
 uv run main.py channels                   # list visible chats
 .venv/bin/python scripts/replay_tune.py   # honest-engine replay + filter grid search
+uv run python scripts/rugcheck_validate.py [--sweep N]  # anti-rug gates vs live-rug evidence
 ```
 
 First run prompts for your Telegram phone number and writes `config.ini` + `telegram_session`.

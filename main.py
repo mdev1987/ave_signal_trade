@@ -49,6 +49,8 @@ from notifier import SEP, TelegramNotifier
 from paper_trader import PaperTrader
 from pool_check import PoolChecker
 from price_feed import PriceFeed
+from rugcheck import RugChecker
+from scam_damper import ScamDamper
 from telegram_feed import TelegramFeed
 
 logging.basicConfig(
@@ -112,13 +114,22 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
-async def _handle_new_signal(trader: PaperTrader, seen_cas: set[str], sig, notify: bool = True) -> None:
+async def _handle_new_signal(
+    trader: PaperTrader,
+    seen_cas: set[str],
+    sig,
+    damper: ScamDamper | None = None,
+    notify: bool = True,
+) -> None:
     """Dedupe a real-time signal, arm it when it passes, or send a reject card.
 
     Args:
         trader: The active PaperTrader.
         seen_cas: Set of CAs already processed (dedup).
         sig: The parsed signal.
+        damper: Optional serial-relaunch damper; every signal is recorded so
+            relaunch farms accumulate evidence even when individual mints are
+            rejected for other reasons.
         notify: Whether to send Telegram cards (False during backfill to
             avoid flood control from hundreds of historical rejects).
     """
@@ -131,7 +142,19 @@ async def _handle_new_signal(trader: PaperTrader, seen_cas: set[str], sig, notif
     # trader's own _signals_seen/_prune logic is the real anti-double-open guard.
     if len(seen_cas) > 5000:
         seen_cas.clear()
+    if damper is not None:
+        damper.record(sig.ca, sig.name, float(sig.unixtime))
     ok, reasons = filt.check_signal(sig)
+    # Serial-relaunch damper runs AFTER the base filter so only tradeable
+    # signals get damped — zero blast radius on already-rejected spam.
+    if ok and damper is not None and damper.is_serial(sig.name):
+        reason = (
+            f"serial relaunch: {damper.count(sig.name)} CAs share this name"
+        )
+        logger.info("REJECT %s (%s): %s", sig.ca, sig.name, reason)
+        logs.journal("reject", ca=sig.ca, name=sig.name, reasons=[reason])
+        trader.note_reject(sig.ca, sig.name, [reason])
+        return
     if not ok:
         logs.journal("reject", ca=sig.ca, name=sig.name, reasons=reasons)
         # Count the rejection for /status but don't spam a Telegram card per
@@ -238,6 +261,24 @@ async def _trade_loop(
         if s.pool_check_enabled
         else None
     )
+    rug_checker = (
+        RugChecker(
+            api_key=s.rugcheck_api_key,
+            base_url=s.rugcheck_base_url,
+            veto_risks=s.rugcheck_veto_risks,
+            max_score_normalised=s.rugcheck_max_score,
+            timeout_s=s.rugcheck_timeout_s,
+            cache_ttl_s=s.rugcheck_cache_ttl_s,
+            fail_closed=s.rugcheck_fail_closed,
+        )
+        if s.rugcheck_enabled
+        else None
+    )
+    if rug_checker is not None:
+        logger.info(
+            "rugcheck gate ON (veto=%s fail_closed=%s)",
+            list(rug_checker.veto_risks), rug_checker.fail_closed,
+        )
     # Health watchdog: if the sweep loop stops making progress (wedged event
     # loop, hung I/O), force-exit so systemd/no-supervisor restarts it. The
     # checkpoint is saved every CHECKPOINT_SAVE_S in run_sweep, so a forced
@@ -271,6 +312,7 @@ async def _trade_loop(
         max_positions=s.max_positions,
         take_profit=s.take_profit, stop_loss=s.stop_loss, timeout_s=s.timeout_s,
         pool_checker=pool_checker,
+        rug_checker=rug_checker,
         entry_latency_s=s.entry_latency_s,
         max_entry_mult=s.max_entry_mult,
         max_entry_peak_pct=s.max_entry_peak_pct,
@@ -308,17 +350,22 @@ async def _trade_loop(
 
     # Backfill: arm signals already posted so positions can open immediately.
     # quiet=True: don't spam Telegram with hundreds of historical cards.
+    damper = (
+        ScamDamper(max_cas=s.scam_damper_max_cas, window_s=s.scam_damper_window_min * 60.0)
+        if s.scam_damper_enabled
+        else None
+    )
     try:
         backfill = await tg.fetch_signals(limit=s.backfill_limit)
         for sig in backfill:
-            await _handle_new_signal(trader, seen_cas, sig, notify=False)
+            await _handle_new_signal(trader, seen_cas, sig, damper=damper, notify=False)
         logger.info("backfill: %d signals, %d open, %d closed",
                     len(backfill), len(trader.open), len(trader.closed))
     except Exception:
         logger.exception("backfill failed")
 
     feed.on_event = trader.on_event
-    tg.on_signal(lambda sig: _handle_new_signal(trader, seen_cas, sig))
+    tg.on_signal(lambda sig: _handle_new_signal(trader, seen_cas, sig, damper=damper))
 
     # Live mode: reconcile restored open positions against the real wallet
     # before the sweep loop starts, so exits never sell a wrong/zero amount.
@@ -368,6 +415,8 @@ async def _trade_loop(
     await tg.close()
     if pool_checker is not None:
         await pool_checker.close()
+    if rug_checker is not None:
+        await rug_checker.close()
     trader._save()
     if notifier is not None:
         await notifier.send_stopped(trader.summary())
