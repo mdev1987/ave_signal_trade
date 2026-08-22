@@ -124,25 +124,28 @@ class TelegramNotifier:
         """Short mint for display."""
         return f"`{mint[:10]}…`"
 
-    async def send_arm(self, ca: str, name: str, snipes: int, mcap_usd: float) -> None:
+    async def send_arm(self, ca: str, name: str, snipes: int, mcap_usd: float,
+                       dex: str | None = None) -> None:
         """A signal passed the filter and is armed for entry."""
+        dex_line = f" {SEP} Dex `{dex}`" if dex else ""
         await self._send(
             f"{ICONS['arm']} **ARMED** `{name}`\n"
             f"{self._short(ca)}\n"
-            f"{SEP} Snipes `{snipes}` {SEP} MCap `${mcap_usd:,.0f}`"
+            f"{SEP} Snipes `{snipes}` {SEP} MCap `${mcap_usd:,.0f}`{dex_line}"
         )
 
-    async def send_open(
-        self, ca: str, name: str, price: float, balance_before: float | None = None
-    ) -> None:
+    async def send_open(self, ca: str, name: str, price: float,
+                        balance_before: float | None = None,
+                        dex: str | None = None) -> None:
         """Position opened on the first live buy event."""
         bal = ""
         if balance_before is not None:
             bal = f"\n{SEP} Balance `{balance_before:.4f}` SOL"
+        dex_line = f"\n{SEP} Dex `{dex}`" if dex else ""
         await self._send(
             f"{ICONS['open']} **OPEN** `{name}`\n"
             f"{self._short(ca)}\n"
-            f"{SEP} Entry `{price:.12g}` SOL{bal}"
+            f"{SEP} Entry `{price:.12g}` SOL{dex_line}{bal}"
         )
 
     async def send_close(
@@ -155,6 +158,7 @@ class TelegramNotifier:
         hold_s: float | None = None,
         exit_px: float | None = None,
         balance_before: float | None = None,
+        dex: str | None = None,
     ) -> None:
         """Position closed (tp / sl / timeout) with simulated PnL."""
         icon = ICONS.get(reason, "💰")
@@ -164,6 +168,7 @@ class TelegramNotifier:
         bal = ""
         if balance_before is not None:
             bal = f" {SEP} Balance `{balance_before:.4f}` SOL"
+        dex_line = f" {SEP} Dex `{dex}`" if dex else ""
         exit_line = ""
         if exit_px is not None:
             exit_line = f"\n{SEP} Exit `{exit_px:.12g}` SOL"
@@ -171,7 +176,7 @@ class TelegramNotifier:
             f"{card} **CLOSE {reason.upper()}** {icon}\n"
             f"`{(ca or '')[:10]}…`\n"
             f"{SEP} Mult `{mult:.2f}x` {SEP} PnL `{s}{pnl_sol:.4f} SOL`{held}{bal}"
-            f"{exit_line}"
+            f"{dex_line}{exit_line}"
         )
 
     async def send_summary(self, summary: dict[str, Any]) -> None:

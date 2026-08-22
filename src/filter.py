@@ -33,7 +33,10 @@ def check_signal(sig: Signal) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     if not sig.ca:
         return False, [REASONS["no_ca"]]
-    if sig.dex not in rules["dexes"]:
+    # Wildcard dex set (``FILTER_DEXS=*``) admits every dex — the row's real
+    # dex name is still journaled and written into trade_log.csv so the best
+    # venues can be measured from real trades.
+    if "*" not in rules["dexes"] and sig.dex not in rules["dexes"]:
         reasons.append(REASONS["dex"])
     if not (rules["mcap_usd_min"] <= sig.mcap_usd <= rules["mcap_usd_max"]):
         reasons.append(REASONS["mcap"])

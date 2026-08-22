@@ -28,8 +28,17 @@ TRADE_CSV = LOG_DIR / "trade_log.csv"
 STOP_MARKER = LOG_DIR / ".stop"
 
 TRADE_CSV_FIELDS = [
+    # identity + outcome (original schema)
     "ca", "name", "signal_time", "entry_time", "entry_px", "peak_px",
     "exit_time", "exit_px", "exit_reason", "mult", "pnl_sol", "size_sol",
+    # rug-classifier feature snapshot (entry-moment, see PaperTrader)
+    "filter_profile", "mcap_usd", "dex", "snipes", "liq_usd", "sec_score",
+    "burned_pct", "quote_in_pool", "pool_created_by",
+    "report_missing", "lp_unlocked", "mint_authority", "freeze_authority",
+    "dev_rep_ok", "dev_rep_reason",
+    "buy_impact_pct", "sell_impact_pct",
+    "router", "mode", "slippage_bps",
+    "max_out_drift_pct", "max_impact_drift_pp",
 ]
 
 # Values redacted from every log line (tokens/keys/secrets must never reach
@@ -153,11 +162,30 @@ def log_trade(row: dict) -> None:
     """
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
+        # Schema rotation: an older trade_log.csv (pre-features header) would
+        # misalign DictWriter rows. Archive it once and start a fresh file
+        # so old results stay intact and new rows carry the feature columns.
+        if TRADE_CSV.exists():
+            with TRADE_CSV.open("r", encoding="utf-8") as f:
+                first = f.readline()
+            if first.strip() and [c for c in next(csv.reader([first]))] != TRADE_CSV_FIELDS:
+                backup = TRADE_CSV.with_name(
+                    f"trade_log.csv.bak-{int(time.time())}"
+                )
+                TRADE_CSV.rename(backup)
+                logging.getLogger("logs").info(
+                    "trade_log.csv schema changed — archived to %s", backup.name
+                )
         write_header = not TRADE_CSV.exists()
         with TRADE_CSV.open("a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=TRADE_CSV_FIELDS)
             if write_header:
                 writer.writeheader()
-            writer.writerow({k: row.get(k) for k in TRADE_CSV_FIELDS})
+            # Flatten the Position's nested feature snapshot into columns.
+            flat = dict(row)
+            feat = flat.pop("features", None)
+            if isinstance(feat, dict):
+                flat.update(feat)
+            writer.writerow({k: flat.get(k) for k in TRADE_CSV_FIELDS})
     except OSError:
         logging.getLogger("logs").exception("failed to write trade row")

@@ -161,7 +161,8 @@ async def _handle_new_signal(
         # rejected signal — the details are surfaced via /status instead.
         trader.note_reject(sig.ca, sig.name, reasons)
         return
-    logs.journal("signal", ca=sig.ca, name=sig.name)
+    logs.journal("signal", ca=sig.ca, name=sig.name, dex=sig.dex or None,
+                 mcap_usd=sig.mcap_usd, snipes=sig.snipes)
     if notify:
         await trader.offer(sig)
     else:
@@ -254,6 +255,7 @@ async def _trade_loop(
             helius_base_url=s.helius_base_url,
             min_liquidity_usd=s.min_liquidity_usd,
             dev_rep_enabled=s.dev_rep_enabled,
+            dev_rep_mode=s.dev_rep_mode,
             dev_rep_max_creates_24h=s.dev_rep_max_creates_24h,
             dev_rep_min_age_hours=s.dev_rep_min_age_hours,
             timeout_s=s.dev_rep_timeout_s,
@@ -283,10 +285,11 @@ async def _trade_loop(
     # runs are distinguishable in bot.log/journal when comparing outcomes.
     rules = filt.get_filter()
     logger.info(
-        "filter tier: mcap $%s-%s snipes>=%s sec<=%s dex=%s",
-        rules["mcap_usd_min"], rules["mcap_usd_max"], rules["snipes_min"],
-        rules["sec_score_max"], sorted(rules["dexes"]),
+        "filter profile=%s: mcap $%s-%s snipes>=%s sec<=%s dex=%s",
+        rules.get("profile"), rules["mcap_usd_min"], rules["mcap_usd_max"],
+        rules["snipes_min"], rules["sec_score_max"], sorted(rules["dexes"]),
     )
+    logger.info("dev-rep mode: %s", s.dev_rep_mode)
     # Health watchdog: if the sweep loop stops making progress (wedged event
     # loop, hung I/O), force-exit so systemd/no-supervisor restarts it. The
     # checkpoint is saved every CHECKPOINT_SAVE_S in run_sweep, so a forced

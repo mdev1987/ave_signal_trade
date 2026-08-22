@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 FILTER = {
@@ -13,15 +13,29 @@ FILTER = {
     "sec_score_max": 0,
 }
 
+# Named filter regimes so L1/L2 statistics are never mixed. A profile sets
+# the mcap band + snipes floor; individual ``FILTER_MCAP_USD_*`` /
+# ``FILTER_SNIPES_MIN`` env values still override it afterwards.
+FILTER_PROFILES = {
+    "L1_PRODUCTION": {"mcap_usd_min": 5000, "mcap_usd_max": 20000, "snipes_min": 3},
+    "L2_EXPERIMENT": {"mcap_usd_min": 2500, "mcap_usd_max": 50000, "snipes_min": 1},
+}
+
 
 def get_filter() -> dict:
     """The live filter, overlaid with env overrides.
 
     ``.env`` is loaded lazily by :func:`config.load_settings` at runtime, so a
     module-level constant would be frozen before the overrides exist. Reading
-    the file here keeps ``FILTER_MCAP_USD_MIN`` etc. effective on every check.
+    the file here keeps ``FILTER_PROFILE``, ``FILTER_MCAP_USD_MIN`` etc.
+    effective on every check.
+
+    Returns:
+        The effective rules plus a ``"profile"`` key naming the active regime
+        ("custom" when no named profile matches the final values).
     """
-    overrides = {}
+    overrides: dict = {}
+    profile_name = "custom"
     env = None
     try:
         from config import load_env
@@ -30,6 +44,10 @@ def get_filter() -> dict:
     except Exception:  # noqa: BLE001 - env loading is best-effort here
         env = None
     if env:
+        raw_profile = (env.get("FILTER_PROFILE") or "").strip().upper()
+        if raw_profile in FILTER_PROFILES:
+            overrides.update(FILTER_PROFILES[raw_profile])
+            profile_name = raw_profile
         for key, base in (
             ("mcap_usd_min", "FILTER_MCAP_USD_MIN"),
             ("mcap_usd_max", "FILTER_MCAP_USD_MAX"),
@@ -43,14 +61,24 @@ def get_filter() -> dict:
                 except ValueError:
                     pass
         # Allowed DEX set as CSV (``FILTER_DEXS=Pumpfunamm`` or
-        # ``Pumpfunamm,Raydium``). Replaces the default set wholesale so
-        # DEX experiments need no code changes; membership stays exact.
+        # ``Pumpfunamm,Raydium``). The special value ``*`` (or ``all``)
+        # admits EVERY dex — paper-mode research mode: trade_log rows still
+        # record each token's real dex so the best venues can be measured.
         dexes_raw = env.get("FILTER_DEXS")
         if dexes_raw is not None and dexes_raw.strip():
-            overrides["dexes"] = {
-                d.strip() for d in dexes_raw.split(",") if d.strip()
-            }
-    return {**FILTER, **overrides}
+            val = dexes_raw.strip()
+            overrides["dexes"] = (
+                {"*"} if val in ("*", "all", "ANY", "any")
+                else {d.strip() for d in val.split(",") if d.strip()}
+            )
+    rules = {**FILTER, **overrides}
+    if profile_name == "custom":
+        for name, preset in FILTER_PROFILES.items():
+            if all(rules.get(k) == v for k, v in preset.items()):
+                profile_name = name
+                break
+    rules["profile"] = profile_name
+    return rules
 
 REASONS = {
     "dex": "dex not in allowed set",
@@ -146,6 +174,11 @@ class Position:
     # stop ratchets to peak * (1 - trail_retrace_pct). 0 disables.
     trail_activate_mult: float = 0.0
     trail_retrace_pct: float = 0.5
+    # Entry-moment feature snapshot for the rug-classifier dataset (mcap,
+    # dex, snipes, rugcheck flags, pool state, quote diagnostics...). Flat
+    # str/float/bool values only — serialized into the checkpoint and every
+    # trade_log.csv row.
+    features: dict = field(default_factory=dict)
 
     @property
     def mult(self) -> float | None:
@@ -277,4 +310,5 @@ class Position:
             "next_sell_retry": self.next_sell_retry,
             "trail_activate_mult": self.trail_activate_mult,
             "trail_retrace_pct": self.trail_retrace_pct,
+            "features": self.features,
         }

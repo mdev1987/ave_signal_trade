@@ -949,7 +949,7 @@ class JupiterSwap:
         mint: str,
         amount_raw: int,
         base: QuoteResult | None = None,
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, dict]:
         """Stability gate: the same quote sampled N times must stay within pct bounds.
 
         Args:
@@ -959,51 +959,65 @@ class JupiterSwap:
                 that is about to be executed, not a throwaway first sample.
                 When omitted, ``checks`` fresh quotes are taken.
 
-        Returns ``(ok, reason)``. ``MAX_QUOTE_CHANGE_PCT`` bounds the
-        ``outAmount`` drift, ``MAX_IMPACT_CHANGE_PCT`` bounds the impact
-        drift. A pump-and-dump that loses ``-27%/-61%`` in 2s (vs healthy
-        ``±1%``) is rejected here before any buy.
+        Returns:
+            ``(ok, reason, info)``. ``info`` carries measurable features for
+            the trade journal: ``max_out_drift_pct``, ``max_impact_drift_pp``
+            and ``routers`` (per-sample router/mode/slippage diagnostics).
 
-        Samples are spaced at ``QUOTE_STABILITY_INTERVAL_MS`` (not the global
-        1s throttle) so the whole window costs ~600ms for the default
-        3×300ms config — fast enough to run inside a launch entry.
+        ``MAX_QUOTE_CHANGE_PCT`` bounds the ``outAmount`` drift,
+        ``MAX_IMPACT_CHANGE_PCT`` bounds the impact drift. A pump-and-dump
+        that loses ``-27%/-61%`` in 2s (vs healthy ``±1%``) is rejected here
+        before any buy. Samples are spaced at ``QUOTE_STABILITY_INTERVAL_MS``
+        (not the global 1s throttle) so the whole window costs ~600ms for the
+        default 3×300ms config — fast enough to run inside a launch entry.
         """
         checks = max(self.quote_stability_checks, 1)
         interval_s = max(self.quote_stability_interval_ms, 0) / 1000.0
         outs: list[int] = []
         impacts: list[float] = []
+        routers: list[str] = []
         if base is not None:
             if not base.success or base.output_amount <= 0:
-                return False, "stability_no_quote:bad_base"
+                return False, "stability_no_quote:bad_base", {}
             outs.append(base.output_amount)
             impacts.append(base.price_impact_pct)
+            routers.append(base.router or "?")
         samples_needed = max(checks - len(outs), 0)
         for i in range(samples_needed):
             q = await self._do_quote(
                 mint, amount_raw, self._slippage_bps, min_spacing=interval_s
             )
             if not q.success:
-                return False, f"stability_no_quote:{q.reason}"
+                return False, f"stability_no_quote:{q.reason}", {}
             outs.append(q.output_amount)
             impacts.append(q.price_impact_pct)
+            routers.append(q.router or "")
             if i + 1 < samples_needed and interval_s > 0:
                 await asyncio.sleep(interval_s)
-        if not outs:
-            return False, "stability_no_samples"
+        if not outs or outs[0] <= 0:
+            return False, "stability_no_samples", {}
         base_out = outs[0]
         base_impact = impacts[0]
-        if base_out == 0:
-            return False, "stability_zero_out"
+        info = {
+            "max_out_drift_pct": max(
+                (abs(o - outs[0]) / outs[0] * 100.0 for o in outs[1:]), default=0.0
+            ),
+            "max_impact_drift_pp": max(
+                (abs(i - impacts[0]) for i in impacts[1:]), default=0.0
+            ),
+            "routers": routers,
+            "slippage_bps": getattr(base, "slippage_bps", None),
+        }
         for out in outs[1:]:
             drift = abs(out - base_out) / base_out * 100.0
             if drift > self.max_quote_change_pct:
-                return False, f"quote_drift:{drift:.1f}%>{self.max_quote_change_pct:.0f}%"
+                return False, f"quote_drift:{drift:.1f}%>{self.max_quote_change_pct:.0f}%", info
         for imp in impacts[1:]:
             drift = abs(imp - base_impact)
             # impact is already a pct; drift is absolute pp difference.
             if drift > self.max_impact_change_pct:
-                return False, f"impact_drift:{drift:.1f}pp>{self.max_impact_change_pct:.0f}pp"
-        return True, ""
+                return False, f"impact_drift:{drift:.1f}pp>{self.max_impact_change_pct:.0f}pp", info
+        return True, "", info
 
     # ------------------------------------------------------------- high level
     async def execute_order(self, order: dict | None) -> SwapResult:
@@ -1015,6 +1029,10 @@ class JupiterSwap:
         byte-for-byte the transaction that lands on chain. In paper mode the
         taker-less order carries no transaction and this returns a failure
         mirroring live's "nothing to execute".
+
+        Invariant: there is NO ``buy()`` convenience method anymore — the only
+        way to a live buy is quote() -> gates -> execute_order(order), so a
+        second unvalidated ``/order`` cannot sneak into the executed path.
         """
         if not order or not order.get("transaction"):
             return SwapResult(
@@ -1022,34 +1040,6 @@ class JupiterSwap:
                 "paper quote: no transaction to execute",
             )
         return await self.execute(order)
-
-    async def buy(self, mint: str, amount_sol: float) -> SwapResult:
-        """Buy ``amount_sol`` SOL worth of ``mint``, via a verified quote.
-
-        Legacy convenience path: quotes fresh then executes. The live entry
-        pipeline uses :meth:`quote` + :meth:`execute_order` instead so the
-        validated quote IS the executed order.
-
-        Args:
-            mint: Token contract address to buy.
-            amount_sol: SOL notional size.
-
-        Returns:
-            A :class:`SwapResult` with the raw output (token) amount on success.
-        """
-        amount_raw = int(amount_sol * (10**BASE_DECIMALS))
-        quote = await self.quote(mint, amount_raw)
-        if quote is None or not quote.success:
-            return SwapResult(
-                False, "", amount_raw, 0, quote.reason if quote else "no quote"
-            )
-        if not (quote.order and quote.order.get("transaction")):
-            # Paper quoting (no taker) returns a verified route but no
-            # transaction — there is nothing to sign or execute.
-            return SwapResult(
-                False, "", amount_raw, 0, "paper quote: no transaction to execute"
-            )
-        return await self.execute(quote.order)
 
     async def sell(self, mint: str, amount_raw: int) -> SwapResult:
         """Sell ``amount_raw`` of ``mint`` for SOL, escalating slippage.

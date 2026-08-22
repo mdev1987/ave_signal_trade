@@ -30,6 +30,11 @@ from pool_check import PoolChecker
 from price_feed import PriceFeed
 from rugcheck import RugChecker
 
+try:  # feature snapshot for the trade journal; optional so tests can stub
+    import filter as filt
+except ImportError:  # pragma: no cover
+    filt = None
+
 logger = logging.getLogger(__name__)
 
 EXIT_LABELS = {"tp": "take-profit", "sl": "stop-loss", "timeout": "1h timeout"}
@@ -262,6 +267,8 @@ class PaperTrader:
                       "next_sell_retry", "trail_activate_mult", "trail_retrace_pct"):
             if d.get(field) is not None:
                 setattr(p, field, d[field])
+        if isinstance(d.get("features"), dict):
+            p.features = d["features"]
         return p
 
     # ------------------------------------------------------------- gate control
@@ -541,13 +548,15 @@ class PaperTrader:
             "CLOSE %s (%s) mult=%.2f pnl=%+.4f SOL",
             mint, EXIT_LABELS.get(reason, reason), pos.mult or 0.0, pos.pnl_sol,
         )
-        logs.journal("close", ca=mint, reason=reason, mult=pos.mult, pnl_sol=pos.pnl_sol)
+        logs.journal("close", ca=mint, reason=reason, mult=pos.mult,
+                     pnl_sol=pos.pnl_sol, dex=(pos.features or {}).get("dex"))
         logs.log_trade(pos.to_dict())
         if self.notifier is not None:
             await self.notifier.send_close(
                 mint, self._names.get(mint, ""), reason, pos.mult or 0.0, pos.pnl_sol,
                 hold_s=(pos.exit_time or 0) - (pos.entry_time or 0),
                 exit_px=pos.exit_px, balance_before=balance_before,
+                dex=(pos.features or {}).get("dex"),
             )
         self._save()
 
@@ -589,21 +598,26 @@ class PaperTrader:
         return "http 400" in low and "insufficient" in low
 
     # ------------------------------------------------------------------- events
-    async def _validated_entry(self, mint: str) -> tuple[Any | None, str]:
+    async def _validated_entry(
+        self, mint: str
+    ) -> tuple[Any | None, str, dict]:
         """Run the full execution gate at the ENTRY moment and return the order.
 
         Sequence (reviewer-specified architecture):
 
-        1. FINAL buy ``/order`` for ``size_sol`` (fresh, cache-bypassed)
-        2. stability burst measured AGAINST that quote
-        3. sell ``/order`` for exactly that quote's output amount
+        1. PumpAPI pool-state vetoes (zero latency: drained pool / unburned LP)
+        2. FINAL buy ``/order`` for ``size_sol`` (fresh, cache-bypassed)
+        3. stability burst measured AGAINST that quote
+        4. sell ``/order`` for exactly that quote's output amount
 
         The returned :class:`QuoteResult.order` is then executed as-is by the
         caller (:meth:`jupiter.execute_order`) or used as the paper fill — so
         the validated market state and the executed market state are the same.
 
         Returns:
-            ``(final_quote, "")`` on success, ``(None, skip_reason)`` otherwise.
+            ``(final_quote, "", meta)`` on success where ``meta`` carries
+            journal features (sell impact, stability drift, router/mode/
+            slippage); ``(None, skip_reason, {})`` otherwise.
         """
         # Zero-latency pool gate from the PumpAPI stream state (no API call):
         # a liquidity REMOVAL observed within the veto window means the pool
@@ -627,7 +641,7 @@ class PaperTrader:
                 reason = f"liq_removed:{removed_s_ago:.0f}s_ago"
                 logger.info("SKIP %s entry: %s", mint, reason)
                 logs.journal("skip_entry", ca=mint, reason=reason)
-                return None, reason
+                return None, reason, {}
             burned = st.get("burned_pct")
             if self.min_burned_liq_pct > 0 and (
                     burned is None or burned < self.min_burned_liq_pct):
@@ -635,14 +649,22 @@ class PaperTrader:
                 logger.info("SKIP %s entry: %s (<%.0f%%)", mint, reason,
                             self.min_burned_liq_pct)
                 logs.journal("skip_entry", ca=mint, reason=reason)
-                return None, reason
+                return None, reason, {}
+        meta: dict[str, Any] = {
+            "burned_pct": (st or {}).get("burned_pct"),
+            "quote_in_pool": (st or {}).get("quote_in_pool"),
+            "pool_created_by": (st or {}).get("pool_created_by"),
+        }
         amount_raw = int(self.size_sol * 1e9)
         final = await self.jupiter.quote(mint, amount_raw, force=True)
         if final is None or not final.success:
             reason = final.reason if final else "quote_exception"
             logger.info("SKIP %s entry: no route (%s)", mint, reason)
             logs.journal("skip_entry", ca=mint, reason=f"no_route:{reason}")
-            return None, reason
+            return None, reason, {}
+        meta.update(buy_impact_pct=final.price_impact_pct,
+                    router=final.router or None, mode=final.mode or None,
+                    slippage_bps=final.slippage_bps)
         logs.journal("route", ca=mint, out_amount=final.output_amount,
                      price_impact_pct=final.price_impact_pct,
                      routes=final.route_count,
@@ -651,31 +673,34 @@ class PaperTrader:
         # Stability burst: drift measured against THE executable quote.
         checks = getattr(self.jupiter, "quote_stability_checks", 0)
         if checks and checks > 1:
-            ok, stab_reason = await self.jupiter.check_quote_stability(
+            ok, stab_reason, stab_info = await self.jupiter.check_quote_stability(
                 mint, amount_raw, base=final
             )
+            meta["max_out_drift_pct"] = stab_info.get("max_out_drift_pct")
+            meta["max_impact_drift_pp"] = stab_info.get("max_impact_drift_pp")
             if not ok:
                 logger.info("SKIP %s entry: unstable (%s)", mint, stab_reason)
                 logs.journal("skip_entry", ca=mint, reason=f"unstable:{stab_reason}")
-                return None, stab_reason
+                return None, stab_reason, meta
         # Sell-side gate on the FINAL output (CATE/ELON defense).
         if getattr(self.jupiter, "require_sell_quote", True):
             if final.output_amount <= 0:
                 logger.info("SKIP %s entry: zero out – cannot check sell", mint)
                 logs.journal("skip_entry", ca=mint, reason="no_sell_route:zero_out")
-                return None, "zero_out"
+                return None, "zero_out", meta
             sell_q = await self.jupiter.quote_sell(mint, final.output_amount)
             if sell_q is None or not sell_q.success:
                 reason = sell_q.reason if sell_q else "sell_quote_exception"
                 logger.info("SKIP %s entry: no sell route (%s)", mint, reason)
                 logs.journal("skip_entry", ca=mint, reason=f"no_sell_route:{reason}")
-                return None, reason
+                return None, reason, meta
+            meta["sell_impact_pct"] = sell_q.price_impact_pct
             logs.journal("sell_route", ca=mint,
                          sell_out=sell_q.output_amount,
                          sell_impact=sell_q.price_impact_pct,
                          router=sell_q.router or None, mode=sell_q.mode or None,
                          slippage_bps=sell_q.slippage_bps)
-        return final, ""
+        return final, "", meta
 
     async def on_event(self, event: dict) -> None:
         """Async feed callback: fill entries and update open positions.
@@ -744,8 +769,9 @@ class PaperTrader:
                     return
             # --- FINAL ENTRY GATE: validate the exact order we execute ---
             final = None
+            gate_meta: dict[str, Any] = {}
             if self.jupiter is not None:
-                final, _skip_reason = await self._validated_entry(mint)
+                final, _skip_reason, gate_meta = await self._validated_entry(mint)
                 if final is None:
                     return
             # Live mode: execute THE validated order (never a fresh quote).
@@ -798,16 +824,43 @@ class PaperTrader:
             )
             pos.entry_time = now
             pos.entry_px = entry_px
+            # Rug-classifier feature snapshot: signal fields + every gate's
+            # entry-moment verdict, persisted with the position and written
+            # to trade_log.csv on close (see logs.TRADE_CSV_FIELDS).
+            try:
+                rules = filt.get_filter() if filt else {}
+            except Exception:  # noqa: BLE001 - features must never block a trade
+                rules = {}
+            feat: dict[str, Any] = {
+                "filter_profile": rules.get("profile"),
+                "mcap_usd": sig.mcap_usd if sig else None,
+                "dex": sig.dex if sig else None,
+                "snipes": sig.snipes if sig else None,
+                "liq_usd": sig.liq_usd if sig else None,
+                "sec_score": sig.sec_score if sig else None,
+            }
+            feat.update({k: v for k, v in gate_meta.items()})
+            if self.rug_checker is not None:
+                rc = self.rug_checker.cached_features(mint)
+                if rc:
+                    feat.update(rc)
+            if self.pool_checker is not None:
+                dv = self.pool_checker.cached_dev_rep(mint)
+                if dv:
+                    feat["dev_rep_ok"], feat["dev_rep_reason"] = dv
+            pos.features = {k: v for k, v in feat.items() if v is not None}
             pos.peak_px = entry_px
             pos.last_px = entry_px
             pos.last_tick_s = now
             self.open[mint] = pos
             logger.info("OPEN %s @ %.12g SOL", mint, entry_px)
-            logs.journal("open", ca=mint, entry_px=entry_px)
+            logs.journal("open", ca=mint, name=self._names.get(mint, ""),
+                        dex=(pos.features or {}).get("dex"), entry_px=entry_px)
             if self.notifier is not None:
                 await self.notifier.send_open(
                     mint, self._names.get(mint, ""), entry_px,
                     balance_before=balance_before,
+                    dex=(pos.features or {}).get("dex"),
                 )
             self._save()
             return
@@ -878,9 +931,11 @@ class PaperTrader:
         self._signals_info[sig.ca] = sig
         self._names[sig.ca] = sig.name
         logger.info("ARMED %s (%s) snipes=%d mcap=$%.0f", sig.ca, sig.name, sig.snipes, sig.mcap_usd)
-        logs.journal("arm", ca=sig.ca, name=sig.name, snipes=sig.snipes, mcap_usd=sig.mcap_usd)
+        logs.journal("arm", ca=sig.ca, name=sig.name, dex=sig.dex or None,
+                     snipes=sig.snipes, mcap_usd=sig.mcap_usd)
         if self.notifier is not None and not quiet:
-            await self.notifier.send_arm(sig.ca, sig.name, sig.snipes, sig.mcap_usd)
+            await self.notifier.send_arm(sig.ca, sig.name, sig.snipes, sig.mcap_usd,
+                                         dex=sig.dex)
 
     # --------------------------------------------------------------- reporting
     def balance(self) -> float:

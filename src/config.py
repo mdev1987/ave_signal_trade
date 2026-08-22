@@ -148,6 +148,12 @@ class Settings:
     # (0 = log-only until measured — pumpapi docs flag 0% as rug-able).
     liq_remove_veto_s: float = 120.0
     min_burned_liq_pct: float = 0.0
+    # Named filter regime (L1_PRODUCTION / L2_EXPERIMENT) so the two arms'
+    # statistics are never mixed; explicit FILTER_* values still override.
+    filter_profile: str = ""
+    # Dev-reputation gate mode: "warn" journals + admits (collect samples
+    # before letting it hard-reject); "reject" vetoes fail-closed.
+    dev_rep_mode: str = "warn"
 
     # --- jupiter ---------------------------------------------------------
     dry_run: bool = True
@@ -265,6 +271,8 @@ class Settings:
             scam_damper_window_min=get_float(env, "SCAM_DAMPER_WINDOW_MIN", 360.0),
             liq_remove_veto_s=get_float(env, "LIQ_REMOVE_VETO_S", 120.0),
             min_burned_liq_pct=get_float(env, "MIN_BURNED_LIQ_PCT", 0.0),
+            filter_profile=get(env, "FILTER_PROFILE", ""),
+            dev_rep_mode=get(env, "DEV_REP_MODE", "warn"),
             dry_run=get_bool(env, "DRY_RUN", True),
             private_key=get(env, "PRIVATE_KEY", ""),
             jupiter_api_key=get(env, "JUPITER_API_KEY", ""),
@@ -364,6 +372,8 @@ class Settings:
             ("SCAM_DAMPER_WINDOW_MIN", f"{self.scam_damper_window_min:g}"),
             ("LIQ_REMOVE_VETO_S", f"{self.liq_remove_veto_s:g}"),
             ("MIN_BURNED_LIQ_PCT", f"{self.min_burned_liq_pct:g}"),
+            ("FILTER_PROFILE", self.filter_profile),
+            ("DEV_REP_MODE", self.dev_rep_mode),
             ("BOT_TOKEN", self.bot_token),
             ("CHAT_ID", self.chat_id),
             ("TELEGRAM_API_ID", self.telegram_api_id),

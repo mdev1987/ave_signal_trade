@@ -194,6 +194,15 @@ class RugChecker:
             return False, f"score {score:.0f}>{self.max_score_normalised:.0f}"
         return True, ""
 
+    def cached_features(self, mint: str) -> dict[str, bool] | None:
+        """Features for the most recently fetched summary of ``mint``.
+
+        Used to stamp the trade journal without another API call. None when
+        this mint was never checked (or cache evicted).
+        """
+        cached = self._cache.get(mint)
+        return self.features(cached[1]) if cached else None
+
     async def check(self, mint: str) -> tuple[bool, str]:
         """Full gate: fetch (cached) then evaluate, and journal the features.
 

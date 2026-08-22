@@ -1,15 +1,18 @@
 """Arm-time pool checks: DexPaprika liquidity gate + Helius dev reputation.
 
-Both are **fail-closed**: if the API is unreachable, rate-limited or times
-out, the signal *is* rejected — an unverified pool is not a pool we buy, and
-entering blind into unconfirmed liquidity turns every API outage into a
-potential rug exposure. A deterministic pass only happens when the APIs
-answer and the data is clearly good:
+**Comments match behavior**: both gates are FAIL-CLOSED — if the API is
+unreachable, rate-limited or times out, the signal IS rejected (an unverified
+pool is not a pool we buy; entering blind into unconfirmed liquidity turns
+every API outage into potential rug exposure). This is deliberate for
+small-capital live trading ("safer sniper mode"). A deterministic pass only
+happens when the APIs answer and the data is clearly good:
 
 - DexPaprika: the token has an indexed pool with liquidity at or above
   ``min_liquidity_usd``.
-- Helius dev-rep (optional): the token's creator passes the age/creates
-  gates when ``dev_rep_enabled``; if Helius cannot answer, reject.
+- Helius dev-rep (optional): governed by ``DEV_REP_MODE``. ``reject`` treats
+  a failed/unavailable check as a veto; ``warn`` journals the details and
+  ADMITS the token so the feature's false-positive rate can be measured on
+  real trades before it is allowed to hard-reject (default ``warn``).
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ import time
 from typing import Any
 
 import httpx
+
+import logs
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +52,7 @@ class PoolChecker:
         helius_base_url: str = "https://beta.helius-rpc.com",
         min_liquidity_usd: float = 4000.0,
         dev_rep_enabled: bool = True,
+        dev_rep_mode: str = "warn",
         dev_rep_max_creates_24h: int = 3,
         dev_rep_min_age_hours: float = 0.0,
         timeout_s: float = 2.5,
@@ -57,6 +63,8 @@ class PoolChecker:
         self.helius_base_url = helius_base_url.rstrip("/")
         self.min_liquidity_usd = min_liquidity_usd
         self.dev_rep_enabled = dev_rep_enabled and bool(self.helius_api_keys)
+        # warn = journal + admit (measure first); reject = hard veto.
+        self.dev_rep_mode = "reject" if dev_rep_mode == "reject" else "warn"
         self.dev_rep_max_creates_24h = dev_rep_max_creates_24h
         self.dev_rep_min_age_hours = dev_rep_min_age_hours
         self.timeout_s = timeout_s
@@ -199,19 +207,22 @@ class PoolChecker:
         return None
 
     async def check_dev_rep(self, ca: str, created_ts: float | None = None) -> tuple[bool, str]:
-        """Veto freshly-minted tokens (fail-closed when enabled).
+        """Age/reputation gate, governed by ``dev_rep_mode``.
 
         Uses Helius ``getAsset`` to read the mint's metadata. The 24h-creates
         heuristic is intentionally NOT implemented: ``getSignaturesForAddress``
         counts every signature (trades included), so it would veto healthy
         devs — a false positive that kills all entries. Only the explicit
-        age veto (when ``min_age_hours`` > 0) can reject, and only when Helius
-        actually answers; if Helius is unreachable the token is NOT admitted
-        (fail closed) because the age gate is precisely the one we enabled.
+        age veto (when ``min_age_hours`` > 0) can fail the check.
+
+        ``warn`` mode (default): a FAILED verdict is journaled as a
+        ``devrep_warn`` event with its reason and the token is ADMITTED —
+        collect samples before letting this feature hard-reject.
+        ``reject`` mode: a failed verdict vetoes (fail-closed).
 
         Returns:
-            ``(ok, reason)``; ok=False when the token is provably too young OR
-            the age check could not be completed.
+            ``(ok, reason)``; ok=False only in reject mode (or for callers
+            wanting the raw verdict — warn mode translates it to admit).
         """
         if not self.dev_rep_enabled:
             return True, ""
@@ -223,21 +234,39 @@ class PoolChecker:
 
         asset = await self._helius_rpc("getAsset", [ca])
         if asset is None:
-            # Fail CLOSED: the dev-rep gate is on, so an unanswered age check
-            # must not admit a token that could be seconds old.
+            # Unanswered age check: reject-mode vetoes (fail-closed); warn
+            # mode journals and admits so the feature accumulates samples.
             msg = "dev reputation check unavailable"
             self._dev_cache[ca] = (time.time(), (False, msg))
             self._prune_cache()
+            if self.dev_rep_mode == "warn":
+                logs.journal("devrep_warn", ca=ca, reason=msg)
+                logger.warning("dev-rep WARN %s: %s — admitting", ca, msg)
+                return True, ""
             return False, msg
         age_h = (time.time() - created_ts) / 3600.0
         if age_h < self.dev_rep_min_age_hours:
-            msg = f"age {age_h:.1f}h < {self.dev_rep_min_age_hours:.1f}h"
+            msg = f"token too young (age {age_h:.1f}h)"
             self._dev_cache[ca] = (time.time(), (False, msg))
             self._prune_cache()
-            return False, f"token too young (age {age_h:.1f}h)"
+            if self.dev_rep_mode == "warn":
+                logs.journal("devrep_warn", ca=ca, reason=msg,
+                             age_hours=round(age_h, 2))
+                logger.warning("dev-rep WARN %s: %s — admitting", ca, msg)
+                return True, ""
+            return False, msg
         self._dev_cache[ca] = (time.time(), (True, ""))
         self._prune_cache()
         return True, ""
+
+    def cached_dev_rep(self, ca: str) -> tuple[bool, str] | None:
+        """Last computed dev-rep verdict for ``ca`` (None = never checked).
+
+        Used to stamp the trade journal with dev features without another
+        RPC round-trip at entry time.
+        """
+        cached = self._dev_cache.get(ca)
+        return cached[1] if cached else None
 
 
 async def _sleep(s: float) -> None:
