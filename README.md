@@ -5,6 +5,7 @@ Filters "New Solana Pool Launched" signals from the AveSolanaTokenScanner Telegr
 ## Profitable Strategy (honest-engine replay, 2026-08-13 feed — `scripts/replay_tune.py`)
 
 - **Filter (validated):** `mcap $5K–$20K, DEX = Pumpfunamm (+ Pump alias), snipes ≥ 3, sec = 0` — deduped to first signal per CA. Keep `Pumpfunamm` core; `Meteora/Raydium` are research variants with separate thresholds (adding them without retune drops EV `+101% → +62%`).
+- **Loosened tier active in `.env` (2026-08-22):** `mcap $2.5K–$50K, snipes ≥ 1` — ~3× more candidates (08-13: 108→357/day) now that rug screening moved from the static band to the dynamic gates below: on the widened 08-20 flow the damper killed 37 passing instances (ELON/STAR/RUPERT/NEX-Ai farms incl. a live rug) and RugCheck vetoed 15/30 unique CAs ("LP Unlocked"). `MIN_LIQUIDITY_USD 5000` still hard-floors junk liquidity regardless of band.
 - **Sizing:** `POSITION_SIZE_SOL=0.2` (10% of `2 SOL` bankroll), `MAX_POSITIONS=1` — serial execution, no concurrent dilution, no 429 storm from parallel sells.
 - **Hold (TTL) — 25min optimum (`1500s`):** Honest-engine sweep on `2026-08-13` (`TP4 SL0.3 trail2×50%`):
   - `5m +58.9% EV, win4x 13.3%` → `10m +83%` → `15m +94.7%` → `20m +98.1%` → **`25m +99.6% win30.5%`** → `60m +101.4% win32.4%`.  

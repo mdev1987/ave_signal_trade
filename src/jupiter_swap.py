@@ -216,21 +216,19 @@ class JupiterSwap:
 
         key = private_key or config.get(env, "PRIVATE_KEY")
         self._keypair: Keypair | None = None
-        if key:
+        if dry_run:
+            # Paper mode NEVER executes — even when a PRIVATE_KEY is configured.
+            # DRY_RUN must win over the key: previously any present key forced
+            # live=True, silently turning a "paper" run into real trading.
+            self.live = False
+        elif key:
             self._keypair = Keypair.from_base58_string(key.strip())
             self.live = True
-        elif dry_run:
-            self.live = False
         else:
             raise JupiterError(
                 "DRY_RUN=false requires PRIVATE_KEY in .env — refusing to start "
                 "live trading without a wallet key"
             )
-
-        if self._keypair is not None and not self.live:
-            # Paper mode with a real key configured: keep the key but never use
-            # it for execution (paranoia — a configured key stays offline).
-            log.info("PRIVATE_KEY configured but DRY_RUN=true — key kept offline")
 
         # Paper quoting: omit the taker so /order returns the quote with no
         # transaction (and never fails with "Insufficient funds"). Live mode
