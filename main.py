@@ -344,15 +344,16 @@ async def _trade_loop(
         trail_retrace_pct=s.trail_retrace_pct,
         liq_remove_veto_s=s.liq_remove_veto_s,
         min_burned_liq_pct=s.min_burned_liq_pct,
+        entry_max_age_s=s.entry_max_age_s,
         liq_collapse_pct=s.liq_collapse_pct,
         liq_collapse_window_s=s.liq_collapse_window_s,
         progress_cb=_mark_progress,
     )
     seen_cas: set[str] = set()
     stop_event = asyncio.Event()
-    logger.info("mode=%s gate=OPEN size=%.4f SOL max_positions=%d",
+    logger.info("mode=%s gate=OPEN size=%.4f SOL max_positions=%d timeout=%.0fs",
                 "LIVE" if (jupiter is not None and jupiter.live) else "PAPER",
-                size_sol, s.max_positions)
+                size_sol, s.max_positions, s.timeout_s)
 
     if trader.open:
         await notifier.send_alert(

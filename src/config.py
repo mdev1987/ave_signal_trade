@@ -112,6 +112,10 @@ class Settings:
     # the mcap/liq filters — these gates run at arm/entry time):
     min_liquidity_usd: float = 4000.0      # reject signals below this liq
     entry_latency_s: float = 2.0           # wait after signal before entry
+    # Armed signals older than this are never armed/entered (Ave reposts
+    # hours-old pools during backfill; they can only pollute the funnel).
+    # 0 disables.
+    entry_max_age_s: float = 300.0
     liq_confirm_window_s: float = 10.0     # how long to retry the DexPaprika check
     max_entry_mult: float = 5.0            # skip entry if price already > N x init
     max_entry_peak_pct: float = 0.0        # skip if entry price is above init by %
@@ -247,6 +251,7 @@ class Settings:
             max_tick_mult=get_float(env, "MAX_TICK_MULT", 1e5),
             min_liquidity_usd=get_float(env, "MIN_LIQUIDITY_USD", 4000.0),
             entry_latency_s=get_float(env, "ENTRY_LATENCY_S", 2.0),
+            entry_max_age_s=get_float(env, "ENTRY_MAX_AGE_S", 300.0),
             liq_confirm_window_s=get_float(env, "LIQ_CONFIRM_WINDOW_S", 10.0),
             max_entry_mult=get_float(env, "MAX_ENTRY_MULT", 5.0),
             max_entry_peak_pct=get_float(env, "MAX_ENTRY_PEAK_PCT", 0.0),

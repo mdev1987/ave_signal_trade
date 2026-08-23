@@ -125,6 +125,7 @@ class PaperTrader:
         trail_retrace_pct: float = 0.5,
         liq_remove_veto_s: float = 120.0,
         min_burned_liq_pct: float = 0.0,
+        entry_max_age_s: float = 300.0,
         liq_collapse_pct: float = 60.0,
         liq_collapse_window_s: float = 180.0,
         progress_cb=None,
@@ -165,6 +166,8 @@ class PaperTrader:
         # >0 (0 keeps it log-only until measured). Unknown state = pass.
         self.liq_remove_veto_s = liq_remove_veto_s
         self.min_burned_liq_pct = min_burned_liq_pct
+        # Armed signals older than this are never armed/entered (backfill noise).
+        self.entry_max_age_s = entry_max_age_s
         # Post-entry early warning (the "NASA class"): quote-side pool
         # reserves collapsing by liq_collapse_pct within liq_collapse_window_s
         # of entry force an exit before the timeout writes the position off
@@ -676,7 +679,8 @@ class PaperTrader:
             reason = final.reason if final else "quote_exception"
             logger.info("SKIP %s entry: no route (%s)", mint, reason)
             logs.journal("skip_entry", ca=mint, reason=f"no_route:{reason}")
-            return None, reason, {}
+            transient = bool(final and final.retryable)
+            return None, reason, {"transient": transient}
         meta.update(buy_impact_pct=final.price_impact_pct,
                     router=final.router or None, mode=final.mode or None,
                     slippage_bps=final.slippage_bps)
@@ -708,7 +712,14 @@ class PaperTrader:
                 reason = sell_q.reason if sell_q else "sell_quote_exception"
                 logger.info("SKIP %s entry: no sell route (%s)", mint, reason)
                 logs.journal("skip_entry", ca=mint, reason=f"no_sell_route:{reason}")
-                return None, reason, meta
+                # Sell-quote 429/timeout/5xx are transient infrastructure, not
+                # an un-sellable token (CATE-class verdicts are permanent
+                # reasons like quote_no_route / quote_impact).
+                transient = reason in (
+                    "quote_rate_limited", "quote_timeout",
+                    "quote_http_error", "sell_quote_exception",
+                )
+                return None, reason, {"transient": transient}
             meta["sell_impact_pct"] = sell_q.price_impact_pct
             logs.journal("sell_route", ca=mint,
                          sell_out=sell_q.output_amount,
@@ -792,6 +803,14 @@ class PaperTrader:
             if self.jupiter is not None:
                 final, _skip_reason, gate_meta = await self._validated_entry(mint)
                 if final is None:
+                    # Transient failures (Jupiter 429/timeout/5xx) are NOT the
+                    # token's fault: re-arm so the next trade tick retries the
+                    # entry instead of silently losing it (2 of 4 attempts in
+                    # the 2026-08-23 session were lost to rate limiting).
+                    if gate_meta.get("transient"):
+                        self._signals_seen.add(mint)
+                        logger.info("RETRY-LATER %s: transient gate failure "
+                                    "(%s) — stays armed", mint, _skip_reason)
                     return
             # Live mode: execute THE validated order (never a fresh quote).
             if self.jupiter is not None and self.jupiter.live:
@@ -942,6 +961,16 @@ class PaperTrader:
             logger.info("SKIP %s (%s): gate closed", sig.ca, sig.name)
             logs.journal("skip", ca=sig.ca, name=sig.name, reason="gate_closed")
             return
+        # Stale-signal guard: Ave backfill reposts hours-old pools; arming
+        # them only pollutes the funnel (they expire without a tick anyway).
+        if self.entry_max_age_s > 0 and sig.unixtime > 0:
+            age = time.time() - sig.unixtime
+            if age > self.entry_max_age_s:
+                logger.info("SKIP %s (%s): stale signal (%.0fs old)",
+                            sig.ca, sig.name, age)
+                logs.journal("skip", ca=sig.ca, name=sig.name,
+                             reason=f"stale_signal:{age:.0f}s")
+                return
         if len(self.open) >= self.max_positions:
             logger.info("SKIP %s (%s): at max positions (%d)",
                         sig.ca, sig.name, self.max_positions)
