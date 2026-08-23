@@ -139,20 +139,24 @@ class PriceFeed:
         return dict(st) if st else None
 
     async def _handle(self, event: dict) -> None:
-        """Update price state for a single event and wake waiters."""
+        """Update feed state for a single event and wake waiters.
+
+        Pool/rug features are folded in BEFORE the trader callback: the
+        event that triggers an entry must already carry its burnedLiquidity/
+        quoteInPool snapshot, or _validated_entry races ahead of the state
+        it needs (observed live: poolfeat=0 for an entire session).
+        """
+        mint = self._mint_of(event)
+        if mint:
+            try:
+                self._update_pool_state(event, mint)
+            except Exception:
+                logger.exception("pool-state update failed")
         if self.on_event is not None:
             try:
                 await self.on_event(event)
             except Exception:
                 logger.exception("on_event callback failed")
-        mint = self._mint_of(event)
-        if mint:
-            # Pool/rug features ride on most events — fold them in first so
-            # state exists even for mints whose price is unusable.
-            try:
-                self._update_pool_state(event, mint)
-            except Exception:
-                logger.exception("pool-state update failed")
         price = self._price_of(event)
         if mint and price and price > 0:
             self.prices[mint] = price
