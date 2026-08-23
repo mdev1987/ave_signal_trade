@@ -162,7 +162,8 @@ async def _handle_new_signal(
         trader.note_reject(sig.ca, sig.name, reasons)
         return
     logs.journal("signal", ca=sig.ca, name=sig.name, dex=sig.dex or None,
-                 mcap_usd=sig.mcap_usd, snipes=sig.snipes)
+                 mcap_usd=sig.mcap_usd, liq_usd=sig.liq_usd,
+                 snipes=sig.snipes, holders=sig.holders)
     if notify:
         await trader.offer(sig)
     else:
@@ -343,6 +344,8 @@ async def _trade_loop(
         trail_retrace_pct=s.trail_retrace_pct,
         liq_remove_veto_s=s.liq_remove_veto_s,
         min_burned_liq_pct=s.min_burned_liq_pct,
+        liq_collapse_pct=s.liq_collapse_pct,
+        liq_collapse_window_s=s.liq_collapse_window_s,
         progress_cb=_mark_progress,
     )
     seen_cas: set[str] = set()

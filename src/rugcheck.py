@@ -32,6 +32,11 @@ import logs
 logger = logging.getLogger(__name__)
 
 
+# Discrete RugCheck information states (journaled per evaluation; outcomes
+# should be compared PER STATE — "unavailable" is not "clean").
+RUGCHECK_STATUSES = ("ok", "missing", "rate_limited", "error")
+
+
 class RugChecker:
     """Async, cached, single-flight RugCheck summary client.
 
@@ -86,8 +91,15 @@ class RugChecker:
         """Release the HTTP client."""
         await self._client.aclose()
 
-    async def _fetch_summary(self, mint: str) -> dict[str, Any] | None:
-        """Fetch ``/v1/tokens/{mint}/report/summary``; None when unavailable."""
+    async def _fetch_summary(self, mint: str) -> tuple[dict[str, Any] | None, str]:
+        """Fetch ``/v1/tokens/{mint}/report/summary``.
+
+        Returns:
+            ``(data, status)`` with one of the ``RUGCHECK_STATUSES`` so an
+            unavailable answer is never mistaken for a clean one:
+            ``ok`` | ``missing`` (404, not indexed yet) | ``rate_limited``
+            (429) | ``error`` (timeout/transport/other).
+        """
         headers = {"accept": "application/json"}
         if self.api_key:
             headers["X-API-KEY"] = self.api_key
@@ -100,19 +112,19 @@ class RugChecker:
                 timeout=self.timeout_s + 1.0,
             )
             if r.status_code == 404:
-                return None  # not indexed yet — the normal case at snipe time
+                return None, "missing"  # not indexed yet — normal at snipe time
             if r.status_code == 429:
                 logger.warning("rugcheck 429 (rate limit) for %s", mint)
-                return None
+                return None, "rate_limited"
             r.raise_for_status()
             data = r.json()
-            return data if isinstance(data, dict) else None
+            return (data if isinstance(data, dict) else None), "ok"
         except Exception as e:  # noqa: BLE001
             logger.warning("rugcheck summary failed %s: %s", mint, e)
-            return None
+            return None, "error"
 
     async def _summary(self, mint: str) -> dict[str, Any] | None:
-        """Cached + single-flight summary fetch."""
+        """Cached + single-flight summary fetch (data only; see ``_last_status``)."""
         cached = self._cache.get(mint)
         if cached and time.time() - cached[0] < self.cache_ttl_s:
             return cached[1]
@@ -122,21 +134,32 @@ class RugChecker:
         fut: asyncio.Future[dict[str, Any] | None] = asyncio.get_running_loop().create_future()
         self._inflight[mint] = fut
         try:
-            data = await self._fetch_summary(mint)
-            self._cache[mint] = (time.time(), data)
+            data, status = await self._fetch_summary(mint)
+            self._cache[mint] = (time.time(), data, status)
             self._prune()
             return data
         finally:
             self._inflight.pop(mint, None)
             if not fut.done():  # cancelled while fetching
-                fut.set_result(self._cache.get(mint, (0, None))[1])
+                cached = self._cache.get(mint, (0, None, "error"))
+                fut.set_result(cached[1])
+
+    def last_status(self, mint: str) -> str | None:
+        """Information state of the most recent summary fetch for ``mint``.
+
+        One of ``RUGCHECK_STATUSES`` or None when never fetched — journaled
+        per evaluation and stamped on trades so outcomes can be compared per
+        state (a 429-admitted token is NOT the same evidence as a clean one).
+        """
+        cached = self._cache.get(mint)
+        return cached[2] if cached and len(cached) > 2 else None
 
     def _prune(self) -> None:
         """Bound the cache size (drop stale first, then oldest)."""
         if len(self._cache) <= self._cache_max:
             return
         now = time.time()
-        stale = [k for k, (ts, _) in self._cache.items() if now - ts > self.cache_ttl_s]
+        stale = [k for k, v in self._cache.items() if now - v[0] > self.cache_ttl_s]
         for k in stale:
             self._cache.pop(k, None)
         while len(self._cache) > self._cache_max:
@@ -203,6 +226,11 @@ class RugChecker:
         cached = self._cache.get(mint)
         return self.features(cached[1]) if cached else None
 
+    def cached_status(self, mint: str) -> str | None:
+        """Information state (RUGCHECK_STATUSES) of the cached fetch, if any."""
+        cached = self._cache.get(mint)
+        return cached[2] if cached and len(cached) > 2 else None
+
     async def check(self, mint: str) -> tuple[bool, str]:
         """Full gate: fetch (cached) then evaluate, and journal the features.
 
@@ -230,8 +258,12 @@ class RugChecker:
                 return ok, reason
         ok, reason = self.evaluate(mint, summary)
         flags = self.features(summary)
+        status = self.last_status(mint) or (
+            "error" if summary is None else "ok"
+        )
         logs.journal("rugcheck", ca=mint, ok=ok,
-                     reason=reason or None, veto_risks=list(self.veto_risks), **flags)
+                     reason=reason or None, veto_risks=list(self.veto_risks),
+                     rugcheck_status=status, **flags)
         if not ok:
             logger.info("rugcheck VETO %s: %s", mint, reason)
         return ok, reason

@@ -236,7 +236,7 @@ class Position:
         # Trailing stop: once the price has reached trail_activate_mult x entry,
         # ratchet a stop-loss up to (peak - retrace). A winner that reverses
         # after a big run is locked out with gains intact instead of bleeding
-        # all the way back to the fixed stop or the 1h timeout.
+        # all the way back to the fixed stop or the timeout exit.
         if (self.trail_activate_mult > 0 and self.peak_px is not None
                 and self.peak_px >= self.entry_px * self.trail_activate_mult):
             cur = price if price is not None else self.last_px

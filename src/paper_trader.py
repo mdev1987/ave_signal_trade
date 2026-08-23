@@ -37,7 +37,11 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-EXIT_LABELS = {"tp": "take-profit", "sl": "stop-loss", "timeout": "1h timeout"}
+EXIT_LABELS = {
+    "tp": "take-profit", "sl": "stop-loss",
+    # neutral label: the hold window is TIMEOUT_S (1500-1800s tuned), not 1h
+    "timeout": "timeout", "liq_collapse": "liquidity collapse",
+}
 
 
 def _safe_float(v: Any) -> float | None:
@@ -121,6 +125,8 @@ class PaperTrader:
         trail_retrace_pct: float = 0.5,
         liq_remove_veto_s: float = 120.0,
         min_burned_liq_pct: float = 0.0,
+        liq_collapse_pct: float = 60.0,
+        liq_collapse_window_s: float = 180.0,
         progress_cb=None,
     ) -> None:
         self.feed = feed
@@ -159,6 +165,12 @@ class PaperTrader:
         # >0 (0 keeps it log-only until measured). Unknown state = pass.
         self.liq_remove_veto_s = liq_remove_veto_s
         self.min_burned_liq_pct = min_burned_liq_pct
+        # Post-entry early warning (the "NASA class"): quote-side pool
+        # reserves collapsing by liq_collapse_pct within liq_collapse_window_s
+        # of entry force an exit before the timeout writes the position off
+        # at ~zero. 0 disables. Measured from PumpAPI stream state — no API.
+        self.liq_collapse_pct = liq_collapse_pct
+        self.liq_collapse_window_s = liq_collapse_window_s
         # Hard cap on one close operation (live sell: quote + execute + confirm).
         # Bounded so a hung sell can never stall the whole sweep loop.
         self._close_timeout_s = 90.0
@@ -290,7 +302,7 @@ class PaperTrader:
         """Periodically advance open positions on wall-clock time.
 
         Positions only receive price events when the mint trades; without
-        this sweep a quiet position would never hit its 1h timeout and would
+        this sweep a quiet position would never hit its timeout and would
         never re-price on the last known tick. In live mode it also refreshes
         the wallet balance from the RPC. Runs until cancelled.
         """
@@ -545,11 +557,14 @@ class PaperTrader:
         self.open.pop(mint, None)
         self._signals_seen.discard(mint)
         logger.info(
-            "CLOSE %s (%s) mult=%.2f pnl=%+.4f SOL",
+            "CLOSE %s (%s) mult=%.2f pnl=%+.4f SOL held=%.0fs timeout_s=%.0f",
             mint, EXIT_LABELS.get(reason, reason), pos.mult or 0.0, pos.pnl_sol,
+            (pos.exit_time or 0) - (pos.entry_time or 0), pos.timeout_s,
         )
         logs.journal("close", ca=mint, reason=reason, mult=pos.mult,
-                     pnl_sol=pos.pnl_sol, dex=(pos.features or {}).get("dex"))
+                     pnl_sol=pos.pnl_sol, dex=(pos.features or {}).get("dex"),
+                     hold_s=(pos.exit_time or 0) - (pos.entry_time or 0),
+                     timeout_s=pos.timeout_s)
         logs.log_trade(pos.to_dict())
         if self.notifier is not None:
             await self.notifier.send_close(
@@ -767,6 +782,10 @@ class PaperTrader:
                     logs.journal("skip_entry", ca=mint,
                                  reason=f"pool_drained:{reason}")
                     return
+            # --- ENTRY ATTEMPT marker: closes the arm->attempt lifecycle gap
+            # (57 armed -> 1 open was undiagnosable without this).
+            logs.journal("entry_attempt", ca=mint, price=price,
+                         age_s=round(now - (sig.unixtime if sig else now), 2))
             # --- FINAL ENTRY GATE: validate the exact order we execute ---
             final = None
             gate_meta: dict[str, Any] = {}
@@ -844,6 +863,9 @@ class PaperTrader:
                 rc = self.rug_checker.cached_features(mint)
                 if rc:
                     feat.update(rc)
+                rs = self.rug_checker.cached_status(mint)
+                if rs:
+                    feat["rugcheck_status"] = rs
             if self.pool_checker is not None:
                 dv = self.pool_checker.cached_dev_rep(mint)
                 if dv:
@@ -869,8 +891,42 @@ class PaperTrader:
         if pos is None:
             return
         reason = pos.update(now, price)
+        if not reason and self.liq_collapse_pct > 0:
+            reason = self._liq_collapse(mint, pos, now)
         if reason:
             await self._close_position(mint, pos, reason)
+
+    def _liq_collapse(self, mint: str, pos: Position, now: float) -> str | None:
+        """Post-entry catastrophic-liquidity detector (stream-fed, no API).
+
+        Compares the latest stream ``quoteInPool`` for the mint against the
+        entry-time baseline: a drop of ``liq_collapse_pct`` percent within
+        ``liq_collapse_window_s`` of entry returns the ``liq_collapse`` exit
+        reason — exiting at whatever price remains instead of riding to the
+        timeout writeoff at ~zero (the NASA failure mode).
+        """
+        base = (pos.features or {}).get("quote_in_pool")
+        st = self.feed.pool_state(mint) if self.feed is not None else None
+        cur = st.get("quote_in_pool") if st else None
+        if not base or base <= 0 or cur is None:
+            return None
+        if pos.entry_time and now - pos.entry_time > self.liq_collapse_window_s:
+            return None  # past the fragile window; normal SL/trail governs
+        drop_pct = (base - cur) / base * 100.0
+        if drop_pct >= self.liq_collapse_pct:
+            logger.warning(
+                "LIQ COLLAPSE %s: quote pool %.1f -> %.1f (-%.0f%%, %.0fs "
+                "after entry) — forcing early exit",
+                mint, base, cur, drop_pct, now - (pos.entry_time or now),
+            )
+            logs.journal(
+                "liq_collapse", ca=mint, base=base, current=cur,
+                drop_pct=round(drop_pct, 1),
+                age_s=round(now - (pos.entry_time or now), 1),
+            )
+            pos.features["liq_collapse_drop_pct"] = round(drop_pct, 1)
+            return "liq_collapse"
+        return None
 
     async def offer(self, sig: Signal, quiet: bool = False) -> None:
         """Mark a passing signal as eligible for entry on first trade.
@@ -990,6 +1046,14 @@ class PaperTrader:
             if now - sig.unixtime > horizon
         ]
         for mint in stale:
+            sig = self._signals_info.get(mint)
+            # Lifecycle telemetry: an ARMED signal that never saw a trade
+            # event expires silently otherwise — the 57-arm/1-open mystery
+            # needs this to be countable.
+            if sig is not None and mint in self._signals_seen:
+                logs.journal("entry_expired", ca=mint, name=sig.name,
+                             reason="no_price_event",
+                             age_s=round(now - sig.unixtime, 0))
             self._signals_info.pop(mint, None)
             self._names.pop(mint, None)
             self._signals_seen.discard(mint)
