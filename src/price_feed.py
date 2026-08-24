@@ -91,9 +91,16 @@ class PriceFeed:
         except (TypeError, ValueError):
             return None
 
-    def _mint_of(self, event: dict) -> str | None:
-        """Return the token mint for any event that carries one."""
-        mint = event.get("mint") or (event.get("pool") or {}).get("mint")
+    @staticmethod
+    def _mint_of(event: dict) -> str | None:
+        """Return the token mint for any event that carries one.
+
+        The pumpapi stream puts ``mint`` at the top level on every trade and
+        create event. (Older assumptions that ``pool`` was a dict with its own
+        ``mint`` are obsolete — ``pool`` is now a string like "pump-amm", and
+        calling ``.get`` on it raises and silently kills the feed task.)
+        """
+        mint = event.get("mint")
         return mint if isinstance(mint, str) and mint else None
 
     def _update_pool_state(self, event: dict, mint: str) -> None:
@@ -146,7 +153,11 @@ class PriceFeed:
         quoteInPool snapshot, or _validated_entry races ahead of the state
         it needs (observed live: poolfeat=0 for an entire session).
         """
-        mint = self._mint_of(event)
+        try:
+            mint = self._mint_of(event)
+        except Exception:
+            logger.exception("mint extraction failed")
+            mint = None
         if mint:
             try:
                 self._update_pool_state(event, mint)

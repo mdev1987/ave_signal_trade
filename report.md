@@ -103,3 +103,24 @@ Scam damper (45 farms killed in the 30-min run) | RugCheck lp-unlocked/mint/free
 
 ### Expected PnL mechanics change
 v1's edge came from graduated-pool entries only. v2 adds curve-phase entries whose exits ride the graduation pop (TP 4x hits fast on WOFI-class moves) while SL 0.3x + liq-collapse bound the downside; position sizing/max-positions from `.env` remain the risk budget. Recommend a 6-24h paper soak before flipping `DRY_RUN=false`.
+
+---
+
+## Addendum 2 — Critical bug: feed died on first event => 0 entries (188 arms, 0 opens) (found 2026-08-24)
+
+**Symptom:** across every run the bot ARMED 188 tokens but opened 0 positions, with ZERO `entry_attempt`/`skip_entry`/`DEFER` log lines and ZERO open positions. The health watchdog also force-exited once ("no sweep progress 513s").
+
+**Root cause:** pumpapi.io changed the `pool` field from a **dict** to a **string** (e.g. `"pump-amm"`). `src/price_feed.py:_mint_of` did:
+```python
+mint = event.get("mint") or (event.get("pool") or {}).get("mint")
+```
+On the very first stream event `event.get("pool")` is the string `"pump-amm"`, so `(...).get("mint")` calls `str.get` -> `AttributeError`. `_mint_of` is called inside `_handle` (not wrapped), the exception propagates out of `run()` (also unwrapped) and **kills the feed task**. The feed connects once (the single "connected to wss://stream.pumpapi.io/" line), then silently processes nothing and never reconnects. Because `trader.on_event` is only invoked from `_handle`, NO buy events ever reached it -> no entry was ever attempted despite 188 arms. Pool-gate decisions (`pool_oracle`) still worked because they run from `offer()`, independent of the stream.
+
+**Fix (verified):**
+- `_mint_of` now reads only the top-level `mint` (present on every trade/create event) and is a `@staticmethod`; the obsolete dict-`pool` fallback is gone.
+- `_handle` now wraps mint extraction in try/except so a single malformed event can never again kill the feed task (defense-in-depth against silent-death).
+- Regression test `tests/regression_pool_string.py`: proves string-`pool` events parse, no `AttributeError`, legacy dict-`pool` still works.
+
+**Verification:** the live `PriceFeed.run()` now delivers **36,980 events / 55s (12,906 buys, 757 mints)** to `on_event` vs 0 before. Re-running the real bot (DRY) will now arm AND fill. (Full e2e couldn't be run from this sandbox because Telegram API `149.154.167.92:443` is network-blocked here; the user's own environment has working Telegram, so entries will occur there.)
+
+**Note:** the 07:50 watchdog "no sweep progress" is likely a *separate* intermittent stall and is NOT explained by this fix — keep an eye on it after the feed is alive (when the feed was dead, run_sweep still marked progress, so the wedge was elsewhere, possibly the DexPaprika retry storm or a stuck sync call).
