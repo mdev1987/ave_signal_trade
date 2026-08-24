@@ -100,15 +100,26 @@ def parse_signal(
 ) -> Signal:
     """Parse a single channel message into a :class:`Signal`.
 
+    Three message shapes are understood:
+
+    - **Ave** (legacy export/replay): ``Token:``/``CA:``/``MCap:`` labels.
+    - **DRBTSolanaPF** new pump.fun launch: ``Name | TICKER`` headline +
+      ``Mint: <ca>``; no mcap/liq/snipes metadata.
+    - **SOLTRENDING** buy alert: title ``⏺ | Project / SYMBOL``, a
+      ``Market Cap $...`` line, and the mint hidden in the ``jup.ag/swap/``
+      Buy link href (extracted from the raw markdown before flattening).
+
     Args:
-        message: Flattened message text (or entity list).
+        message: Raw markdown or entity-list message body.
         unixtime: Message timestamp as unix seconds.
         date: ISO date string of the message.
         message_id: Telegram message id (for dedup/checkpointing).
 
     Returns:
-        A :class:`Signal`; fields that are absent from the message stay empty.
+        A :class:`Signal`; fields that are absent from the message stay
+        empty/None so the filter can skip rules the feed can't support.
     """
+    raw = message if isinstance(message, str) else ""
     text = flatten(message or "")
     sig = Signal(unixtime=unixtime, date=date, message_id=message_id)
 
@@ -149,12 +160,41 @@ def parse_signal(
         pass
     sig.holders = _first_int(text, "Token Holders")
     sig.insiders = _first_int(text, "Insiders") or 0
-    sig.snipes = _first_int(text, "SNIPES") or 0
+    sig.snipes = _first_int(text, "SNIPES")
     sig.rushers = _first_int(text, "RUSHERS") or 0
 
     m = re.search(r"Top10 holdings<30%\s*:\s*(✅|❌)", text)
     if m:
         sig.top10_ok = m.group(1)
+
+    # --- DRBTSolanaPF (new pump.fun launch) ---
+    if not sig.ca:
+        m = re.search(r"\bMint\s*:\s*([A-Za-z0-9]{32,44})", text)
+        if m:
+            sig.ca = m.group(1)
+    if not sig.name:
+        m = re.search(r"^\s*(.+?)\s*\|\s*(.+?)\s*$", text, re.MULTILINE)
+        if m and m.group(1).strip() not in ("", "⏺"):
+            sig.name = m.group(1).strip()
+
+    # --- SOLTRENDING (buy alert; mint only exists in the Buy link href) ---
+    m = re.search(r"/swap/(?:SOL-)?([A-Za-z0-9]{32,44})", raw)
+    if m:
+        sig.ca = sig.ca or m.group(1)
+        if not sig.name:
+            t = re.search(r"^\s*⏺\s*\|?\s*(.+?)\s*$", text, re.MULTILINE)
+            if t:
+                sig.name = t.group(1).split("/")[-1].strip()
+    if not sig.mcap_usd:
+        m = re.search(r"Market Cap\s*:?\s*\$([\d.,KMB]+)", text)
+        if m:
+            sig.mcap = m.group(1)
+            sig.mcap_usd = parse_amount(m.group(1))
+
+    # pump.fun launches carry no dex label; the canonical `...pump` mint
+    # suffix identifies PumpAMM so the dex filter keeps applying to them.
+    if not sig.dex and sig.ca.endswith("pump"):
+        sig.dex = "Pumpfunamm"
 
     return sig
 

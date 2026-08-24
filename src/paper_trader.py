@@ -1015,12 +1015,17 @@ class PaperTrader:
         self._signals_seen.add(sig.ca)
         self._signals_info[sig.ca] = sig
         self._names[sig.ca] = sig.name
-        logger.info("ARMED %s (%s) snipes=%d mcap=$%.0f", sig.ca, sig.name, sig.snipes, sig.mcap_usd)
+        logger.info(
+            "ARMED %s (%s) snipes=%s mcap=$%.0f",
+            sig.ca, sig.name, sig.snipes if sig.snipes is not None else "n/a",
+            sig.mcap_usd,
+        )
         logs.journal("arm", ca=sig.ca, name=sig.name, dex=sig.dex or None,
                      snipes=sig.snipes, mcap_usd=sig.mcap_usd)
         if self.notifier is not None and not quiet:
-            await self.notifier.send_arm(sig.ca, sig.name, sig.snipes, sig.mcap_usd,
-                                         dex=sig.dex)
+            await self.notifier.send_arm(
+                sig.ca, sig.name, sig.snipes or 0, sig.mcap_usd, dex=sig.dex,
+            )
 
     # --------------------------------------------------------------- reporting
     def balance(self) -> float:

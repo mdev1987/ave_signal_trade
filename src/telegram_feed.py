@@ -12,7 +12,7 @@ consumption modes:
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -24,10 +24,18 @@ from parser import parse_signal
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CHANNEL = "@AveSolanaTokenScanner"
+DEFAULT_CHANNELS: tuple[str, ...] = ("@DRBTSolanaPF", "@SOLTRENDING")
 DEFAULT_FETCH_LIMIT = 500
 
 SignalHandler = Callable[[Signal], Awaitable[None]]
+
+
+def _normalize_channels(channels: str | Sequence[str]) -> tuple[str, ...]:
+    """Normalize a channel spec (single name or comma-separated list)."""
+    if isinstance(channels, str):
+        channels = channels.split(",")
+    values = tuple(c.strip() for c in channels if c and c.strip())
+    return values or DEFAULT_CHANNELS
 
 
 class TelegramFeed:
@@ -36,12 +44,18 @@ class TelegramFeed:
     Args:
         creds: Resolved Telegram credentials + session file (see
             config.resolve_telegram_creds).
-        channel: Channel username (with ``@``) or numeric id to monitor.
+        channels: Channel usernames (with ``@``) or numeric ids to monitor;
+            a single string may carry comma-separated names. Order is the
+            preference order (earlier wins CA ties during backfill).
     """
 
-    def __init__(self, creds: TelegramCreds, channel: str = DEFAULT_CHANNEL) -> None:
+    def __init__(
+        self,
+        creds: TelegramCreds,
+        channels: str | Sequence[str] = DEFAULT_CHANNELS,
+    ) -> None:
         self.creds = creds
-        self.channel = channel
+        self.channels = _normalize_channels(channels)
         self._client = TelegramClient(
             creds.session_file, creds.api_id, creds.api_hash
         )
@@ -108,26 +122,28 @@ class TelegramFeed:
         limit: int = DEFAULT_FETCH_LIMIT,
         minutes: int | None = None,
     ) -> list[Signal]:
-        """Fetch recent channel messages and parse them into signals.
+        """Fetch recent messages from every monitored channel and parse them.
 
         Args:
-            limit: Max messages to pull.
+            limit: Max messages to pull per channel.
             minutes: If given, only messages from the last N minutes.
 
         Returns:
-            Parsed signals in chronological order.
+            Parsed signals in chronological order (stable for equal
+            timestamps, so the preferred channel's post wins a tie).
         """
         await self._ensure_connected()
         cutoff = None
         if minutes is not None:
             cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
         signals: list[Signal] = []
-        async for msg in self._client.iter_messages(self.channel, limit=limit):
-            if cutoff is not None and (msg.date or datetime.now(UTC)) < cutoff:
-                break
-            sig = self._msg_to_signal(msg)
-            if sig is not None:
-                signals.append(sig)
+        for channel in self.channels:
+            async for msg in self._client.iter_messages(channel, limit=limit):
+                if cutoff is not None and (msg.date or datetime.now(UTC)) < cutoff:
+                    break
+                sig = self._msg_to_signal(msg)
+                if sig is not None:
+                    signals.append(sig)
         signals.sort(key=lambda s: s.unixtime)
         return signals
 
@@ -142,12 +158,12 @@ class TelegramFeed:
     async def run_realtime(self) -> None:
         """Stream new messages via Telethon's event loop (blocks until stopped).
 
-        Registers a ``NewMessage`` handler for the configured channel and
-        dispatches every parsed signal to the registered handlers.
+        Registers a ``NewMessage`` handler for every monitored channel and
+        dispatches each parsed signal to the registered handlers.
         """
         await self._ensure_connected()
 
-        @self._client.on(events.NewMessage(chats=self.channel))
+        @self._client.on(events.NewMessage(chats=list(self.channels)))
         async def handle(event) -> None:
             msg = event.message
             text = getattr(msg, "text", "") or ""

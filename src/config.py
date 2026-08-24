@@ -81,6 +81,20 @@ def get_csv_ints(env: dict[str, str], key: str, default: tuple[int, ...]) -> tup
         return default
 
 
+def get_channels(
+    env: dict[str, str],
+    default: tuple[str, ...] = ("@DRBTSolanaPF", "@SOLTRENDING"),
+) -> tuple[str, ...]:
+    """Read the signal channels as a comma-separated list.
+
+    ``TELEGRAM_CHANNELS`` wins; the legacy single-channel ``TELEGRAM_CHANNEL``
+    is still honored for old ``.env`` files.
+    """
+    raw = get(env, "TELEGRAM_CHANNELS", "") or get(env, "TELEGRAM_CHANNEL", "")
+    values = tuple(v.strip() for v in raw.split(",") if v.strip())
+    return values or default
+
+
 @dataclass(frozen=True)
 class Settings:
     """Every tunable knob, defaulted and overridable via ``.env``.
@@ -99,7 +113,9 @@ class Settings:
     shutdown_grace_s: int = 60
     health_timeout_s: int = 300   # no sweep progress this long -> force exit
     checkpoint_save_s: float = 300.0  # periodic checkpoint flush (positions)
-    channel: str = "@AveSolanaTokenScanner"
+    # Signal sources in preference order: on a CA tie (same-second posts from
+    # both channels during backfill) the earlier channel's signal wins dedup.
+    channels: tuple[str, ...] = ("@DRBTSolanaPF", "@SOLTRENDING")
     checkpoint_file: str = "paper_positions.json"
     backfill_limit: int = 200
     # Price sanity + staleness guards (entry/exit marks):
@@ -117,6 +133,16 @@ class Settings:
     # 0 disables.
     entry_max_age_s: float = 300.0
     liq_confirm_window_s: float = 10.0     # how long to retry the DexPaprika check
+    # Curve-phase fallback: admit `...pump` mints with no indexed external
+    # pool yet when the PumpAPI stream shows fresh trading activity (oracle 2)
+    # or DexScreener has an active pair (oracle 3). Bonding-curve liquidity is
+    # mathematical pre-graduation, so activity is sufficient evidence.
+    pool_curve_fallback: bool = True
+    curve_stream_max_age_s: float = 90.0   # stream state older than this is stale
+    # DexScreener REST oracle (docs: 60 req/min public tier; raise for higher)
+    dexscreener_enabled: bool = True
+    dexscreener_base_url: str = "https://api.dexscreener.com"
+    dexscreener_rpm: int = 60
     max_entry_mult: float = 5.0            # skip entry if price already > N x init
     max_entry_peak_pct: float = 0.0        # skip if entry price is above init by %
     pool_check_enabled: bool = True        # DexPaprika liquidity/survival gate
@@ -241,7 +267,7 @@ class Settings:
             shutdown_grace_s=get_int(env, "SHUTDOWN_GRACE_S", 60),
             health_timeout_s=get_int(env, "HEALTH_TIMEOUT_S", 300),
             checkpoint_save_s=get_float(env, "CHECKPOINT_SAVE_S", 300.0),
-            channel=get(env, "TELEGRAM_CHANNEL", "@AveSolanaTokenScanner"),
+            channels=get_channels(env),
             checkpoint_file=get(env, "CHECKPOINT_FILE", "paper_positions.json"),
             backfill_limit=get_int(env, "BACKFILL_LIMIT", 200),
             min_entry_px=get_float(env, "MIN_ENTRY_PX", 1e-11),
@@ -253,6 +279,11 @@ class Settings:
             entry_latency_s=get_float(env, "ENTRY_LATENCY_S", 2.0),
             entry_max_age_s=get_float(env, "ENTRY_MAX_AGE_S", 300.0),
             liq_confirm_window_s=get_float(env, "LIQ_CONFIRM_WINDOW_S", 10.0),
+            pool_curve_fallback=get_bool(env, "POOL_CURVE_FALLBACK", True),
+            curve_stream_max_age_s=get_float(env, "CURVE_STREAM_MAX_AGE_S", 90.0),
+            dexscreener_enabled=get_bool(env, "DEXSCREENER_ENABLED", True),
+            dexscreener_base_url=get(env, "DEXSCREENER_BASE_URL", "https://api.dexscreener.com"),
+            dexscreener_rpm=get_int(env, "DEXSCREENER_RPM", 60),
             max_entry_mult=get_float(env, "MAX_ENTRY_MULT", 5.0),
             max_entry_peak_pct=get_float(env, "MAX_ENTRY_PEAK_PCT", 0.0),
             pool_check_enabled=get_bool(env, "POOL_CHECK_ENABLED", True),
@@ -339,7 +370,7 @@ class Settings:
             ("SHUTDOWN_GRACE_S", str(self.shutdown_grace_s)),
             ("HEALTH_TIMEOUT_S", str(self.health_timeout_s)),
             ("CHECKPOINT_SAVE_S", f"{self.checkpoint_save_s:g}"),
-            ("TELEGRAM_CHANNEL", self.channel),
+            ("TELEGRAM_CHANNELS", ",".join(self.channels)),
             ("CHECKPOINT_FILE", self.checkpoint_file),
             ("BACKFILL_LIMIT", str(self.backfill_limit)),
             ("MIN_ENTRY_PX", f"{self.min_entry_px:g}"),
@@ -347,6 +378,11 @@ class Settings:
             ("PRICE_STALE_S", f"{self.price_stale_s:g}"),
             ("TIMEOUT_STALE_GRACE_S", f"{self.timeout_stale_grace_s:g}"),
             ("MAX_TICK_MULT", f"{self.max_tick_mult:g}"),
+            ("POOL_CURVE_FALLBACK", "true" if self.pool_curve_fallback else "false"),
+            ("CURVE_STREAM_MAX_AGE_S", f"{self.curve_stream_max_age_s:g}"),
+            ("DEXSCREENER_ENABLED", "true" if self.dexscreener_enabled else "false"),
+            ("DEXSCREENER_BASE_URL", self.dexscreener_base_url),
+            ("DEXSCREENER_RPM", str(self.dexscreener_rpm)),
             ("DRY_RUN", "true" if self.dry_run else "false"),
             ("PRIVATE_KEY", self.private_key),
             ("JUPITER_API_KEY", self.jupiter_api_key),

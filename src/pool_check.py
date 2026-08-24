@@ -1,18 +1,27 @@
-"""Arm-time pool checks: DexPaprika liquidity gate + Helius dev reputation.
+"""Arm-time pool checks: multi-oracle liquidity gate + Helius dev reputation.
 
-**Comments match behavior**: both gates are FAIL-CLOSED — if the API is
-unreachable, rate-limited or times out, the signal IS rejected (an unverified
-pool is not a pool we buy; entering blind into unconfirmed liquidity turns
-every API outage into potential rug exposure). This is deliberate for
-small-capital live trading ("safer sniper mode"). A deterministic pass only
-happens when the APIs answer and the data is clearly good:
+Liquidity oracle cascade (first decisive answer wins):
 
-- DexPaprika: the token has an indexed pool with liquidity at or above
-  ``min_liquidity_usd``.
-- Helius dev-rep (optional): governed by ``DEV_REP_MODE``. ``reject`` treats
-  a failed/unavailable check as a veto; ``warn`` journals the details and
-  ADMITS the token so the feature's false-positive rate can be measured on
-  real trades before it is allowed to hard-reject (default ``warn``).
+1. **DexPaprika** pool search — the historical gate. An explicit liquidity
+   number is decisive (>= min passes, < min rejects).
+2. **PumpAPI stream state** — zero-latency, already subscribed. For
+   curve-phase pump.fun mints (`...pump`) with no indexed external pool yet,
+   fresh stream activity proves the token is trading RIGHT NOW on its
+   bonding curve, whose liquidity is mathematical (an LP-pull rug is
+   impossible pre-graduation). This catches the graduation-minute race that
+   fail-closed DexPaprika used to lose (WOFI, 2026-08-24: skipped at the
+   exact minute it graduated, then pumped ~1380x).
+3. **DexScreener** `/token-pairs` — fast third-party indexer as the last
+   oracle; admits when liquidity >= min OR the pair shows real recent
+   trading activity (mcap + m5/h1 volume) on a curve mint.
+
+Red-flag rug vetoes apply in EVERY branch: a liquidity REMOVAL seen within
+the veto window, or set mint/freeze authorities known from the stream.
+
+**Comments match behavior**: if every oracle is silent the signal is still
+rejected (FAIL-CLOSED — an unverified pool is not a pool we buy). Helius
+dev-rep remains governed by ``DEV_REP_MODE`` (``warn`` journals + admits,
+``reject`` vetoes fail-closed).
 """
 
 from __future__ import annotations
@@ -20,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -42,6 +52,15 @@ class PoolChecker:
         dev_rep_max_creates_24h: Max token creations by the creator in 24h.
         dev_rep_min_age_hours: Reject tokens younger than this age.
         timeout_s: Per-request timeout.
+        stream_state_fn: Optional callable ``mint -> dict | None`` returning
+            PumpAPI per-mint stream state (oracle 2; wired from PriceFeed).
+        dexscreener: Optional :class:`dexscreener.DexScreenerClient`
+            (oracle 3).
+        curve_fallback_enabled: Admit curve-phase ``...pump`` mints via the
+            stream/DexScreener oracles instead of failing closed when
+            DexPaprika has no pool yet.
+        curve_stream_max_age_s: Max age of stream state for it to count as
+            "actively trading" evidence.
     """
 
     def __init__(
@@ -56,6 +75,10 @@ class PoolChecker:
         dev_rep_max_creates_24h: int = 3,
         dev_rep_min_age_hours: float = 0.0,
         timeout_s: float = 2.5,
+        stream_state_fn: Callable[[str], dict | None] | None = None,
+        dexscreener: Any | None = None,
+        curve_fallback_enabled: bool = True,
+        curve_stream_max_age_s: float = 90.0,
     ) -> None:
         self.dex_paprika_key = dex_paprika_key
         self.dex_paprika_base_url = dex_paprika_base_url.rstrip("/")
@@ -68,6 +91,10 @@ class PoolChecker:
         self.dev_rep_max_creates_24h = dev_rep_max_creates_24h
         self.dev_rep_min_age_hours = dev_rep_min_age_hours
         self.timeout_s = timeout_s
+        self.stream_state_fn = stream_state_fn
+        self.dexscreener = dexscreener
+        self.curve_fallback_enabled = curve_fallback_enabled
+        self.curve_stream_max_age_s = curve_stream_max_age_s
         self._client = httpx.AsyncClient(timeout=timeout_s, follow_redirects=True)
         self._pool_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._dev_cache: dict[str, tuple[float, tuple[bool, str]]] = {}
@@ -131,32 +158,133 @@ class PoolChecker:
     async def check_pool(
         self, ca: str, confirm_window_s: float = 10.0
     ) -> tuple[bool, str]:
-        """Veto the signal when DexPaprika proves the pool is dead/empty.
+        """Multi-oracle liquidity verdict for ``ca`` (see module docstring).
 
-        Retries for up to ``confirm_window_s`` (fresh pools take seconds to be
-        indexed). Fail-closed on any error — a None liquidity rejects (an
-        unverified pool is not a pool we buy).
+        Retries the cascade for up to ``confirm_window_s`` (fresh pools take
+        seconds to be indexed). Fail-closed only when EVERY oracle stays
+        silent; an explicit low DexPaprika liquidity still rejects outright.
 
         Returns:
-            ``(ok, reason)``; ok=True only on a *confirmed* good pool.
+            ``(ok, reason)``; ok=True on a confirmed-good or curve-active
+            pool, with the deciding oracle recorded in the journal.
         """
         cached = self._pool_cache.get(ca)
         if cached and time.time() - cached[0] < 60:
-            return self._eval_liq(cached[1])
+            info = cached[1]
+            return bool(info.get("ok")), str(info.get("reason") or "")
 
         deadline = time.time() + confirm_window_s
-        last: dict[str, Any] | None = None
-        while time.time() < deadline:
+        decision: dict[str, Any] = {}
+        ds_done = False
+        while True:
+            # Red-flag rug vetoes first — they apply regardless of which
+            # oracle would otherwise admit the token.
+            flags = self._stream_red_flags(ca)
+            if flags:
+                decision = {"liq": None, "src": "stream", "ok": False,
+                            "reason": flags}
+                break
             liq = await self._pool_liq(ca)
-            last = {"liq": liq, "ts": time.time()}
             if liq is not None:
+                # Explicit answer: decisive either way (>= min passes).
+                ok = liq >= self.min_liquidity_usd
+                reason = "" if ok else (
+                    f"liquidity ${liq:.0f} < ${self.min_liquidity_usd:.0f}")
+                decision = {"liq": liq, "src": "dexpaprika", "ok": ok,
+                            "reason": reason}
+                break
+            verdict = self._curve_verdict(ca)
+            if verdict is not None:
+                decision = {**verdict}
+                break
+            if not ds_done:
+                ds_done = True
+                ds = await self._dexscreener_verdict(ca)
+                if ds is not None:
+                    decision = {**ds}
+                    break
+            if time.time() >= deadline:
                 break
             await _sleep(0.4)
-        self._pool_cache[ca] = (time.time(), last or {})
+        if not decision:
+            decision = {"liq": None, "src": "none", "ok": False,
+                        "reason": "liquidity check unavailable"}
+        self._pool_cache[ca] = (time.time(), decision)
         self._prune_cache()
-        return self._eval_liq(last or {})
+        logs.journal("pool_oracle", ca=ca, src=decision.get("src"),
+                     ok=decision.get("ok"), liq=decision.get("liq"))
+        return bool(decision.get("ok")), str(decision.get("reason") or "")
+
+    def _stream_red_flags(self, ca: str) -> str:
+        """Rug red flags visible in the stream state (empty = clean)."""
+        st = self.stream_state_fn(ca) if self.stream_state_fn else None
+        if not st:
+            return ""
+        removed_s_ago = (
+            time.time() - st["liq_removed_ts"] if st.get("liq_removed_ts") else None
+        )
+        if removed_s_ago is not None and removed_s_ago <= 120:
+            return f"liq_removed:{removed_s_ago:.0f}s_ago"
+        if st.get("mint_authority_set"):
+            return "mint_authority_set"
+        if st.get("freeze_authority_set"):
+            return "freeze_authority_set"
+        return ""
+
+    def _curve_verdict(self, ca: str) -> dict[str, Any] | None:
+        """Curve-phase admission via the stream oracle (None = not decisive).
+
+        Only ``...pump`` mints qualify for the fallback: bonding-curve
+        liquidity cannot be pulled pre-graduation, so fresh trading activity
+        is sufficient evidence of a tradeable market.
+        """
+        if not self.curve_fallback_enabled or not ca.endswith("pump"):
+            return None
+        st = self.stream_state_fn(ca) if self.stream_state_fn else None
+        if st:
+            age = time.time() - st.get("ts", 0)
+            qi = st.get("quote_in_pool")
+            if age <= self.curve_stream_max_age_s and (qi is None or qi > 0):
+                return {"liq": qi, "src": "stream_curve", "ok": True,
+                        "reason": "",
+                        "quote_in_pool": qi, "stream_age_s": round(age, 1)}
+        return None
+
+    async def _dexscreener_verdict(self, ca: str) -> dict[str, Any] | None:
+        """Oracle-3 admission via DexScreener (None = silent/not applicable).
+
+        Admits when liquidity >= min, or when a curve mint shows real recent
+        activity on DexScreener (mcap + m5/h1 volume or trades) — the indexer
+        that already had WOFI's PumpSwap pair while DexPaprika stayed silent.
+        """
+        if self.dexscreener is None:
+            return None
+        snap = await self.dexscreener.token_pairs("solana", ca)
+        if snap is None:
+            return None
+        liq = snap.get("liq")
+        mcap = snap.get("mcap") or 0
+        vol = (snap.get("vol_m5") or 0) + (snap.get("vol_h1") or 0)
+        active = mcap > 0 and (vol > 0 or (snap.get("txns_m5") or 0) > 0)
+        curve_ok = self.curve_fallback_enabled and ca.endswith("pump") and active
+        if liq is not None and liq >= self.min_liquidity_usd:
+            return {"liq": liq, "src": "dexscreener", "ok": True, "reason": "",
+                    "mcap": mcap}
+        if curve_ok:
+            return {"liq": liq, "src": "dexscreener", "ok": True, "reason": "",
+                    "mcap": mcap, "vol_m5h1": vol}
+        return {
+            "liq": liq, "src": "dexscreener", "ok": False,
+            "reason": (
+                f"dexscreener liq ${liq or 0:.0f} mcap ${mcap:.0f} "
+                f"below thresholds"
+            ),
+        }
 
     def _eval_liq(self, info: dict[str, Any]) -> tuple[bool, str]:
+        """Legacy single-oracle evaluation (kept for cache compatibility)."""
+        if "ok" in info:
+            return bool(info["ok"]), str(info.get("reason") or "")
         liq = info.get("liq")
         if liq is None:
             # API didn't answer — fail CLOSED. An unknown pool is not a

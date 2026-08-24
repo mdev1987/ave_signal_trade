@@ -22,12 +22,18 @@ from models import REASONS, Signal, get_filter
 def check_signal(sig: Signal) -> tuple[bool, list[str]]:
     """Check one signal against the filter rules.
 
+    Rules only apply when the source feed actually provides the field: a
+    missing dex/mcap/snipes can't violate its band, so it is skipped (the
+    arm/entry-time gates — DexPaprika liquidity, RugCheck, dev-rep, pool
+    state, quote stability — still vetoes with live data). An explicit zero
+    count still fails.
+
     Args:
         sig: The parsed signal.
 
     Returns:
         Tuple of (passed, reasons). ``passed`` is True only when the signal
-        meets every rule; ``reasons`` lists every violated rule.
+        meets every applicable rule; ``reasons`` lists every violated rule.
     """
     rules = get_filter()
     reasons: list[str] = []
@@ -36,11 +42,13 @@ def check_signal(sig: Signal) -> tuple[bool, list[str]]:
     # Wildcard dex set (``FILTER_DEXS=*``) admits every dex — the row's real
     # dex name is still journaled and written into trade_log.csv so the best
     # venues can be measured from real trades.
-    if "*" not in rules["dexes"] and sig.dex not in rules["dexes"]:
+    if sig.dex and "*" not in rules["dexes"] and sig.dex not in rules["dexes"]:
         reasons.append(REASONS["dex"])
-    if not (rules["mcap_usd_min"] <= sig.mcap_usd <= rules["mcap_usd_max"]):
+    if sig.mcap_usd > 0 and not (
+        rules["mcap_usd_min"] <= sig.mcap_usd <= rules["mcap_usd_max"]
+    ):
         reasons.append(REASONS["mcap"])
-    if sig.snipes < rules["snipes_min"]:
+    if sig.snipes is not None and sig.snipes < rules["snipes_min"]:
         reasons.append(REASONS["snipes"])
     if sig.sec_score > rules["sec_score_max"]:
         reasons.append(REASONS["sec"])

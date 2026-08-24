@@ -4,7 +4,7 @@ Commands:
     uv run main.py scan [--input docs/channel_signals.json]
         Parse + filter an offline export; print the passing signals and
         cross-check win rate against the 2026-08-13 outcomes.
-    uv run main.py trade [--channel @AveSolanaTokenScanner]
+    uv run main.py trade [--channels @DRBTSolanaPF,@SOLTRENDING]
         Live trading: backfill recent signals, then stream new channel
         messages in real time (Telethon events) + pumpapi trade events. Winning
         signals are validated against Jupiter's quote gate before arming.
@@ -42,6 +42,7 @@ import config
 import filter as filt
 import logs
 import parser as parser_mod
+from dexscreener import DexScreenerClient
 from filter import filter_signals
 from jupiter_swap import JupiterError, JupiterSwap
 from models import FILTER
@@ -260,6 +261,16 @@ async def _trade_loop(
             dev_rep_max_creates_24h=s.dev_rep_max_creates_24h,
             dev_rep_min_age_hours=s.dev_rep_min_age_hours,
             timeout_s=s.dev_rep_timeout_s,
+            stream_state_fn=feed.pool_state,
+            dexscreener=(
+                DexScreenerClient(
+                    base_url=s.dexscreener_base_url, rpm=s.dexscreener_rpm
+                )
+                if s.dexscreener_enabled
+                else None
+            ),
+            curve_fallback_enabled=s.pool_curve_fallback,
+            curve_stream_max_age_s=s.curve_stream_max_age_s,
         )
         if s.pool_check_enabled
         else None
@@ -432,6 +443,8 @@ async def _trade_loop(
     await tg.close()
     if pool_checker is not None:
         await pool_checker.close()
+    if pool_checker is not None and pool_checker.dexscreener is not None:
+        await pool_checker.dexscreener.close()
     if rug_checker is not None:
         await rug_checker.close()
     trader._save()
@@ -462,8 +475,10 @@ def cmd_trade(args: argparse.Namespace) -> int:
 
     async def run() -> int:
         notifier = TelegramNotifier()
-        await notifier.send_startup(summary=f"channel `{args.channel}`")
-        tg = TelegramFeed(creds, channel=args.channel)
+        tg = TelegramFeed(creds, channels=args.channels)
+        await notifier.send_startup(
+            summary=f"channels `{', '.join(tg.channels)}`"
+        )
         try:
             jupiter = _build_jupiter()
             # Force the Telegram auth/connection up front so the phone/login
@@ -488,7 +503,7 @@ def cmd_channels(args: argparse.Namespace) -> int:
     creds = config.resolve_telegram_creds()
 
     async def run() -> int:
-        tg = TelegramFeed(creds, channel=args.channel)
+        tg = TelegramFeed(creds, channels=args.channels)
         try:
             rows = await tg.list_channels()
             for r in rows:
@@ -513,12 +528,13 @@ def build_parser() -> argparse.ArgumentParser:
     scan.set_defaults(func=cmd_scan)
 
     trade = sub.add_parser("trade", help="live paper trading (event-based)")
-    trade.add_argument("--channel", default=s.channel)
+    trade.add_argument("--channels", "--channel", default=",".join(s.channels),
+                       help="comma-separated channel usernames, in preference order")
     trade.add_argument("--checkpoint", type=str, default=s.checkpoint_file)
     trade.set_defaults(func=cmd_trade)
 
     ch = sub.add_parser("channels", help="list visible channels/groups")
-    ch.add_argument("--channel", default=s.channel)
+    ch.add_argument("--channels", "--channel", default=",".join(s.channels))
     ch.set_defaults(func=cmd_channels)
     return ap
 

@@ -105,7 +105,9 @@ class Signal:
     sec_score: int = 0
     holders: int | None = None
     insiders: int = 0
-    snipes: int = 0
+    # None = the source feed doesn't report snipes (the snipes filter rule
+    # is skipped); an actual count of 0 still fails the threshold.
+    snipes: int | None = None
     rushers: int = 0
     top10_ok: str = ""
     mcap_usd: float = 0.0
