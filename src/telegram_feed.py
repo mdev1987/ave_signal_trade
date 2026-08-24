@@ -104,18 +104,20 @@ class TelegramFeed:
             )
         return rows
 
-    def _msg_to_signal(self, msg: Any) -> Signal | None:
+    def _msg_to_signal(self, msg: Any, source: str = "") -> Signal | None:
         """Convert one Telethon message into a Signal."""
         text = msg.text
         if not text:
             return None
         date = msg.date or datetime.now(UTC)
-        return parse_signal(
+        sig = parse_signal(
             text,
             unixtime=int(date.timestamp()),
             date=date.isoformat(),
             message_id=getattr(msg, "id", 0) or 0,
         )
+        sig.source = source
+        return sig
 
     async def fetch_signals(
         self,
@@ -141,7 +143,7 @@ class TelegramFeed:
             async for msg in self._client.iter_messages(channel, limit=limit):
                 if cutoff is not None and (msg.date or datetime.now(UTC)) < cutoff:
                     break
-                sig = self._msg_to_signal(msg)
+                sig = self._msg_to_signal(msg, source=channel)
                 if sig is not None:
                     signals.append(sig)
         signals.sort(key=lambda s: s.unixtime)
@@ -170,12 +172,16 @@ class TelegramFeed:
             if not text:
                 return
             date = msg.date or datetime.now(UTC)
+            chat = getattr(event, "chat", None)
+            username = getattr(chat, "username", "") or ""
+            source = f"@{username}" if username else str(getattr(chat, "id", "") or "")
             sig = parse_signal(
                 text,
                 unixtime=int(date.timestamp()),
                 date=date.isoformat(),
                 message_id=getattr(msg, "id", 0) or 0,
             )
+            sig.source = source
             for h in self._handlers:
                 await h(sig)
 

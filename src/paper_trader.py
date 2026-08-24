@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import replace as dc_replace
 from pathlib import Path
 from typing import Any
 
@@ -112,6 +113,7 @@ class PaperTrader:
         liq_confirm_window_s: float = 10.0,
         min_entry_px: float = 1e-11,
         max_entry_px: float = 1e-3,
+        ca_mismatch_policy: str = "link",
         price_stale_s: float = 120.0,
         timeout_stale_grace_s: float = 300.0,
         max_tick_mult: float = 1e5,
@@ -148,6 +150,7 @@ class PaperTrader:
         self.liq_confirm_window_s = liq_confirm_window_s
         self.min_entry_px = min_entry_px
         self.max_entry_px = max_entry_px
+        self.ca_mismatch_policy = ca_mismatch_policy
         self.price_stale_s = price_stale_s
         self.timeout_stale_grace_s = timeout_stale_grace_s
         self.max_tick_mult = max_tick_mult
@@ -573,8 +576,15 @@ class PaperTrader:
             await self.notifier.send_close(
                 mint, self._names.get(mint, ""), reason, pos.mult or 0.0, pos.pnl_sol,
                 hold_s=(pos.exit_time or 0) - (pos.entry_time or 0),
-                exit_px=pos.exit_px, balance_before=balance_before,
+                entry_px=pos.entry_px,
+                exit_px=pos.exit_px,
+                size_sol=pos.size_sol,
+                balance_before=balance_before,
+                balance_after=self.balance(),
+                open_count=len(self.open),
+                max_positions=self.max_positions,
                 dex=(pos.features or {}).get("dex"),
+                source=(pos.features or {}).get("source"),
             )
         self._save()
 
@@ -876,6 +886,8 @@ class PaperTrader:
                 "snipes": sig.snipes if sig else None,
                 "liq_usd": sig.liq_usd if sig else None,
                 "sec_score": sig.sec_score if sig else None,
+                "source": sig.source if sig else None,
+                "alt_cas": list(sig.alt_cas) if (sig and sig.alt_cas) else None,
             }
             feat.update({k: v for k, v in gate_meta.items()})
             if self.rug_checker is not None:
@@ -900,8 +912,13 @@ class PaperTrader:
             if self.notifier is not None:
                 await self.notifier.send_open(
                     mint, self._names.get(mint, ""), entry_px,
+                    size_sol=pos.size_sol,
                     balance_before=balance_before,
+                    balance_after=self.balance(),
+                    open_count=len(self.open),
+                    max_positions=self.max_positions,
                     dex=(pos.features or {}).get("dex"),
+                    source=(pos.features or {}).get("source"),
                 )
             self._save()
             return
@@ -957,6 +974,25 @@ class PaperTrader:
         time and executing Quote B seconds later left a gap where the
         validated route and the executed route could differ entirely.
         """
+        # Copycat-CA resolution: a DRBT post whose metadata links reference a
+        # DIFFERENT pump token means the posted "Mint:" is likely a copycat
+        # riding the original's brand (GrokBot/WASTED, 2026-08-24). Resolve by
+        # CA_MISMATCH_POLICY BEFORE any gate runs so every downstream event
+        # (journal, arm, entry, notify) uses the resolved address.
+        alts = tuple(a for a in (sig.alt_cas or ()) if a and a != sig.ca)
+        if alts and self.ca_mismatch_policy != "mint":
+            logs.journal("ca_mismatch", mint_field=sig.ca, alts=list(alts),
+                         name=sig.name, policy=self.ca_mismatch_policy)
+            if self.ca_mismatch_policy == "skip":
+                logger.info("SKIP %s (%s): copycat CA mismatch -> %s",
+                            sig.ca, sig.name, ",".join(a[:10] for a in alts))
+                logs.journal("skip", ca=sig.ca, name=sig.name,
+                             reason="copycat_ca_mismatch")
+                return
+            target = alts[0]
+            logger.info("CA MISMATCH %s (%s) -> trading referenced original %s",
+                        sig.ca, sig.name, target)
+            sig = dc_replace(sig, ca=target)
         if not self.gate_open:
             logger.info("SKIP %s (%s): gate closed", sig.ca, sig.name)
             logs.journal("skip", ca=sig.ca, name=sig.name, reason="gate_closed")
@@ -1021,10 +1057,13 @@ class PaperTrader:
             sig.mcap_usd,
         )
         logs.journal("arm", ca=sig.ca, name=sig.name, dex=sig.dex or None,
-                     snipes=sig.snipes, mcap_usd=sig.mcap_usd)
+                     snipes=sig.snipes, mcap_usd=sig.mcap_usd,
+                     source=sig.source or None,
+                     alts=list(sig.alt_cas) if sig.alt_cas else None)
         if self.notifier is not None and not quiet:
             await self.notifier.send_arm(
-                sig.ca, sig.name, sig.snipes or 0, sig.mcap_usd, dex=sig.dex,
+                sig.ca, sig.name, dex=sig.dex, source=sig.source,
+                snipes=sig.snipes, mcap_usd=sig.mcap_usd,
             )
 
     # --------------------------------------------------------------- reporting

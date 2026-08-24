@@ -120,33 +120,82 @@ class TelegramNotifier:
 
     # ----------------------------------------------------------------- trade
     @staticmethod
-    def _short(mint: str) -> str:
-        """Short mint for display."""
-        return f"`{mint[:10]}…`"
+    def _fmt_px(px: float) -> str:
+        """Fixed-decimal price (no scientific notation): 1.243e-7 -> 0.0000001243."""
+        return f"{px:.14f}".rstrip("0").rstrip(".") or "0"
 
-    async def send_arm(self, ca: str, name: str, snipes: int, mcap_usd: float,
-                       dex: str | None = None) -> None:
-        """A signal passed the filter and is armed for entry."""
-        dex_line = f" {SEP} Dex `{dex}`" if dex else ""
-        await self._send(
+    @staticmethod
+    def _fmt_dur(seconds: float) -> str:
+        """Human hold duration: `4m 32s` / `58s` / `1h 03m`."""
+        s = int(max(seconds, 0))
+        h, rem = divmod(s, 3600)
+        m, sec = divmod(rem, 60)
+        if h:
+            return f"{h}h {m:02d}m"
+        if m:
+            return f"{m}m {sec:02d}s"
+        return f"{sec}s"
+
+    @staticmethod
+    def _meta_line(dex: str | None, source: str | None) -> str:
+        """Shared `🌐 Dex … 📡 channel…` line (omits missing parts)."""
+        parts = []
+        if dex:
+            parts.append(f"🌐 Dex `{dex}`")
+        if source:
+            parts.append(f"📡 `{source}`")
+        return " ".join(parts)
+
+    async def send_arm(self, ca: str, name: str,
+                       dex: str | None = None, source: str | None = None,
+                       snipes: int | None = None,
+                       mcap_usd: float | None = None) -> None:
+        """A signal passed the filter and is armed for entry.
+
+        Snipes/mcap stay out of the card — they are journaled on the ``arm``
+        event and in bot.log; the Telegram card carries only what a trader
+        needs at a glance.
+        """
+        meta = self._meta_line(dex, source)
+        body = (
             f"{ICONS['arm']} **ARMED** `{name}`\n"
-            f"{self._short(ca)}\n"
-            f"{SEP} Snipes `{snipes}` {SEP} MCap `${mcap_usd:,.0f}`{dex_line}"
+            f"📍 `{ca}`"
         )
+        if meta:
+            body += f"\n{meta}"
+        await self._send(body)
 
-    async def send_open(self, ca: str, name: str, price: float,
-                        balance_before: float | None = None,
-                        dex: str | None = None) -> None:
-        """Position opened on the first live buy event."""
-        bal = ""
-        if balance_before is not None:
-            bal = f"\n{SEP} Balance `{balance_before:.4f}` SOL"
-        dex_line = f"\n{SEP} Dex `{dex}`" if dex else ""
-        await self._send(
-            f"{ICONS['open']} **OPEN** `{name}`\n"
-            f"{self._short(ca)}\n"
-            f"{SEP} Entry `{price:.12g}` SOL{dex_line}{bal}"
-        )
+    async def send_open(
+        self,
+        ca: str,
+        name: str,
+        price: float,
+        size_sol: float | None = None,
+        balance_before: float | None = None,
+        balance_after: float | None = None,
+        open_count: int | None = None,
+        max_positions: int | None = None,
+        dex: str | None = None,
+        source: str | None = None,
+    ) -> None:
+        """Position opened card."""
+        lines = [f"{ICONS['open']} **OPENED** `{name}`", f"📍 `{ca}`"]
+        meta = self._meta_line(dex, source)
+        if meta:
+            lines.append(meta)
+        entry = f"💵 Entry `{self._fmt_px(price)}` SOL"
+        if size_sol is not None:
+            entry += f"  💰 Size `{size_sol:g}` SOL"
+        lines.append(entry)
+        if open_count is not None and max_positions is not None:
+            lines.append(f"📊 Positions `{open_count}/{max_positions}`")
+        if balance_before is not None and balance_after is not None:
+            lines.append(
+                f"💼 Balance `{balance_before:.4f}` → `{balance_after:.4f}` SOL"
+            )
+        elif balance_before is not None:
+            lines.append(f"💼 Balance `{balance_before:.4f}` SOL")
+        await self._send("\n".join(lines))
 
     async def send_close(
         self,
@@ -156,28 +205,53 @@ class TelegramNotifier:
         mult: float,
         pnl_sol: float,
         hold_s: float | None = None,
+        entry_px: float | None = None,
         exit_px: float | None = None,
+        size_sol: float | None = None,
         balance_before: float | None = None,
+        balance_after: float | None = None,
+        open_count: int | None = None,
+        max_positions: int | None = None,
         dex: str | None = None,
+        source: str | None = None,
     ) -> None:
-        """Position closed (tp / sl / timeout) with simulated PnL."""
-        icon = ICONS.get(reason, "💰")
-        card = ICONS["close"] if pnl_sol >= 0 else ICONS["sl"]
-        s = "+" if pnl_sol >= 0 else ""
-        held = f" {SEP} Held `{hold_s:.0f}s`" if hold_s is not None else ""
-        bal = ""
-        if balance_before is not None:
-            bal = f" {SEP} Balance `{balance_before:.4f}` SOL"
-        dex_line = f" {SEP} Dex `{dex}`" if dex else ""
-        exit_line = ""
-        if exit_px is not None:
-            exit_line = f"\n{SEP} Exit `{exit_px:.12g}` SOL"
-        await self._send(
-            f"{card} **CLOSE {reason.upper()}** {icon}\n"
-            f"`{(ca or '')[:10]}…`\n"
-            f"{SEP} Mult `{mult:.2f}x` {SEP} PnL `{s}{pnl_sol:.4f} SOL`{held}{bal}"
-            f"{dex_line}{exit_line}"
-        )
+        """Position closed card (tp / sl / timeout / liq_collapse)."""
+        label, r_icon = {
+            "tp": ("TAKE PROFIT", "🎯"),
+            "sl": ("STOP LOSS", "🛑"),
+            "timeout": ("TIMEOUT", "⏱️"),
+            "liq_collapse": ("LIQ COLLAPSE", "🚨"),
+        }.get(reason, (reason.upper(), ICONS["close"]))
+        win = pnl_sol >= 0
+        pnl_icon = "✅" if win else "❌"
+        sign = "+" if win else ""
+        pct = (mult - 1.0) * 100.0
+        lines = [
+            f"{r_icon} **{label}** `{name}`",
+            f"📍 `{ca or ''}`",
+        ]
+        meta = self._meta_line(dex, source)
+        if meta:
+            lines.append(meta)
+        if entry_px is not None:
+            exit_part = (
+                f" → 📉 Exit `{self._fmt_px(exit_px)}` SOL"
+                if exit_px is not None else ""
+            )
+            lines.append(f"📈 Entry `{self._fmt_px(entry_px)}` SOL{exit_part}")
+        pnl = f"{pnl_icon} PnL `{sign}{pnl_sol:.4f}` SOL (`{sign}{pct:.1f}%`, `{mult:.2f}x`)"
+        if size_sol is not None:
+            pnl += f"  💰 Size `{size_sol:g}` SOL"
+        lines.append(pnl)
+        if hold_s is not None:
+            lines.append(f"⏱️ Duration `{self._fmt_dur(hold_s)}`")
+        if open_count is not None and max_positions is not None:
+            lines.append(f"📊 Positions `{open_count}/{max_positions}`")
+        if balance_before is not None and balance_after is not None:
+            lines.append(
+                f"💼 Balance `{balance_before:.4f}` → `{balance_after:.4f}` SOL"
+            )
+        await self._send("\n".join(lines))
 
     async def send_summary(self, summary: dict[str, Any]) -> None:
         """Periodic paper-trading summary."""

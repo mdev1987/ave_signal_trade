@@ -83,7 +83,7 @@ def get_csv_ints(env: dict[str, str], key: str, default: tuple[int, ...]) -> tup
 
 def get_channels(
     env: dict[str, str],
-    default: tuple[str, ...] = ("@DRBTSolanaPF", "@SOLTRENDING"),
+    default: tuple[str, ...] = ("@DRBTSolanaPF",),
 ) -> tuple[str, ...]:
     """Read the signal channels as a comma-separated list.
 
@@ -115,7 +115,7 @@ class Settings:
     checkpoint_save_s: float = 300.0  # periodic checkpoint flush (positions)
     # Signal sources in preference order: on a CA tie (same-second posts from
     # both channels during backfill) the earlier channel's signal wins dedup.
-    channels: tuple[str, ...] = ("@DRBTSolanaPF", "@SOLTRENDING")
+    channels: tuple[str, ...] = ("@DRBTSolanaPF",)
     checkpoint_file: str = "paper_positions.json"
     backfill_limit: int = 200
     # Price sanity + staleness guards (entry/exit marks):
@@ -132,6 +132,11 @@ class Settings:
     # hours-old pools during backfill; they can only pollute the funnel).
     # 0 disables.
     entry_max_age_s: float = 300.0
+    # Copycat-CA resolution when a DRBT post's metadata links reference a
+    # different pump token (see parser.alt_cas): "link" trades the referenced
+    # original, "skip" rejects ambiguous posts outright, "mint" keeps the
+    # posted Mint address (journal-only warning).
+    ca_mismatch_policy: str = "link"
     liq_confirm_window_s: float = 10.0     # how long to retry the DexPaprika check
     # Curve-phase fallback: admit `...pump` mints with no indexed external
     # pool yet when the PumpAPI stream shows fresh trading activity (oracle 2)
@@ -278,6 +283,9 @@ class Settings:
             min_liquidity_usd=get_float(env, "MIN_LIQUIDITY_USD", 4000.0),
             entry_latency_s=get_float(env, "ENTRY_LATENCY_S", 2.0),
             entry_max_age_s=get_float(env, "ENTRY_MAX_AGE_S", 300.0),
+            ca_mismatch_policy=(
+                lambda v: v if v in ("skip", "link", "mint") else "link"
+            )(get(env, "CA_MISMATCH_POLICY", "link").strip().lower()),
             liq_confirm_window_s=get_float(env, "LIQ_CONFIRM_WINDOW_S", 10.0),
             pool_curve_fallback=get_bool(env, "POOL_CURVE_FALLBACK", True),
             curve_stream_max_age_s=get_float(env, "CURVE_STREAM_MAX_AGE_S", 90.0),
@@ -375,6 +383,7 @@ class Settings:
             ("BACKFILL_LIMIT", str(self.backfill_limit)),
             ("MIN_ENTRY_PX", f"{self.min_entry_px:g}"),
             ("MAX_ENTRY_PX", f"{self.max_entry_px:g}"),
+            ("CA_MISMATCH_POLICY", self.ca_mismatch_policy),
             ("PRICE_STALE_S", f"{self.price_stale_s:g}"),
             ("TIMEOUT_STALE_GRACE_S", f"{self.timeout_stale_grace_s:g}"),
             ("MAX_TICK_MULT", f"{self.max_tick_mult:g}"),

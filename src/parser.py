@@ -196,6 +196,22 @@ def parse_signal(
     if not sig.dex and sig.ca.endswith("pump"):
         sig.dex = "Pumpfunamm"
 
+    # --- copycat detection: referenced token addresses ---------------------
+    # DRBT launch posts sometimes embed a DIFFERENT pump token in their
+    # metadata links (e.g. `https://solscan.io/token/<mint>#metadata`, or a
+    # pump-vanity address anywhere in the text). On-chain evidence (2026-08-24
+    # GrokBot/WASTED) shows the posted "Mint:" is then a COPYCAT whose
+    # metadata points at the referenced ORIGINAL. Collect every distinct
+    # candidate so PaperTrader can resolve the mismatch by policy.
+    cands: list[str] = []
+    for pat in (r"solscan\.io/(?:token|account)/([1-9A-HJ-NP-Za-km-z]{32,44})",
+                r"\b([1-9A-HJ-NP-Za-km-z]{39,44}pump)\b"):
+        for m2 in re.finditer(pat, message if isinstance(message, str) else raw):
+            addr = m2.group(1)
+            if addr and addr != sig.ca:
+                cands.append(addr)
+    sig.alt_cas = tuple(dict.fromkeys(cands))
+
     return sig
 
 

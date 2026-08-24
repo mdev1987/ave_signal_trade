@@ -1,6 +1,6 @@
 # ave-signal-trade — **Profitable Mode: 1 POS × 0.2 SOL × 25min TTL**
 
-Filters "New Solana Pool Launched"-style signals from the **DRBTSolanaPF** (preferred) and **SOLTRENDING** Telegram channels and trades the winners live. **Robust, reliable, profitable** — single-position focus avoids rug clustering and dilution.
+Filters "New Solana Pool Launched"-style signals from the **DRBTSolanaPF** Telegram channel and trades the winners live. **Robust, reliable, profitable** — single-position focus avoids rug clustering and dilution.
 
 ## Profitable Strategy (honest-engine replay, 2026-08-13 feed — `scripts/replay_tune.py`)
 

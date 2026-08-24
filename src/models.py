@@ -112,6 +112,13 @@ class Signal:
     top10_ok: str = ""
     mcap_usd: float = 0.0
     liq_usd: float = 0.0
+    # Other candidate contract addresses found in the message (e.g. a
+    # solscan.io/token/<mint> metadata link). A non-empty value means the
+    # posted ``ca`` may be a COPYCAT riding the referenced original's brand;
+    # PaperTrader resolves this per CA_MISMATCH_POLICY before arming.
+    alt_cas: tuple[str, ...] = ()
+    # Source channel username (e.g. "@DRBTSolanaPF") for reporting.
+    source: str = ""
     message_id: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -134,6 +141,8 @@ class Signal:
             "top10_ok": self.top10_ok,
             "mcap_usd": self.mcap_usd,
             "liq_usd": self.liq_usd,
+            "alt_cas": list(self.alt_cas),
+            "source": self.source,
             "message_id": self.message_id,
         }
 

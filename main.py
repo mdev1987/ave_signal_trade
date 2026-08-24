@@ -342,6 +342,7 @@ async def _trade_loop(
         liq_confirm_window_s=s.liq_confirm_window_s,
         min_entry_px=s.min_entry_px,
         max_entry_px=s.max_entry_px,
+        ca_mismatch_policy=s.ca_mismatch_policy,
         price_stale_s=s.price_stale_s,
         timeout_stale_grace_s=s.timeout_stale_grace_s,
         max_tick_mult=s.max_tick_mult,
