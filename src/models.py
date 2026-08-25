@@ -185,6 +185,21 @@ class Position:
     # stop ratchets to peak * (1 - trail_retrace_pct). 0 disables.
     trail_activate_mult: float = 0.0
     trail_retrace_pct: float = 0.5
+    # Partial take-profit: bank ``tp1_frac`` of the position at ``tp1_mult`` x
+    # entry (limit-style, fills at the level like the full TP), then let the
+    # remainder ride under the trail with a breakeven floor — never give back
+    # past entry on the runner. tp1_mult=0 disables.
+    tp1_mult: float = 0.0
+    tp1_frac: float = 0.5
+    tp1_done: bool = False
+    realized_sol: float = 0.0  # banked by partial TP(s)
+    # Flat-exit (no-momentum cut): after ``flat_after_s`` in the trade, if the
+    # peak never reached ``flat_max_gain_pct`` above entry, exit early instead
+    # of riding the full timeout — dead tokens bleed ~4%/trip in fees+slippage
+    # (2026-08-25: 12 of 20 exits were 0.95-0.97x timeouts) AND they hold a
+    # slot that a fresh signal could use. 0 disables.
+    flat_after_s: float = 0.0
+    flat_max_gain_pct: float = 1.0
     # Entry-moment feature snapshot for the rug-classifier dataset (mcap,
     # dex, snipes, rugcheck flags, pool state, quote diagnostics...). Flat
     # str/float/bool values only — serialized into the checkpoint and every
@@ -205,11 +220,12 @@ class Position:
 
     @property
     def pnl_sol(self) -> float:
-        """Realized (or mark-to-market) PnL in SOL."""
+        """Realized (or mark-to-market) PnL in SOL, partial-TP aware."""
         m = self.mult
         if m is None:
             return 0.0
-        return self.size_sol * (m - 1.0)
+        remaining = 1.0 - (self.tp1_frac if self.tp1_done else 0.0)
+        return self.realized_sol + self.size_sol * remaining * (m - 1.0)
 
     @property
     def is_closed(self) -> bool:
@@ -237,6 +253,18 @@ class Position:
             self.last_tick_s = now
             if self.peak_px is None or price > self.peak_px:
                 self.peak_px = price
+        # Partial TP-1: bank a fraction at tp1_mult (limit-style fill), then
+        # hold the runner under the trail with a breakeven floor. Returns the
+        # special reason "tp1" ONCE — callers journal/notify it but must NOT
+        # close the position.
+        if (self.tp1_mult > 0 and not self.tp1_done
+                and self.peak_px is not None
+                and self.peak_px >= self.entry_px * self.tp1_mult):
+            self.tp1_done = True
+            self.realized_sol += (
+                self.size_sol * self.tp1_frac * (self.tp1_mult - 1.0)
+            )
+            return "tp1"
         # Take-profit is a limit order: fills when the price *ever* touched
         # entry*tp, so the peak is the right trigger.
         if self.peak_px is not None and self.peak_px >= self.entry_px * self.take_profit:
@@ -244,15 +272,17 @@ class Position:
             self.exit_px = self.entry_px * self.take_profit  # fills at the limit
             self.exit_reason = "tp"
             return "tp"
-        # Trailing stop: once the price has reached trail_activate_mult x entry,
-        # ratchet a stop-loss up to (peak - retrace). A winner that reverses
-        # after a big run is locked out with gains intact instead of bleeding
-        # all the way back to the fixed stop or the timeout exit.
-        if (self.trail_activate_mult > 0 and self.peak_px is not None
+        # Trailing stop: once the price has reached trail_activate_mult x entry
+        # (or immediately after a partial TP banks profits), ratchet a stop up
+        # to (peak - retrace) with a breakeven floor on the runner — a winner
+        # that reverses locks out gains instead of bleeding back.
+        if self.tp1_done or (self.trail_activate_mult > 0 and self.peak_px is not None
                 and self.peak_px >= self.entry_px * self.trail_activate_mult):
             cur = price if price is not None else self.last_px
             if cur is not None:
                 trail_stop = self.peak_px * (1.0 - self.trail_retrace_pct)
+                if self.tp1_done:
+                    trail_stop = max(trail_stop, self.entry_px)
                 if cur <= trail_stop:
                     self.exit_time = now
                     self.exit_px = cur
@@ -280,6 +310,20 @@ class Position:
             self.exit_px = cur if cur is not None else (self.peak_px or self.entry_px)
             self.exit_reason = "timeout"
             return "timeout"
+        # Flat-exit: no momentum after the grace period — cut early. Checked
+        # AFTER timeout (which it complements) but the peak-gain test makes it
+        # fire long before the full hold for tokens that never moved.
+        if self.flat_after_s > 0 and now - self.entry_time >= self.flat_after_s:
+            gain_pct = 0.0
+            if self.peak_px is not None and self.entry_px > 0:
+                gain_pct = (self.peak_px / self.entry_px - 1.0) * 100.0
+            if gain_pct < self.flat_max_gain_pct:
+                self.exit_time = now
+                self.exit_px = cur if cur is not None else (
+                    self.last_px or self.peak_px or self.entry_px
+                )
+                self.exit_reason = "flat"
+                return "flat"
         return None
 
     def _plausible_tick(self, price: float) -> bool:
@@ -302,6 +346,10 @@ class Position:
             "entry_time": self.entry_time,
             "entry_px": self.entry_px,
             "peak_px": self.peak_px,
+            "tp1_mult": self.tp1_mult,
+            "tp1_frac": self.tp1_frac,
+            "tp1_done": self.tp1_done,
+            "realized_sol": self.realized_sol,
             "last_px": self.last_px,
             "last_tick_s": self.last_tick_s,
             "exit_time": self.exit_time,

@@ -1,7 +1,7 @@
 """Apply the data-backed filter to parsed signals.
 
 The base rules live in :data:`models.FILTER` and were re-tuned on 2026-08-13
-replay data with the HONEST engine semantics (``scripts/replay_tune.py``:
+replay data with the HONEST engine semantics (offline tuning tools, now removed:
 fresh-quote entries, realized exits, dead-pool writeoffs): mcap $5-20K +
 Pumpfunamm + snipes>=3 + security score 0 gives n=105 trades/day, 32.4% of
 positions realize the 4x take-profit, EV ≈ +101% per trade, win-to-3x ≈ 33%.

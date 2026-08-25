@@ -5,26 +5,21 @@ build/
 dist/
 wheels/
 *.egg-info
-
 # Virtual environments
 .venv/
 .env
-
 docs/
 .vscode/
 .opencode/
-
 # Telegram session + tgdata config + paper-trade checkpoints
 config.ini
 telegram_session.session
 telegram_session.session-journal
 *.session
 paper_positions*.json
-
-
 # trade_log.csv, bot.log, journal.json files
 bot_logs/
-
-
+.runwisp/
 .ruff_cache/
 .freebuff
+runwisp.toml

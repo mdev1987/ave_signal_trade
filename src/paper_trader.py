@@ -42,7 +42,36 @@ EXIT_LABELS = {
     "tp": "take-profit", "sl": "stop-loss",
     # neutral label: the hold window is TIMEOUT_S (1500-1800s tuned), not 1h
     "timeout": "timeout", "liq_collapse": "liquidity collapse",
+    "flat": "no momentum",
 }
+
+
+def in_trading_window(spec: str, utc_hhmm: str) -> bool:
+    """True when ``utc_hhmm`` ("HH:MM") falls inside the allow-window.
+
+    Args:
+        spec: Trading-hours allow-window, e.g. ``"22:00-02:00"``. Empty/None
+            means always trade. Ranges may wrap midnight.
+        utc_hhmm: Current UTC time as "HH:MM".
+
+    Returns:
+        Whether trading is allowed at this time.
+    """
+    if not spec or not spec.strip():
+        return True
+    try:
+        start_s, end_s = spec.strip().split("-", 1)
+        sh, sm = map(int, start_s.split(":"))
+        eh, em = map(int, end_s.split(":"))
+        ch, cm = map(int, utc_hhmm.split(":"))
+    except ValueError:
+        return True  # malformed config must never block trading
+    cur = ch * 60 + cm
+    start = sh * 60 + sm
+    end = eh * 60 + em
+    if start <= end:
+        return start <= cur < end
+    return cur >= start or cur < end  # overnight wrap
 
 
 def _safe_float(v: Any) -> float | None:
@@ -115,6 +144,13 @@ class PaperTrader:
         min_entry_px: float = 1e-11,
         max_entry_px: float = 1e-3,
         ca_mismatch_policy: str = "link",
+        name_collision_policy: str = "leader",
+        name_collision_window_s: float = 86400.0,
+        flat_after_s: float = 0.0,
+        flat_max_gain_pct: float = 1.0,
+        trading_hours_utc: str = "",
+        partial_tp_mult: float = 2.0,
+        partial_tp_fraction: float = 0.5,
         price_stale_s: float = 120.0,
         timeout_stale_grace_s: float = 300.0,
         max_tick_mult: float = 1e5,
@@ -155,6 +191,21 @@ class PaperTrader:
         self.min_entry_px = min_entry_px
         self.max_entry_px = max_entry_px
         self.ca_mismatch_policy = ca_mismatch_policy
+        self.name_collision_policy = name_collision_policy
+        self.name_collision_window_s = name_collision_window_s
+        self.flat_after_s = flat_after_s
+        self.flat_max_gain_pct = flat_max_gain_pct
+        self.trading_hours_utc = trading_hours_utc
+        self.partial_tp_mult = partial_tp_mult
+        self.partial_tp_fraction = partial_tp_fraction
+        self.trading_hours_utc = trading_hours_utc
+        # Same-name/different-mint collision index: norm-name -> [(ts, ca)].
+        # Copycats don't always cross-link their metadata (Sinopec 2026-08-25:
+        # twin pair +1000%/-95%, no reference in either post) — the market
+        # leader (liquidity+volume) is the original; the laggard is the fake.
+        self._name_index: dict[str, list[tuple[float, str]]] = {}
+        self._ds_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._last_skip_log: dict[str, tuple[str, float]] = {}
         self.price_stale_s = price_stale_s
         self.timeout_stale_grace_s = timeout_stale_grace_s
         self.max_tick_mult = max_tick_mult
@@ -339,6 +390,9 @@ class PaperTrader:
                 if pos is None:
                     continue
                 reason = pos.update(now)  # reuse last_px; price=None
+                if reason == "tp1":
+                    self._on_partial_tp(mint, pos)
+                    continue
                 if reason:
                     try:
                         await asyncio.wait_for(
@@ -351,7 +405,7 @@ class PaperTrader:
                             "next sweep", mint, self._close_timeout_s,
                         )
             # Health heartbeat: proves the sweep loop is alive to the watchdog.
-            # Logging also keeps bot.log mtime fresh so scripts/watchdog.sh can
+            # Logging also keeps bot.log mtime fresh so external watchdogs can
             # detect a wedged loop (silent log) and restart the service.
             if self._progress_cb is not None:
                 self._progress_cb()
@@ -483,7 +537,10 @@ class PaperTrader:
             proceeds_sol = swap.output_amount / 1e9
             if pos.entry_px and proceeds_sol > 0:
                 # Mark the exit so mult/pnl reflect the REAL sold proceeds.
-                pos.exit_px = pos.entry_px * (proceeds_sol / pos.size_sol)
+                # Partial-TP aware: proceeds correspond to the REMAINING size
+                remaining = 1.0 - (pos.tp1_frac if pos.tp1_done else 0.0)
+                eff_size = pos.size_sol * max(remaining, 1e-9)
+                pos.exit_px = pos.entry_px * (proceeds_sol / eff_size)
         elif self.paper_fill_sim and self.jupiter is not None:
             # Paper sell simulation: quote a real token→SOL swap for the exact
             # token amount the (simulated) buy would have netted, and mark the
@@ -559,7 +616,10 @@ class PaperTrader:
             pos.sell_fail_count = 0
             pos.next_sell_retry = 0.0
             if pos.entry_px:
-                pos.exit_px = pos.entry_px * ((proceeds_raw / 1e9) / pos.size_sol)
+                # Partial-TP aware: proceeds correspond to the REMAINING size
+                remaining = 1.0 - (pos.tp1_frac if pos.tp1_done else 0.0)
+                eff_size = pos.size_sol * max(remaining, 1e-9)
+                pos.exit_px = pos.entry_px * ((proceeds_raw / 1e9) / eff_size)
             logger.info("PAPER SELL %s proceeds=%d sl=%dbps",
                         mint, proceeds_raw, self.sell_slippage_bps)
         self.closed.append(pos)
@@ -784,11 +844,16 @@ class PaperTrader:
                     self._signals_seen.discard(mint)
                     return
             if not self.gate_open:
-                logger.info("SKIP %s entry: gate closed", mint)
+                if not self._suppress_skip(mint, "gate_closed"):
+                    logger.info("SKIP %s entry: gate closed", mint)
                 return  # stays armed — retries once the gate reopens
             if len(self.open) >= self.max_positions:
-                logger.info("SKIP %s entry: at max positions (%d)", mint, self.max_positions)
-                logs.journal("skip_entry", ca=mint, reason="max_positions")
+                if not self._suppress_skip(mint, "max_positions"):
+                    logger.info(
+                        "SKIP %s entry: at max positions (%d)",
+                        mint, self.max_positions,
+                    )
+                    logs.journal("skip_entry", ca=mint, reason="max_positions")
                 return  # stays armed — retries once a slot frees up
             self._signals_seen.discard(mint)
             balance_before = self.balance()
@@ -873,6 +938,10 @@ class PaperTrader:
                 max_tick_mult=self.max_tick_mult,
                 trail_activate_mult=self.trail_activate_mult,
                 trail_retrace_pct=self.trail_retrace_pct,
+                flat_after_s=self.flat_after_s,
+                flat_max_gain_pct=self.flat_max_gain_pct,
+                tp1_mult=self.partial_tp_mult,
+                tp1_frac=self.partial_tp_fraction,
             )
             pos.entry_time = now
             pos.entry_px = entry_px
@@ -935,6 +1004,9 @@ class PaperTrader:
         if pos is None:
             return
         reason = pos.update(now, price)
+        if reason == "tp1":
+            self._on_partial_tp(mint, pos)
+            return
         if not reason and self.liq_collapse_pct > 0:
             reason = self._liq_collapse(mint, pos, now)
         if reason:
@@ -972,6 +1044,70 @@ class PaperTrader:
             return "liq_collapse"
         return None
 
+    # --------------------------------------------------------------- helpers
+    async def _on_partial_tp(self, mint: str, pos) -> None:
+        """Bank the TP1 leg (paper fill at the level), notify, keep the runner.
+
+        Paper semantics mirror the full-TP limit-fill convention: the fraction
+        fills AT tp1_mult exactly. The remaining token amount is reduced so
+        the final close only sells the runner leg. Live-mode execution of the
+        partial sell rides the same close machinery later; for now the runner
+        is tracked and the final close settles the remaining size.
+        """
+        frac = pos.tp1_frac
+        banked = pos.realized_sol
+        if mint in self._token_amounts and self._token_amounts[mint] > 0:
+            self._token_amounts[mint] = int(
+                self._token_amounts[mint] * (1.0 - frac)
+            )
+        logger.info(
+            "PARTIAL TP %s: banked %.0f%% at %.2fx (+%.4f SOL banked) — trailing runner",
+            mint[:10], frac * 100, pos.tp1_mult, banked,
+        )
+        logs.journal("partial_tp", ca=mint, frac=frac,
+                     mult=pos.tp1_mult, realized_sol=banked)
+        self._save()
+        if self.notifier is not None:
+            await self.notifier.send_alert(
+                f"TP1 {self._names.get(mint, '')}",
+                f"Banked {frac * 100:.0f}% at {pos.tp1_mult:.2f}x "
+                f"(+{banked:.4f} SOL) — trailing the runner",
+            )
+
+    async def _ds_snap(self, ca: str) -> dict[str, Any]:
+        """DexScreener best-pair snapshot with a 60s cache ({} on failure)."""
+        ds = getattr(self.pool_checker, "dexscreener", None) if self.pool_checker else None
+        if ds is None:
+            return {}
+        cached = self._ds_cache.get(ca)
+        if cached and time.time() - cached[0] < 60:
+            return cached[1]
+        try:
+            snap = await asyncio.wait_for(ds.token_pairs("solana", ca), timeout=6.0)
+        except Exception:  # noqa: BLE001
+            snap = None
+        out = snap or {}
+        self._ds_cache[ca] = (time.time(), out)
+        return out
+
+    @staticmethod
+    def _pick_leader(cands: list[str], metrics: dict[str, tuple[float, float]]) -> str:
+        """Highest (liq, vol) wins; missing data ranks lowest; stable on ties."""
+        return max(cands, key=lambda c_: metrics.get(c_, (-1.0, 0.0)))
+
+    def _suppress_skip(self, mint: str, reason: str) -> bool:
+        """True when an identical skip for this mint was logged <60s ago.
+
+        An armed token generates a buy tick every second or two; without this
+        the journal fills with thousands of duplicate max_positions lines
+        (1897 in one session) and buries real signals.
+        """
+        last = self._last_skip_log.get(mint)
+        if last and last[0] == reason and time.time() - last[1] < 60.0:
+            return True
+        self._last_skip_log[mint] = (reason, time.time())
+        return False
+
     async def offer(self, sig: Signal, quiet: bool = False) -> None:
         """Mark a passing signal as eligible for entry on first trade.
 
@@ -1001,6 +1137,63 @@ class PaperTrader:
             logger.info("CA MISMATCH %s (%s) -> trading referenced original %s",
                         sig.ca, sig.name, target)
             sig = dc_replace(sig, ca=target)
+        # Same-name collision guard: another mint already seen with this name
+        # (within the window) means a copycat pair exists. Resolve by market
+        # leadership — the twin with real liquidity/volume is the original.
+        nkey = (sig.name or "").strip().lower()
+        if nkey and self.name_collision_policy != "ignore":
+            now_ = time.time()
+            bucket = self._name_index.setdefault(nkey, [])
+            bucket[:] = [(t_, c_) for t_, c_ in bucket
+                         if now_ - t_ <= self.name_collision_window_s]
+            siblings = sorted({c_ for _, c_ in bucket if c_ != sig.ca})
+            if not any(c_ == sig.ca for _, c_ in bucket):
+                bucket.append((now_, sig.ca))
+            if len(bucket) > 16:
+                del bucket[: len(bucket) - 16]
+            if siblings:
+                cands = [*siblings[:4], sig.ca]
+                metrics = {}
+                for c_ in cands:
+                    snap = await self._ds_snap(c_)
+                    metrics[c_] = (
+                        snap.get("liq") if snap.get("liq") is not None else -1.0,
+                        (snap.get("vol_m5") or 0) + (snap.get("vol_h1") or 0),
+                    )
+                winner = self._pick_leader(cands, metrics)
+                logs.journal(
+                    "name_collision", name=sig.name, key=nkey,
+                    kept=winner, offered=sig.ca,
+                    metrics={c_[:10]: m for c_, m in metrics.items()},
+                )
+                if winner != sig.ca:
+                    if self.name_collision_policy == "skip":
+                        logger.info("SKIP %s (%s): name collision, leader=%s",
+                                    sig.ca, sig.name, winner)
+                        logs.journal("skip", ca=sig.ca, name=sig.name,
+                                     reason="name_collision")
+                        return
+                    logger.info(
+                        "NAME COLLISION %s (%s): leader %s outranks it "
+                        "(liq/vol %s vs %s) — switching",
+                        sig.ca[:10], sig.name, winner[:10],
+                        metrics[winner], metrics[sig.ca],
+                    )
+                    sig = dc_replace(sig, ca=winner)
+        # Quiet-hours allow-window (UTC): outside the window new signals are
+        # skipped — the 07:00-08:48 grind produced nearly all losers while
+        # coordinated raids cluster around 00:31 UTC. Existing positions are
+        # still managed to their normal exits.
+        if self.trading_hours_utc:
+            utc_now = time.gmtime()
+            if not in_trading_window(
+                self.trading_hours_utc,
+                f"{utc_now.tm_hour:02d}:{utc_now.tm_min:02d}",
+            ):
+                logger.info("SKIP %s (%s): quiet hours", sig.ca, sig.name)
+                logs.journal("skip", ca=sig.ca, name=sig.name,
+                             reason="quiet_hours")
+                return
         if not self.gate_open:
             logger.info("SKIP %s (%s): gate closed", sig.ca, sig.name)
             logs.journal("skip", ca=sig.ca, name=sig.name, reason="gate_closed")

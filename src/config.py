@@ -110,6 +110,21 @@ class Settings:
     take_profit: float = 4.0
     stop_loss: float = 0.3
     timeout_s: float = 1500.0  # 25min optimum: EV ~+99.6% ≈60min (+101%), frees slot 2.4× faster
+    # Flat-exit: cut tokens that never moved (peak gain < FLAT_MAX_GAIN_PCT%)
+    # after FLAT_EXIT_AFTER_S — dead holders bleed fees and block slots.
+    flat_exit_after_s: float = 900.0
+    flat_max_gain_pct: float = 1.0
+    # Trading-hours allow-window, UTC "HH:MM-HH:MM" (wraps midnight). Empty =
+    # trade around the clock. Raids cluster ~00:31 UTC; the midday grind bled.
+    trading_hours_utc: str = ""
+    # Partial take-profit: bank PARTIAL_TP_FRACTION at PARTIAL_TP_MULT x entry,
+    # trail the runner with a breakeven floor. 0 disables.
+    partial_tp_mult: float = 2.0
+    partial_tp_fraction: float = 0.5
+    # Trailing stop (activates at TRAIL_ACTIVATE_MULT x entry, gives back
+    # TRAIL_RETRACE_PCT of the peak before exiting).
+    trail_activate_mult: float = 2.0
+    trail_retrace_pct: float = 0.5
     shutdown_grace_s: int = 60
     health_timeout_s: int = 300   # no sweep progress this long -> force exit
     checkpoint_save_s: float = 300.0  # periodic checkpoint flush (positions)
@@ -137,6 +152,11 @@ class Settings:
     # original, "skip" rejects ambiguous posts outright, "mint" keeps the
     # posted Mint address (journal-only warning).
     ca_mismatch_policy: str = "link"
+    # Same-name/different-mint twins (copycats without cross-links): "leader"
+    # switches to the higher-liquidity twin, "skip" rejects ambiguous names,
+    # "ignore" disables the check.
+    name_collision_policy: str = "leader"
+    name_collision_window_s: float = 86400.0
     # DexPaprika requests/minute cap (free tier: 15 keyless, 30 with key).
     dexpaprika_rpm: int = 14
     # DeBot.ai community-signal enrichment (journal-only supplementary oracle).
@@ -294,6 +314,19 @@ class Settings:
             ca_mismatch_policy=(
                 lambda v: v if v in ("skip", "link", "mint") else "link"
             )(get(env, "CA_MISMATCH_POLICY", "link").strip().lower()),
+            name_collision_policy=(
+                lambda v: v if v in ("leader", "skip", "ignore") else "leader"
+            )(get(env, "NAME_COLLISION_POLICY", "leader").strip().lower()),
+            name_collision_window_s=get_float(
+                env, "NAME_COLLISION_WINDOW_S", 86400.0
+            ),
+            flat_exit_after_s=get_float(env, "FLAT_EXIT_AFTER_S", 900.0),
+            flat_max_gain_pct=get_float(env, "FLAT_MAX_GAIN_PCT", 1.0),
+            trading_hours_utc=get(env, "TRADING_HOURS_UTC", ""),
+            partial_tp_mult=get_float(env, "PARTIAL_TP_MULT", 2.0),
+            partial_tp_fraction=get_float(env, "PARTIAL_TP_FRACTION", 0.5),
+            trail_activate_mult=get_float(env, "TRAIL_ACTIVATE_MULT", 2.0),
+            trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", 0.5),
             dexpaprika_rpm=get_int(env, "DEXPAPRIKA_RPM", 14),
             debot_enabled=get(env, "DEBOT_ENABLED", "true").strip().lower()
             not in ("0", "false", "no"),
@@ -367,8 +400,6 @@ class Settings:
             quote_stability_interval_ms=get_int(env, "QUOTE_STABILITY_INTERVAL_MS", 300),
             max_quote_change_pct=get_float(env, "MAX_QUOTE_CHANGE_PCT", 5.0),
             max_impact_change_pct=get_float(env, "MAX_IMPACT_CHANGE_PCT", 3.0),
-            trail_activate_mult=get_float(env, "TRAIL_ACTIVATE_MULT", 2.0),
-            trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", 0.5),
             paper_fill_sim=get_bool(env, "PAPER_FILL_SIM", True),
             pumpapi_wss=get(env, "PUMPAPI_WSS", "wss://stream.pumpapi.io/"),
             pumpapi_reconnect_s=get_float(env, "PUMPAPI_RECONNECT_S", 3.0),
@@ -399,6 +430,11 @@ class Settings:
             ("MIN_ENTRY_PX", f"{self.min_entry_px:g}"),
             ("MAX_ENTRY_PX", f"{self.max_entry_px:g}"),
             ("CA_MISMATCH_POLICY", self.ca_mismatch_policy),
+            ("NAME_COLLISION_POLICY", self.name_collision_policy),
+            ("FLAT_EXIT_AFTER_S", f"{self.flat_exit_after_s:g}"),
+            ("TRADING_HOURS_UTC", self.trading_hours_utc),
+            ("PARTIAL_TP_MULT", f"{self.partial_tp_mult:g}"),
+            ("PARTIAL_TP_FRACTION", f"{self.partial_tp_fraction:g}"),
             ("DEXPAPRIKA_RPM", str(self.dexpaprika_rpm)),
             ("DEBOT_ENABLED", str(self.debot_enabled).lower()),
             ("PRICE_STALE_S", f"{self.price_stale_s:g}"),

@@ -1,0 +1,18 @@
+# OxMgr supervision — single source of truth for running the bot.
+version = 1
+
+[[apps]]
+name = "sniper"
+# bash -l loads the user profile so ~/.local/bin (uv) is on PATH
+command = "uv run main.py trade"
+cwd = "$PWD"   # relative to this oxfile — portable across machines/VPS
+restart_policy = "always"
+max_restarts = 1000
+crash_restart_limit = 0            # network outages exit non-zero for hours — keep retrying
+restart_delay_secs = 5
+stop_signal = "SIGTERM"
+stop_timeout_secs = 50             # bot's graceful shutdown needs ~50s
+health_cmd = "find bot_logs/bot.log -mmin -6 | grep -q ."   # log stale >6min = wedged
+health_interval_secs = 60
+health_timeout_secs = 5
+health_max_failures = 3

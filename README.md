@@ -2,7 +2,7 @@
 
 Filters "New Solana Pool Launched"-style signals from the **DRBTSolanaPF** Telegram channel and trades the winners live. **Robust, reliable, profitable** — single-position focus avoids rug clustering and dilution.
 
-## Profitable Strategy (honest-engine replay, 2026-08-13 feed — `scripts/replay_tune.py`)
+## Profitable Strategy (honest-engine replay, 2026-08-13 feed — tuning tools removed; see git history)
 
 - **Filter (validated):** `mcap $5K–$20K, DEX = Pumpfunamm (+ Pump alias), snipes ≥ 3, sec = 0` — deduped to first signal per CA; DEX set configurable via `FILTER_DEXS` CSV. Keep `Pumpfunamm` core; `Meteora/Raydium` are research variants with separate thresholds (adding them without retune drops EV `+101% → +62%`).
 - **Loosened tier active in `.env` = EXPERIMENT L2, not a validated strategy** (`mcap $2.5K–$50K, snipes ≥ 1`, ~3× candidates): PRODUCTION CORE remains $5K–$20K/snipes≥3. The active tier is logged at startup (`filter tier: ...`) so runs are separable. On the widened 08-20 flow the damper killed 37 passing instances and RugCheck vetoed 15/30 unique CAs ("LP Unlocked"). Per-bucket outcomes ($2.5–5K/$5–10K/$10–20K/$20–50K × snipes 1/2/3+) must be measured before promoting.
@@ -21,7 +21,7 @@ Paper == live — backtests predict real PnL:
 - **Jupiter RTSE (ultra mode):** buys OMIT `slippageBps` from `/order` (`JUPITER_ORDER_RTSE=true`) so Jupiter applies its Real-Time Slippage Estimator with ALL routers eligible (Metis/JupiterZ RFQ/Dflow/OKX). Per Jupiter's routing-impact matrix any optional param flips `/order` to `manual` mode which may restrict routing. Returned `router`/`mode`/`slippageBps` are journaled per quote as diagnostics. Sells keep explicit slippage (execution certainty dominates on exits).
 - **Exits (TP/SL/trailing, robust):** real `token→SOL` quote (`paper_sell_proceeds`) same as live; **failed sells keep position open**, counted to `MAX_SELL_FAILURES 6` (`3` after TTL), `SELL_BACKOFF 60s` (`429/timeout` is transient, not counted — fixes STAR `6×429` writeoff bug), markers cleared, bounded `90s` close timeout so hung sell never stalls sweep.
 - **Fail-closed gates (reliable):** DexPaprika liquidity (`MIN_LIQUIDITY_USD 5000`, `LIQ_CONFIRM_WINDOW 10s`) + Helius dev-rep (`DEV_REP`) — `429`/timeout rejects; entry-time `cached_verdict` re-check rejects missing/stale. Unverified pool = no trade.
-- **RugCheck gate (arm-time, fail-open):** `GET /v1/tokens/{mint}/report/summary` (cached `RUGCHECK_CACHE_TTL_S 120`); vetoes only on explicit danger risks (`RUGCHECK_VETO_RISKS=lp unlocked,mint authority,freeze authority`). A missing report ADMITS the token — sec-0 snipes race RugCheck's indexer, and fail-closed there would kill every entry. Every evaluation journals per-risk boolean features (`report_missing`, `lp_unlocked`, `mint_authority`, `freeze_authority`) to `journal.json` so each veto's false-positive rate can be measured against realized outcomes (mint/freeze go beyond the LP-unlocked evidence base). Evidence (`scripts/rugcheck_validate.py` on the 2026-08-20 live rugs): every LP-pull rug (TONK/NEX Ai#2/牛来) carried "Large Amount of LP Unlocked"; winners never did. Scores are NOT used by default — winners and rugs both score ~65.
+- **RugCheck gate (arm-time, fail-open):** `GET /v1/tokens/{mint}/report/summary` (cached `RUGCHECK_CACHE_TTL_S 120`); vetoes only on explicit danger risks (`RUGCHECK_VETO_RISKS=lp unlocked,mint authority,freeze authority`). A missing report ADMITS the token — sec-0 snipes race RugCheck's indexer, and fail-closed there would kill every entry. Every evaluation journals per-risk boolean features (`report_missing`, `lp_unlocked`, `mint_authority`, `freeze_authority`) to `journal.json` so each veto's false-positive rate can be measured against realized outcomes (mint/freeze go beyond the LP-unlocked evidence base). Evidence (validation sweep on the 2026-08-20 live rugs; tool in git history): every LP-pull rug (TONK/NEX Ai#2/牛来) carried "Large Amount of LP Unlocked"; winners never did. Scores are NOT used by default — winners and rugs both score ~65.
 - **Serial-relaunch damper:** the same normalized token name on `SCAM_DAMPER_MAX_CAS 3` distinct CAs within `SCAM_DAMPER_WINDOW_MIN 360` is rejected after the base filter ("NEX Ai" x5+, "牛来" x20 relaunch farms). Replay on the 08-20 stream: damps 24/63 passing signals incl. the live NEX Ai rug.
 - **Dead-pool writeoffs:** `6` fails (`3` post-TTL) → writeoff at last mark, slot freed, Telegram alert, `trade_log.csv` kept.
 - Taker-less paper quotes (throwaway would be `Insufficient funds`); dead pools fail taker-less identically.
@@ -45,8 +45,6 @@ products (Sender/LaserStream/Shred) are used.
 uv run main.py scan                       # offline filter + win-rate cross-check
 uv run main.py trade                      # live trading (paper by default)
 uv run main.py channels                   # list visible chats
-.venv/bin/python scripts/replay_tune.py   # honest-engine replay + filter grid search
-uv run python scripts/rugcheck_validate.py [--sweep N]  # anti-rug gates vs live-rug evidence
 ```
 
 First run prompts for your Telegram phone number and writes `config.ini` + `telegram_session`.
@@ -67,98 +65,20 @@ Send to your bot via `BOT_TOKEN`/`CHAT_ID`:
 | `/status`  | balance, winrate, realized PnL, active position, quote-gate stats  |
 | `/help`    | command list                                                       |
 
-## Running 24/7
+## Running 24/7 (RunWisp — replaces all shell supervisors)
 
 ```bash
-bash scripts/run_bot.sh {start|stop|status|restart}   # nohup supervisor (no systemd)
-bash scripts/watchdog.sh                              # crontab health watchdog
+runwisp daemon                     # headless daemon (reads ./runwisp.toml)
+systemctl --user enable --now runwisp-signal-trade.service   # survives reboot (linger on)
+runwisp status | runwisp logs signal-trade -f
 ```
 
-With systemd: copy `scripts/sol-bot.service` to `/etc/systemd/system/`, fix `WorkingDirectory`/`ExecStart`, then `systemctl enable --now sol-bot`. See `docs/docs/scripts_deply_samples/`.
+- `runwisp.toml` supervises `signal-trade` with exponential restart backoff and
+  Telegram failure alerts (`[notifiers.tg]`, routes on run.crashed/fatal).
+  Copy `runwisp.toml.example` → `runwisp.toml` and fill in your bot token.
+- The bot's internal health watchdog dumps every thread stack then exits on a
+  wedged loop; RunWisp restarts it seconds later.
 
-## Host setup (fresh VPS)
-
-### 1. Install uv + clone
-
-```bash
-# uv (if missing): https://docs.astral.sh/uv/
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
-
-cd /opt
-git clone <your-repo-url> ave-signal-trade   # or scp/rsync the folder
-cd ave-signal-trade
-```
-
-The repo layout: `main.py` at the root, all modules under `src/` (the scripts already reference `main.py` from the project root).
-
-### 2. Install dependencies
-
-```bash
-uv sync          # creates .venv and installs everything from pyproject.toml
-```
-
-Python 3.14+ is required (see `.python-version`).
-
-### 3. Configure `.env`
-
-`.env` is gitignored, so a fresh clone has none — copy it from your dev box or create it:
-
-```bash
-scp user@dev-host:/path/to/ave-signal-trade/.env ./
-chmod 600 .env
-```
-
-Required keys: `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` (colon format), `BOT_TOKEN`, `CHAT_ID`, `JUPITER_API_KEY`, `PUMPAPI_WSS`. Trading mode:
-
-```ini
-DRY_RUN=true      # paper mode (default; never signs/executes)
-# DRY_RUN=false   # live mode — REQUIRES PRIVATE_KEY (base58), else the bot fails fast
-# PRIVATE_KEY=    # never use your main wallet
-```
-
-### 4. First-run Telegram auth
-
-`trade` and `channels` prompt for your phone number once and write `config.ini` + `telegram_session`:
-
-```bash
-.venv/bin/python main.py channels        # verify the session works
-```
-
-`telegram_session*` and `config.ini` are gitignored.
-
-### 5. Start the supervisor
-
-```bash
-bash scripts/run_bot.sh start             # runs `main.py trade` 24/7, auto-restarts
-bash scripts/run_bot.sh status
-```
-
-Logs land in `bot_logs/` (`bot.log`, `journal.json`, `trade_log.csv`, `supervisor.log`). A graceful `/stop` (or `run_bot.sh stop`) writes `bot_logs/.stop` so the supervisor stays down instead of restarting.
-
-### 6. Watchdog (recommended, no systemd)
-
-Add both lines to crontab so the bot survives reboots and wedges:
-
-```crontab
-*/5 * * * * /opt/ave-signal-trade/scripts/watchdog.sh /opt/ave-signal-trade
-@reboot      /opt/ave-signal-trade/scripts/watchdog.sh /opt/ave-signal-trade
-```
-
-The watchdog restarts a dead/stalled bot and sends a Telegram alert (from `BOT_TOKEN`/`CHAT_ID`).
-
-### 7. systemd alternative
-
-If systemd is available:
-
-```bash
-sudo cp scripts/sol-bot.service /etc/systemd/system/ave-signal-trade.service
-sudo sed -i "s|/home/mdev/Programming/ave_signal_trade|/opt/ave-signal-trade|g" \
-  /etc/systemd/system/ave-signal-trade.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now ave-signal-trade
-journalctl -u ave-signal-trade -e
-```
 
 ## Architecture
 
