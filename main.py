@@ -562,6 +562,32 @@ def cmd_channels(args: argparse.Namespace) -> int:
     return asyncio.run(run())
 
 
+def cmd_watch(args) -> int:
+    """Smart-money watcher: poll tracked wallets, alert on new buys."""
+    from watcher import SmartWalletWatcher
+
+    async def _run():
+        env = config.load_env()
+        notifier = TelegramNotifier()
+        w = SmartWalletWatcher(
+            helius_keys=[x.strip() for x in config.get(env, "HELIUS_API_KEYS", "").split(",") if x.strip()],
+            moralis_key=(config.get(env, "MORALIS_API_KEY") or "").strip(),
+            notifier=notifier,
+            poll_s=(args.poll or config.get_float(env, "WATCH_POLL_S", 45.0)),
+            min_buy_usd=config.get_float(env, "WATCH_MIN_BUY_USD", 100.0),
+        )
+        stop = asyncio.Event()
+        for sig_ in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_running_loop().add_signal_handler(sig_, stop.set)
+        await notifier.send_startup(f"🕵️ watcher live — {len(w.wallets)} smart wallets")
+        w.start()
+        await stop.wait()
+        await w.stop()
+        return 0
+
+    return asyncio.run(_run())
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI argument parser."""
     s = config.load_settings()
@@ -573,6 +599,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--out", type=Path, default=None)
     scan.add_argument("--test", type=Path, default=None)
     scan.set_defaults(func=cmd_scan)
+
+    watch = sub.add_parser("watch", help="smart-money watcher (no trading)")
+    watch.add_argument("--poll", type=float, default=None)
+    watch.set_defaults(func=cmd_watch)
 
     trade = sub.add_parser("trade", help="live paper trading (event-based)")
     trade.add_argument("--channels", "--channel", default=",".join(s.channels),
