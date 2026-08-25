@@ -60,6 +60,13 @@ class DeBotClient:
         self._cache: dict[str, tuple[float, Any]] = {}
         self._cache_max = 32
         self._fail_streak = 0
+        # Circuit breaker: after N consecutive failures stop hammering for a
+        # cooldown — Cloudflare escalates against IPs that keep retrying a
+        # failed challenge, and each retry deepens the hole (observed live:
+        # manual tests worked at 05:2x, were 403-looped by 06:0x).
+        self._breaker_until = 0.0
+        self.breaker_threshold = 3
+        self.breaker_cooldown_s = 900.0
 
     # ------------------------------------------------------------- internals
     def _get_scraper(self) -> Any:
@@ -67,7 +74,15 @@ class DeBotClient:
         if self._scraper is None:
             import cloudscraper  # heavy import deferred off the event loop
 
-            self._scraper = cloudscraper.create_scraper(browser="chrome")
+            try:
+                # Cookie persistence DISABLED: a stale persisted cf_clearance
+                # (bound to another fingerprint/UA) short-circuits challenge
+                # solving and loops 403s forever (observed live 2026-08-25).
+                self._scraper = cloudscraper.create_scraper(
+                    browser="chrome", enable_cookie_persistence=False
+                )
+            except TypeError:  # older fork without the kwarg
+                self._scraper = cloudscraper.create_scraper(browser="chrome")
         return self._scraper
 
     def _fetch_sync(self, url: str) -> Any | None:
@@ -75,6 +90,10 @@ class DeBotClient:
         s = self._get_scraper()
         r = s.get(url, timeout=self.timeout_s)
         if r.status_code != 200 or r.text.lstrip().startswith("<!DOCTYPE"):
+            # Drop the session so the next call starts with a fresh TLS
+            # fingerprint + clean cookies and re-solves the challenge instead
+            # of retrying against whatever state produced this block.
+            self._scraper = None
             raise RuntimeError(f"HTTP {r.status_code} (challenge?)")
         j = r.json()
         if not isinstance(j, dict) or j.get("code") not in (0, "0"):
@@ -90,6 +109,8 @@ class DeBotClient:
         hit = self._cache.get(key)
         if hit and now - hit[0] < self.cache_ttl_s:
             return hit[1]
+        if now < self._breaker_until:
+            return None  # circuit open — let Cloudflare's memory cool down
         async with self._net_lock:
             wait = self.min_interval_s - (time.monotonic() - self._last_request_ts)
             if wait > 0:
@@ -103,7 +124,17 @@ class DeBotClient:
             except Exception as e:  # noqa: BLE001 - supplementary oracle only
                 self._last_request_ts = time.monotonic()
                 self._fail_streak += 1
-                if self._fail_streak <= 2 or self._fail_streak % 20 == 0:
+                if self._fail_streak >= self.breaker_threshold:
+                    self._breaker_until = (
+                        time.monotonic() + self.breaker_cooldown_s
+                    )
+                    logger.warning(
+                        "debot: %d consecutive failures — circuit open for "
+                        "%.0fmin (Cloudflare escalation; will auto-retry)",
+                        self._fail_streak,
+                        self.breaker_cooldown_s / 60,
+                    )
+                elif self._fail_streak <= 2 or self._fail_streak % 20 == 0:
                     logger.warning("debot %s failed (%s)", path, e)
                 # NEVER cache failures — a poisoned entry would suppress
                 # enrichment for the whole TTL.
