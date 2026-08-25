@@ -1,0 +1,3322 @@
+{
+ "last_sig": {
+  "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz": "4EXE3QyiagLL869Rv1VLFrARQXouSjse5hzdkgtf3T9Uw5dm1LPU46QDBdxJPYoH57i4cbo8hdgX4xgfrzZB86uU",
+  "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd": "4GqyVWiRi8HNhw7XtzzSViZw2xaAvLTfsnfYi8tfWfQCEeKfZgUXGDnsMahed23igbZBPasDtKXH7ALTB6mpH14j",
+  "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51": "3CSnedGwQtNSw3jVK4rufn75yHCU2GPBffQsGyPhxXVaAKWzTZ7NaS2XHDAH2rvxvJyieQjSAGmvD7q9XuynfLaa",
+  "BoNkgKwztjrSEedqyxCU3SRsSBgajfPtet9c26zC6NW6": "6PWGWpXX9F7WViMt5kTd3m2kNR2HteHZruvKXbCjLF4CV5Vte3GnyKkCETrgnWXtfLGxupqhRVd8ir8gG2VYh9Y",
+  "ASpUQ6p3tMrrxYXYaqdTXDKGmfARbA1yybJUntAHeqfZ": "4WfAxKBJHwrgCghH77gN6MzuaG1YbGazycFDjTtZLqSZBrstm9NmPTF4XSh2XHTYFvAQGny7UvLDYKfQuFWVp9hZ",
+  "DSMMszFoe51bNs99kxhZqy9eKFiUH4Gd713wRZshq3bu": "EZa4sFJKU988PapTYdBfmmejD9ZgT9KaB9wxBjRcU5oVj8uZrQJMAiEjFu1suUnJvZTj5cvhD2A7cZ5gLNBKnJ4",
+  "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA": "4kiXtD1Rtkw1KtayWgPJyHHkP6HEPuChFWRUpaW3zytjc9rneRaQY2RJK3qVfg6THLnxymi97g4TZ3pSxRQ3MAjb",
+  "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj": "2JMuuoWJqwmeBpSTb46SSEqTxKSqEgBB2ho3jfF9B6WjjX21dUm9bd67WypiVbDynDrbZdcphzBHdNSY1avV7wdw",
+  "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq": "66AyFcSd3ibn5RbsgjjUipSoxKcRqkexgHUW8vtD8jRAvkv8mT6jQjh8Ykp3YuBDweNNhFsnLJrm3553EWcnv7R5",
+  "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf": "3XgQVjk1vYYPxbU3KGbDctVqxGHfFmAiyCcWf4JfGpMNq8TydVP8GNzgLjJmt3bsacoHmqtoPytQgwn6RMojFnPj",
+  "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b": "48EGErbmbe7qQWrNDvNwuCjcSUAAyUVcjaKWXy7GppaQ3Hfq1FEoXiTAPsM8hwYBwoexrmUDN95GC8epFHVieXXd",
+  "C4eNLxxC7XLUivghMi35YUeSfvACgnvKB18115uPUqjg": "5cYmVPXNyKeBioSUbmyqALyoWBhTmBQwjeXdDXNSJLtS6uG41wUCEBQUTzkSMRHoUNfZmGzwMZ6GALw7TbvgmjKN",
+  "8yN4tH6X5VgJ7Tu9tPSKXK1g5cznr4W3hfKkGvJ5GSVE": "2tk8vJ9YMtTnmG5voKRuWJuwH3Cy4jG3moXLhdy92Q9rvoYFBC5qaxFY4PG1JLwR1BRC8DjzrhWdiqXS4eHCk52W",
+  "35caaJFwzSNaFwFmP1f33wDP9cUFEXTLDsFnjna7kAjs": "39AMycqRMH5MKCswz9kadgLdjvrEekadrK7cf47u8UAv7wm6v4t1zsymyvKUCQxn2WRMniYZAfRcJi9yj3oxAanU",
+  "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8": "5oRyMqJky19B2vNwokr17X3885hJuGgEDWT28Qgdo6Ms8CmF5E672VfvdUNrN48kjY39SCqcfjgSYghdTdrDC9Ht",
+  "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr": "2QnEaYVtjBkvGEuWAoZrftNLBzm6bByEdEBuWge7UhRYr29RyYwrDSGR1YU1Z1iFSDWWqvQ4A9a8TVBvJuMJXaWK",
+  "7naFFwuEJWeWwWYQUkgAWHsxYKg3KctEuUj42JdAMidP": "5iXdZyz3oFUdrtvkfetTYBP5Kqq9p1FJQQHdqby3fx73J94AANADWdJcViU4utadnX9J35sJkDHaLdmQboAcMHni",
+  "5wz9yJ3UtRXWDF1d2uf3ZwNZF9hbFUdaERxZhgdPoCp8": "4dnUvqq9nWaCcgt9KSDSNPMAzqanfJ69PEso73KiQGWfJzPRXAmquiEbR8ybqNxLgy4VusYFMo3WiikoMN1SmSu5",
+  "Eqpkom7SbqiUNZnD6bJdo8zD7pcLfCCZSggmrGT8Mpma": "uPevzy7LHUaXS6QX3rVWF2imYY5H33SFrk351Mq6YBBZRY7xUVY5s1GbQmNgRfSu2ngjg6daxDk8dTyDsYyBTeD",
+  "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W": "3wufpwpr4azCnXsnddm2K37ShfHYZvgNckHFWtJkaVD8DzX84efjC8jpievEZ9eEYpo4U4qaRrBBD3PbqzcidSYo",
+  "7NAd2EpYGGeFofpyvgehSXhH5vg6Ry6VRMW2Y6jiqCu1": "jGvuzsQqbKMvPMkY18sUbw94jrCdYmxyeqSMBFEyLDPEYygvietNXdNknatZdE15SfyZaRcD7w6AZFS6KrPMwL5",
+  "FxN3VZ4BosL5urG2yoeQ156JSdmavm9K5fdLxjkPmaMR": "GHA3cZk8c7MmtrwHzgnLyXXstNVphKUGRQ7uW4eaboJRpuyVUaWZCPmRS8QukcN4K3jU55LA8VF4iRNVPsxe7n3",
+  "suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK": "2GzEF8a6fkC95dYsqvuXAZJc7zUnfMG1BtUwvQ8zmW6eBDqWJiAkCQsL5NFn6DXSj5kmkMhWmt939bvbZvNjnefv",
+  "2fg5QD1eD7rzNNCsvnhmXFm5hqNgwTTG8p7kQ6f3rx6f": "yz2re19L4VYmdM8E9d7ocUy95ydoatPB6Yx9PjE4XwSKPG3XaBvCzW5yWUMEMVWRQ1YxtjvBdfXAhMwgr9HrwP8",
+  "2mB1TSgggG24mmih4WbS6dRzfL77v4MjktWfPi2dTe9U": "55ZoGHmA75ZDxFjwJgJM6PyMr4uvrppAN1qr79KgjYc6BiP4VQWDtFDa7AkDikuTBWoKnXuCPAvspjHMbrKYQfM",
+  "GnQaHz5ADipEjns7a7zy965AQYE35vFhePizXGYBzzND": "5dhRH7xYSFqog1mwcUBrn2EkUtdqju8hwJ8UVPQrLz85AKDi3tSv9Bw4HjjqP9BegqprWNPyAP627DWFWFgLpLZr",
+  "EEb8qt7ZRvjimM19NBGjBvsnGX2sUQYvpZT5a4jXeTKZ": "iZnZaqvcTxKhUoEjZh3xCgkzJDGNGS59GTT6UGDcsaXY4nhChzA1EL9fSCULpp7Pc8sd7utfPES4KvCDFCMU8Yn",
+  "BGMxmMAWE8HxXNVHY7y8gVvayf65T6mvYuXa75LD1sha": "2Rm7ZsugsFzdaNKqAVjFYHogYp5WJQ8US2m66Qj3yp6VCGqqRSraHyck5YWvhiAcWct1EVFX7qXtq7xtyBcPVDPv",
+  "EXueF6jatgRR3Dneof9ipvNxKnuAGM5HKZefUs8Ue3zJ": "5tb7n3JCQ2ApsjR5V2QK8trNsJoQuMiNt1WaDNy5GTEnNhUXdPEv9161ewDrMG58EYLuHK8488rLdu211YmaX7hS",
+  "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2": "4mmiLYkysgCDE9AisRvNJZpYpqhSddHWDBaRGJnxz5sLSXk8y2fCt3saiRuPR8XbUmtJy7NnGUCZyvEqCWyKfq7P"
+ },
+ "known_cas": [
+  "127a7jBi3G2mcYCR6sTiNGfJJ2kjgjbBjVrye18hpump",
+  "25A2cXhKNNF7wrBQkFaWrPV7LoYqcZmusHigaHQ8pump",
+  "2A232Pw6rg4YGp9Nhpc8VvGxe3sTDmU7aAPV5WPwpump",
+  "2Dk4LGvYc1e2gkdwvLRR436pANMqX72csupDPEZkpump",
+  "2GxvbRfN18J4ijYWnEBrXob5tGJxkW9cQmaYkmUXpump",
+  "2YxmgkymNcoPNbSf22T5t3qjvKsbTyzXWc1m8dg7pump",
+  "2gUzWnAJmj1BQf9FHh9gERjYwiJv2MLAE5VbXNJipump",
+  "2gbZosc5iFgreVFEkh4frGkRA1XEU3LAF5Sot3YXpump",
+  "2i473jpRZivoUSybdwcpUwUvXpXj8YGQNMsJjjCTpump",
+  "2j8ic8jVznyZF9PNvSSyoB2iEvL8L4urHUGgxyNupump",
+  "2pbt7zwqugqj1WzDL7pgpHBPvqhSrjxJkik3f6Fspump",
+  "2wUYPUv2Pnw7NPuDRV8Ddv6bJqB83g29RYutdhSYpump",
+  "2zbY65kYG6tUe4BUUF3hLUk8RRdDpqKzxKmQfpjapump",
+  "3AZdzR7wVJY1HCs9Xh7N4Gsm67A7Zoni2LR4yh92pump",
+  "3a4RsWDjUzV39Kitb82zGfA7fEeBfMYDQHHCb7ZXpump",
+  "3noZBKK4KkXdyCUwGrHyuzoSuV1Q4buqkBPgzDLQpump",
+  "3u2sWMJTH6HnAKRiiwUWZWtNfts52VJdASNp13L9pump",
+  "3xQSkGZJAXLWBQ2ur5iD1RV3aDUSySjDAAUoNRZLpump",
+  "446r2sECoXgaYFuGUNLYxJTBqPay8ZUaD7FkK2a5pump",
+  "4GNwcb7DsywLvHHzigLy31oVSyKH6TzTxXA1w6PDF8hL",
+  "4MFC7Y7kgwNVfErZARiLsG8jRpgCPbxGnFQGbJo5pump",
+  "4f4YbLPyNtZrvVbtyM8G9cLybRpzsAeBKu8QuUuFpump",
+  "4kqEkiDmkkyQWayzQB5B3dUP6whgAL3becLH5jexpump",
+  "4pPf9SDKs6ZU8zbM2BMy5tZsgfF6gHDqyEhvmcTrpump",
+  "547tWxWhym8U7Y7DvhGJktpkcs5eHeywvSYnhwvdpump",
+  "56drQZaqRMWknJrcbRySwB748YNuVwsEU9uADdPipump",
+  "5hz1BGbSnjPd62p4L7sYmqvJUVUWxkSYTJqnyBQfpump",
+  "5mCb8YbHJVF6k899xY2BvW4EVZidfXTcuw66geqzpump",
+  "6bcRsAHC9uUikmV27BBaMsuTR77TKEwYjV83tUmTpump",
+  "6fwswPwquthcjk2S2mw6g2yEPpfVN1BceWYvxQYBpump",
+  "77JTvYcbfrjEbHabZbHqSQHGb5xWwSArPi8gVsAkpump",
+  "7Jvb1DipKJZciCBqzsis4UdqWSrwBQAzix9o6KvBpump",
+  "7K1uqCSJSyaY1grcyuWBUyvGq8uKUGm36rJNBBXcpump",
+  "7NzYGU9stWfq6iU9gwc1PomeRL84rQqE2Sh9ivpKpump",
+  "7nCNHypymfyfX4aiL2otVH9ZLa7tcurNBdvWfASLc2Dw",
+  "81o8ZSoPyfA24CYRKu2zVeLuMZWjorP5Rq5YFKnopump",
+  "82fSfCz8KtGoQB2HusTcxLWczA3ACZSCzkGuGZXppump",
+  "835Wrhosiz6fkzkkSfYoKGAZRZBCPixw2pEhMHT6pump",
+  "8LRQ671WayWejNUWv5NrnkoPkSQmdyz2Btnh9XXspump",
+  "8Vs195dmMR77irZucDeshFeoPvTdXwSirrfiCu9Kpump",
+  "8brwudF8pMEeYoj7zPL4RtbFRerGnCqGbgFNxNMopump",
+  "8qbV7wZHFHpfVWbU7i5nZ4oh7AxnKm71HFjyJUJVZ3oC",
+  "8wpWpXtXgiGqRYERWa4Ns3Ydu8mzu2u18sqqHsJCpump",
+  "9FjqKW1rZmRT2huETfr43vKMRtmf9FEqnJrBZnavpump",
+  "9GJf3mtz8fQxbpVnLR4pVLhMHHh65UwKSJDBN55mpump",
+  "9MEzaCMPbUofnBtFcpkRr3nEUNwe6rKhrLVWVubrpump",
+  "9mb8VwSsuVXHGRLLEyVQhQJnYLECruevK52AKvQepump",
+  "9zV8dMSVxFJsaKC6v1ETVxq4ojcJ1BA11sRwupBQpump",
+  "ABMoq97oTfL5zSFjQswmL5bcQDiBCdooxkeWahX8pump",
+  "AGEFyvcUNVvR26cSSxtKxnTuunKPuriPaD2LJyvopump",
+  "AZB3NCwGRcFJhSXut7GSMECNc1DUEbAHVdgKG7evpump",
+  "AdqoHD2S7bjFV9HgaKGpgx9dD1Ri2JKHmBpRCNYgpump",
+  "AgMSmK5abegKebBqon5QNiaiio3RU5vPf9pZkb4Apump",
+  "AhznN52PfwjCDqYN73aVqWHPbZfbs1YbxLbC25zCpump",
+  "AsSgcAf3dSbDRvqqWbnjh4UwBZsEuvxxkRXk8Narpump",
+  "AsTGW9RZCz4PyjxFHsFKDvSpZGmj4pCSL3UfuLEYpump",
+  "BUikyVWxRkR9PnF31yo6CAJSvYgJdovXoVKwCtZQpump",
+  "BigAz8y8svGv1GyD5GLpRGE2RtSps7hVN6B4Mpxopump",
+  "BnW4KzJqNf5sLhdPqsjZLC661g95cXk68Wc1nc1upump",
+  "CE59zjm8SpXAUQy7zU7EkriadyPbKuckoXkNtFfopump",
+  "CEx8suJjnszQrVxakjss8VHHo84TVrdUbJhAe6Aipump",
+  "CUJHqu1CJznfkggLY9woEPnE9Zh7QC7BkMXXTXuMpump",
+  "CVvNx7X9NGJYDMoog7zUXPGzcbZCPajeQCUY7LDMpump",
+  "CbnZkRVhSmnouGUBzL51y8eZ7xA4XEUJZkdmQtpepump",
+  "CeyBHtpQoCeAc4tiqCKFgiYxbhjcVhZkpekVzaBGpump",
+  "CppRucHiofQLuCyBBfWfHWwUJ41qxvqTbmrpMV77pump",
+  "CvSYvdKz8ZrQCFFGT43EQsS6avqYjv8gADJ3zYHXpump",
+  "D3nK8u4onZUydi3XSa3CKdSxV2sthDzp2KMAUHkbpump",
+  "DFEV5EVwYRRbo5AMGnK9b1AX5bDcGAWY5n2YGwtLpump",
+  "DQRUpkfJPKMWs4L8ngRZJzs5CidhMzou2o3YLup8pump",
+  "DaPayqzdCXcrmvgz9Wx7MySipXxcSofGPtkMgVdqpump",
+  "DiEb9r1GWyYFHYYQvjKsvjz7KPXpfNXsTv4PnUuspump",
+  "Dpm286qCiQ4N2tuCiouP9mzkKv5Yxo77qV7uE8Q6pump",
+  "DuvcCMiQwHCCtxkiC6WKDY4waWDQSrAJxsstpwX8pump",
+  "DwxXjDghxXYkLU7QGyu51j1HkBr5o4JxTN8KgaG9pump",
+  "DyidQqHQvWv9r76bWY7H11uB5qnDE7GyDT7Hq1QCpump",
+  "EB58A6i2zoLKmkwUMHvVzX1sXnu9nWUWnQ6nnnJypump",
+  "F6TPBsPAygNNQeGDWnQZdjQJT1McCBVZwmE43poHpump",
+  "FCum2wadS9VpoJ14DtQSWqKdAKG2jcW6rj2V9whipump",
+  "FDuaqbfNoe3RKSEMxUTQ6MCyEUUuxGtkvE46CDv9pump",
+  "FDysRkUtWRQEnwDchkbkFASh6zgS8R3UCYSaD7rjpump",
+  "FF4qVs36PJpXw6HHbXoo41WYYL3xH177QwXg6at5EAdG",
+  "FMYCDYagaivq2VU9QvCxzNT2xyGMQZhMmxHTq4EJpump",
+  "FNvK7MCenPWaqEMfzzHRR6TJP9HyopXTKyPr1zfRpump",
+  "FYCsfSsYR9zowCoXK6hySUjszUq3STSXNrJYUPYcpump",
+  "FZqdw6oSDCbHtKYxmhnfbi97SnyVy8jaYpdCoMrrjKa2",
+  "FeGQmBSgrVjjYMRRds6pMXJ9HwxLMddwfPSEQxnzpump",
+  "FvyicqVDbDjgcR4LspCoMPhweWVunf1ea9w1esBspump",
+  "FwmqpHvo5vXXRBcHSckbHConXjy9T7rUZy9paevfpump",
+  "GLorPhfYWUQ6h8V63LEuhgaiRpyv4qKnDmhEnprLPwV4",
+  "GyxH9VDZCpWsnUWTLF1n16fhSj1drR7xcgKuGUh7pump",
+  "H3yygpRBu1e2SD3pkHPfEWNB5a95dgULsZrt4TJApump",
+  "HBahip3uojgcaiPBnoV5VsiezJgNHJPX3V9dcWKypump",
+  "HFvQHfHbQrpGy5QVEa8Sqt9f1sV72zjKimMEU9j5pump",
+  "HepBDAaqT9cs9kFokrQkz5ids2cMUAjgftGNZeP5pump",
+  "HxfLeHR2MpXiLdupitp6o1auKKNZP61VJEuEwghxpump",
+  "HyxHtmAnp5PmKRDuyr3gxJpPaFkLCJpXrd8FXFmapump",
+  "J7SWU9oFsL7t74o783WnV4KHF4QaVBm5p7VUifXtpump",
+  "J8Ty4b3ooiSqw7ghefaeWirDZZbqhyneqd49C1ropump",
+  "sz8zEvivB3CFYxQAYuNRAXN5ouRu1VFh8aY556gpump"
+ ],
+ "token_hits": {
+  "sz8zEvivB3CFYxQAYuNRAXN5ouRu1VFh8aY556gpump": {
+   "symbol": "Justice",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 102.7471079794307,
+     "ts": 1787699829.4025228
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 131.62233205431994,
+     "ts": 1787699922.2969944
+    }
+   ],
+   "first_ts": 1787699829.4025228,
+   "usd": 367.099889040494
+  },
+  "6fwswPwquthcjk2S2mw6g2yEPpfVN1BceWYvxQYBpump": {
+   "symbol": "CLANKRESIANS",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 60.927644368233786,
+     "ts": 1787699829.4033558
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.817318314684357,
+     "ts": 1787699835.108472
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 109.70726865954434,
+     "ts": 1787699835.8179572
+    },
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.29352279630396,
+     "ts": 1787699851.4232411
+    }
+   ],
+   "first_ts": 1787699829.4033558,
+   "usd": 451.45302279831077
+  },
+  "DwxXjDghxXYkLU7QGyu51j1HkBr5o4JxTN8KgaG9pump": {
+   "symbol": "Monsters",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 67.29362720318069,
+     "ts": 1787699829.4035947
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 67.62534353451335,
+     "ts": 1787699836.7287934
+    }
+   ],
+   "first_ts": 1787699829.4035947,
+   "usd": 190.14901892310516
+  },
+  "8Vs195dmMR77irZucDeshFeoPvTdXwSirrfiCu9Kpump": {
+   "symbol": "FROGE",
+   "wallets": [
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 109.03651214937294,
+     "ts": 1787699830.4918067
+    },
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 4.826240528617353,
+     "ts": 1787699840.8435705
+    }
+   ],
+   "first_ts": 1787699830.4918067,
+   "usd": 113.86275267799029
+  },
+  "HxfLeHR2MpXiLdupitp6o1auKKNZP61VJEuEwghxpump": {
+   "symbol": "chud",
+   "wallets": [
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 116.50279252535064,
+     "ts": 1787699830.492189
+    },
+    {
+     "w": "BoNkgKwztjrSEedqyxCU3SRsSBgajfPtet9c26zC6NW6",
+     "usd": 173.6118112881044,
+     "ts": 1787699832.4754164
+    },
+    {
+     "w": "ASpUQ6p3tMrrxYXYaqdTXDKGmfARbA1yybJUntAHeqfZ",
+     "usd": 193.20122730058216,
+     "ts": 1787699833.4553592
+    },
+    {
+     "w": "DSMMszFoe51bNs99kxhZqy9eKFiUH4Gd713wRZshq3bu",
+     "usd": 145.79924799859373,
+     "ts": 1787699834.2372417
+    },
+    {
+     "w": "35caaJFwzSNaFwFmP1f33wDP9cUFEXTLDsFnjna7kAjs",
+     "usd": 27.20231816768765,
+     "ts": 1787699840.3427937
+    },
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 5.354863478640711,
+     "ts": 1787699840.8438206
+    },
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 29.373752614245515,
+     "ts": 1787700748.1246572
+    }
+   ],
+   "first_ts": 1787699830.492189,
+   "usd": 1578.0303393282657
+  },
+  "7NzYGU9stWfq6iU9gwc1PomeRL84rQqE2Sh9ivpKpump": {
+   "symbol": "Chronicles",
+   "wallets": [
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 121.74635158144767,
+     "ts": 1787699830.4924464
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 116.44260935093158,
+     "ts": 1787699835.8175337
+    },
+    {
+     "w": "8yN4tH6X5VgJ7Tu9tPSKXK1g5cznr4W3hfKkGvJ5GSVE",
+     "usd": 38.33074965619471,
+     "ts": 1787699839.8448308
+    },
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 5.054686626861211,
+     "ts": 1787699840.844044
+    },
+    {
+     "w": "FxN3VZ4BosL5urG2yoeQ156JSdmavm9K5fdLxjkPmaMR",
+     "usd": 25.498498247790618,
+     "ts": 1787699846.2726655
+    },
+    {
+     "w": "2fg5QD1eD7rzNNCsvnhmXFm5hqNgwTTG8p7kQ6f3rx6f",
+     "usd": 24.485098351846272,
+     "ts": 1787699847.7913852
+    },
+    {
+     "w": "EEb8qt7ZRvjimM19NBGjBvsnGX2sUQYvpZT5a4jXeTKZ",
+     "usd": 146.05567775497948,
+     "ts": 1787699849.554748
+    },
+    {
+     "w": "EXueF6jatgRR3Dneof9ipvNxKnuAGM5HKZefUs8Ue3zJ",
+     "usd": 171.54894580236117,
+     "ts": 1787699850.9329534
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 121.26422855551249,
+     "ts": 1787699873.4238658
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 116.75143041160663,
+     "ts": 1787699877.3363888
+    }
+   ],
+   "first_ts": 1787699830.4924464,
+   "usd": 4442.956176116272
+  },
+  "FZqdw6oSDCbHtKYxmhnfbi97SnyVy8jaYpdCoMrrjKa2": {
+   "symbol": "Pistacio",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 23.351708287834523,
+     "ts": 1787699831.712129
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 765.0800635942087,
+     "ts": 1787700368.8676524
+    }
+   ],
+   "first_ts": 1787699831.712129,
+   "usd": 4258.130150693958
+  },
+  "E3i7sTY5QYEBh3itepnomZQt7Eh5kzmHFk1vkm2pump": {
+   "symbol": "cc",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 9.799233899782044,
+     "ts": 1787699831.7123406
+    }
+   ],
+   "first_ts": 1787699831.7123406,
+   "usd": 9.799233899782044
+  },
+  "RJQY5Agvk1WccaDDAiMLBv7mx3wz1VYiSG7Ndcjpump": {
+   "symbol": "MO",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8763916994378715,
+     "ts": 1787699831.7125483
+    }
+   ],
+   "first_ts": 1787699831.7125483,
+   "usd": 3.753089828036733
+  },
+  "4mxp6WN2uAtDBd8BHNPSTYUEy6mD7R3gejzayWGBpump": {
+   "symbol": "\u8c79\u62c9",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 18.791852296898153,
+     "ts": 1787699831.7127144
+    }
+   ],
+   "first_ts": 1787699831.7127144,
+   "usd": 18.791852296898153
+  },
+  "FF4qVs36PJpXw6HHbXoo41WYYL3xH177QwXg6at5EAdG": {
+   "symbol": "Takuache",
+   "wallets": [
+    {
+     "w": "BoNkgKwztjrSEedqyxCU3SRsSBgajfPtet9c26zC6NW6",
+     "usd": 110.2237232951736,
+     "ts": 1787699832.4745507
+    },
+    {
+     "w": "ASpUQ6p3tMrrxYXYaqdTXDKGmfARbA1yybJUntAHeqfZ",
+     "usd": 98.62459954303296,
+     "ts": 1787699833.4551368
+    },
+    {
+     "w": "DSMMszFoe51bNs99kxhZqy9eKFiUH4Gd713wRZshq3bu",
+     "usd": 76.6525359212264,
+     "ts": 1787699834.2369933
+    }
+   ],
+   "first_ts": 1787699832.4745507,
+   "usd": 571.0017175188659
+  },
+  "DQMzHJWnajbnCcHM4ekSr3DWJ3pcpRTG4jMoadHzpump": {
+   "symbol": "LUNA",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.843111711961726,
+     "ts": 1787699835.1081433
+    }
+   ],
+   "first_ts": 1787699835.1081433,
+   "usd": 28.843111711961726
+  },
+  "ENtP91gv8hqRtwXY8sckTJfpafGwvArMjDsMvyC7pump": {
+   "symbol": "CLANKRESIANS",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.81734450607215,
+     "ts": 1787699835.109104
+    }
+   ],
+   "first_ts": 1787699835.109104,
+   "usd": 86.45203351821645
+  },
+  "CVvNx7X9NGJYDMoog7zUXPGzcbZCPajeQCUY7LDMpump": {
+   "symbol": "chih",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 115.41148769218503,
+     "ts": 1787699835.8182902
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 111.77545744550606,
+     "ts": 1787699877.3358493
+    }
+   ],
+   "first_ts": 1787699835.8182902,
+   "usd": 588.5237454588132
+  },
+  "2gbZosc5iFgreVFEkh4frGkRA1XEU3LAF5Sot3YXpump": {
+   "symbol": "Cato",
+   "wallets": [
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 142.31801197260006,
+     "ts": 1787699836.7281592
+    },
+    {
+     "w": "35caaJFwzSNaFwFmP1f33wDP9cUFEXTLDsFnjna7kAjs",
+     "usd": 28.719662856473345,
+     "ts": 1787699840.342619
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 138.09031356296356,
+     "ts": 1787699873.4241495
+    },
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 9.680818529673704,
+     "ts": 1787700054.3931227
+    }
+   ],
+   "first_ts": 1787699836.7281592,
+   "usd": 1158.8008279311184
+  },
+  "CUJHqu1CJznfkggLY9woEPnE9Zh7QC7BkMXXTXuMpump": {
+   "symbol": "PUMPTANK",
+   "wallets": [
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 102.89587344159082,
+     "ts": 1787699836.7284775
+    }
+   ],
+   "first_ts": 1787699836.7284775,
+   "usd": 200.76104033582777
+  },
+  "FZBTnTiAvNBhAuks7DG9kRgMrUkptNCq7ZsbCr1cpump": {
+   "symbol": "George",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 55.2307669353458,
+     "ts": 1787699837.3420076
+    }
+   ],
+   "first_ts": 1787699837.3420076,
+   "usd": 127.78443378690152
+  },
+  "EVpszSRyQok4M6Fo5wTdC58WBJpx65y5VZGmmjm4pump": {
+   "symbol": "DOLLY",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 83.73212369678173,
+     "ts": 1787699837.34219
+    }
+   ],
+   "first_ts": 1787699837.34219,
+   "usd": 83.73212369678173
+  },
+  "GAYMGsgvudP3cUCVE1HZMnuXiFthcGkecpVoj44hpump": {
+   "symbol": "Sned",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 49.45738965255442,
+     "ts": 1787699837.3423038
+    }
+   ],
+   "first_ts": 1787699837.3423038,
+   "usd": 166.13457504294155
+  },
+  "3a4RsWDjUzV39Kitb82zGfA7fEeBfMYDQHHCb7ZXpump": {
+   "symbol": "pepo",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 136.20358638761397,
+     "ts": 1787699837.3424177
+    }
+   ],
+   "first_ts": 1787699837.3424177,
+   "usd": 355.4746613747599
+  },
+  "DaPayqzdCXcrmvgz9Wx7MySipXxcSofGPtkMgVdqpump": {
+   "symbol": "SABL",
+   "wallets": [
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 97.00779529918,
+     "ts": 1787699838.191733
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 76.21920290493532,
+     "ts": 1787699877.8179467
+    }
+   ],
+   "first_ts": 1787699838.191733,
+   "usd": 256.18754445209964
+  },
+  "AZB3NCwGRcFJhSXut7GSMECNc1DUEbAHVdgKG7evpump": {
+   "symbol": "TSP",
+   "wallets": [
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.9763887314765,
+     "ts": 1787699838.1919162
+    },
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.48369163240023905,
+     "ts": 1787699841.712572
+    },
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 548.351188,
+     "ts": 1787699875.3817525
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 78.72352414096714,
+     "ts": 1787699877.8183928
+    }
+   ],
+   "first_ts": 1787699838.1919162,
+   "usd": 1039.8119439441236
+  },
+  "9xCcd17iKfnc1CoQGupJcxRmAdejJouJ8LsBeNCLpump": {
+   "symbol": "BUBOS",
+   "wallets": [
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.70979296250913,
+     "ts": 1787699838.1920435
+    }
+   ],
+   "first_ts": 1787699838.1920435,
+   "usd": 193.41958592501825
+  },
+  "DHJVYXsikcimtcVo49FAZqYd1XPYPaXezYhbKArJbonk": {
+   "symbol": "BlueChip",
+   "wallets": [
+    {
+     "w": "C4eNLxxC7XLUivghMi35YUeSfvACgnvKB18115uPUqjg",
+     "usd": 48.213071886845256,
+     "ts": 1787699838.965207
+    }
+   ],
+   "first_ts": 1787699838.965207,
+   "usd": 48.213071886845256
+  },
+  "FAZF6uJTvSiZSgmqDr6Mf2YSXRuVSUHyXo4bKFgWpump": {
+   "symbol": "Alex",
+   "wallets": [
+    {
+     "w": "C4eNLxxC7XLUivghMi35YUeSfvACgnvKB18115uPUqjg",
+     "usd": 47.524204766286985,
+     "ts": 1787699838.9654548
+    }
+   ],
+   "first_ts": 1787699838.9654548,
+   "usd": 47.524204766286985
+  },
+  "HnRSh1WTMnfLbDHL6d96hEbs4D2geZAPMudVGVuBpump": {
+   "symbol": "LAMPORT",
+   "wallets": [
+    {
+     "w": "C4eNLxxC7XLUivghMi35YUeSfvACgnvKB18115uPUqjg",
+     "usd": 47.5482734675169,
+     "ts": 1787699838.9656067
+    }
+   ],
+   "first_ts": 1787699838.9656067,
+   "usd": 47.5482734675169
+  },
+  "8qbV7wZHFHpfVWbU7i5nZ4oh7AxnKm71HFjyJUJVZ3oC": {
+   "symbol": "FROG",
+   "wallets": [
+    {
+     "w": "8yN4tH6X5VgJ7Tu9tPSKXK1g5cznr4W3hfKkGvJ5GSVE",
+     "usd": 38.38448922850894,
+     "ts": 1787699839.844593
+    },
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.4338458225636441,
+     "ts": 1787699841.7129607
+    }
+   ],
+   "first_ts": 1787699839.844593,
+   "usd": 39.68602669619988
+  },
+  "8LRQ671WayWejNUWv5NrnkoPkSQmdyz2Btnh9XXspump": {
+   "symbol": "Monsters",
+   "wallets": [
+    {
+     "w": "8yN4tH6X5VgJ7Tu9tPSKXK1g5cznr4W3hfKkGvJ5GSVE",
+     "usd": 38.39558132400162,
+     "ts": 1787699839.8454504
+    },
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.46618878355255305,
+     "ts": 1787699841.7133598
+    },
+    {
+     "w": "7NAd2EpYGGeFofpyvgehSXhH5vg6Ry6VRMW2Y6jiqCu1",
+     "usd": 116.48808238596314,
+     "ts": 1787699845.7962081
+    },
+    {
+     "w": "FxN3VZ4BosL5urG2yoeQ156JSdmavm9K5fdLxjkPmaMR",
+     "usd": 65.4614183613593,
+     "ts": 1787699846.2729316
+    },
+    {
+     "w": "suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK",
+     "usd": 126.72293528284948,
+     "ts": 1787699847.0026026
+    },
+    {
+     "w": "2fg5QD1eD7rzNNCsvnhmXFm5hqNgwTTG8p7kQ6f3rx6f",
+     "usd": 71.89497526430162,
+     "ts": 1787699847.7915912
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 66.16237047219157,
+     "ts": 1787699873.4244516
+    }
+   ],
+   "first_ts": 1787699839.8454504,
+   "usd": 11836.693372494034
+  },
+  "J1xjPxyw9U2Zr6ShQtxH7QbXEBF6BuMK2wdnLBnjpump": {
+   "symbol": "PumpGrok",
+   "wallets": [
+    {
+     "w": "35caaJFwzSNaFwFmP1f33wDP9cUFEXTLDsFnjna7kAjs",
+     "usd": 40.32654954486502,
+     "ts": 1787699840.342485
+    }
+   ],
+   "first_ts": 1787699840.342485,
+   "usd": 80.65309908973003
+  },
+  "9GJf3mtz8fQxbpVnLR4pVLhMHHh65UwKSJDBN55mpump": {
+   "symbol": "DOLLY",
+   "wallets": [
+    {
+     "w": "7naFFwuEJWeWwWYQUkgAWHsxYKg3KctEuUj42JdAMidP",
+     "usd": 388.9242282122187,
+     "ts": 1787699842.7424486
+    },
+    {
+     "w": "5wz9yJ3UtRXWDF1d2uf3ZwNZF9hbFUdaERxZhgdPoCp8",
+     "usd": 262.52385404324764,
+     "ts": 1787699843.5716736
+    },
+    {
+     "w": "Eqpkom7SbqiUNZnD6bJdo8zD7pcLfCCZSggmrGT8Mpma",
+     "usd": 281.9700654538585,
+     "ts": 1787699844.3802192
+    }
+   ],
+   "first_ts": 1787699842.7424486,
+   "usd": 2800.254443127974
+  },
+  "AsSgcAf3dSbDRvqqWbnjh4UwBZsEuvxxkRXk8Narpump": {
+   "symbol": "SAMBA",
+   "wallets": [
+    {
+     "w": "7naFFwuEJWeWwWYQUkgAWHsxYKg3KctEuUj42JdAMidP",
+     "usd": 389.182416769764,
+     "ts": 1787699842.7428193
+    },
+    {
+     "w": "5wz9yJ3UtRXWDF1d2uf3ZwNZF9hbFUdaERxZhgdPoCp8",
+     "usd": 223.77988964261428,
+     "ts": 1787699843.5719981
+    },
+    {
+     "w": "Eqpkom7SbqiUNZnD6bJdo8zD7pcLfCCZSggmrGT8Mpma",
+     "usd": 282.1572521580789,
+     "ts": 1787699844.3804474
+    }
+   ],
+   "first_ts": 1787699842.7428193,
+   "usd": 2685.3586757113717
+  },
+  "7Jvb1DipKJZciCBqzsis4UdqWSrwBQAzix9o6KvBpump": {
+   "symbol": "TILLY",
+   "wallets": [
+    {
+     "w": "7naFFwuEJWeWwWYQUkgAWHsxYKg3KctEuUj42JdAMidP",
+     "usd": 389.40330718467635,
+     "ts": 1787699842.7431235
+    },
+    {
+     "w": "5wz9yJ3UtRXWDF1d2uf3ZwNZF9hbFUdaERxZhgdPoCp8",
+     "usd": 223.90690163118887,
+     "ts": 1787699843.5723593
+    },
+    {
+     "w": "Eqpkom7SbqiUNZnD6bJdo8zD7pcLfCCZSggmrGT8Mpma",
+     "usd": 282.3173977088903,
+     "ts": 1787699844.3806534
+    }
+   ],
+   "first_ts": 1787699842.7431235,
+   "usd": 3923.2383198856146
+  },
+  "CeyBHtpQoCeAc4tiqCKFgiYxbhjcVhZkpekVzaBGpump": {
+   "symbol": "MEME1921",
+   "wallets": [
+    {
+     "w": "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W",
+     "usd": 141.27986071233664,
+     "ts": 1787699845.323504
+    }
+   ],
+   "first_ts": 1787699845.323504,
+   "usd": 282.5597214246733
+  },
+  "127a7jBi3G2mcYCR6sTiNGfJJ2kjgjbBjVrye18hpump": {
+   "symbol": "Hermione",
+   "wallets": [
+    {
+     "w": "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W",
+     "usd": 188.0082582540329,
+     "ts": 1787699845.3238482
+    }
+   ],
+   "first_ts": 1787699845.3238482,
+   "usd": 752.0330330161316
+  },
+  "ETrX5rUSa6T6jE5yFKfJP5qxSeYsKJvJoec6jqm3bHj": {
+   "symbol": "Pump",
+   "wallets": [
+    {
+     "w": "2mB1TSgggG24mmih4WbS6dRzfL77v4MjktWfPi2dTe9U",
+     "usd": 94.10637721925366,
+     "ts": 1787699848.3307083
+    }
+   ],
+   "first_ts": 1787699848.3307083,
+   "usd": 376.42550887701464
+  },
+  "2RaSPNKVoMcr8EL2KN9yxkC7Hd1oZeYPyL9gDYSjpump": {
+   "symbol": "N.H",
+   "wallets": [
+    {
+     "w": "2mB1TSgggG24mmih4WbS6dRzfL77v4MjktWfPi2dTe9U",
+     "usd": 94.06958535969378,
+     "ts": 1787699848.330868
+    }
+   ],
+   "first_ts": 1787699848.330868,
+   "usd": 376.2783414387751
+  },
+  "FvyicqVDbDjgcR4LspCoMPhweWVunf1ea9w1esBspump": {
+   "symbol": "Pump",
+   "wallets": [
+    {
+     "w": "GnQaHz5ADipEjns7a7zy965AQYE35vFhePizXGYBzzND",
+     "usd": 235.93127910021354,
+     "ts": 1787699849.062316
+    }
+   ],
+   "first_ts": 1787699849.062316,
+   "usd": 235.93127910021354
+  },
+  "2A232Pw6rg4YGp9Nhpc8VvGxe3sTDmU7aAPV5WPwpump": {
+   "symbol": "PIT",
+   "wallets": [
+    {
+     "w": "BGMxmMAWE8HxXNVHY7y8gVvayf65T6mvYuXa75LD1sha",
+     "usd": 503.54232367619437,
+     "ts": 1787699850.2478313
+    }
+   ],
+   "first_ts": 1787699850.2478313,
+   "usd": 503.54232367619437
+  },
+  "7dzZpqxou1p38eYxQPEq679eBBo899ALdUWvo2aApump": {
+   "symbol": "BEL",
+   "wallets": [
+    {
+     "w": "BGMxmMAWE8HxXNVHY7y8gVvayf65T6mvYuXa75LD1sha",
+     "usd": 94.91793490228,
+     "ts": 1787699850.2483716
+    }
+   ],
+   "first_ts": 1787699850.2483716,
+   "usd": 94.91793490228
+  },
+  "FNvK7MCenPWaqEMfzzHRR6TJP9HyopXTKyPr1zfRpump": {
+   "symbol": "Chronicles",
+   "wallets": [
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.54359610392058,
+     "ts": 1787699851.4234843
+    }
+   ],
+   "first_ts": 1787699851.4234843,
+   "usd": 427.63078831176176
+  },
+  "8brwudF8pMEeYoj7zPL4RtbFRerGnCqGbgFNxNMopump": {
+   "symbol": "Bowie",
+   "wallets": [
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 115.41618787405231,
+     "ts": 1787699874.2228012
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 120.73011375728817,
+     "ts": 1787699876.8092117
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 92.35024474278133,
+     "ts": 1787699918.3490436
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 27.12731861900114,
+     "ts": 1787699920.9337564
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 95.07903282026439,
+     "ts": 1787699967.5071032
+    },
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 5.063049303583078,
+     "ts": 1787699969.998342
+    },
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 196.60629171030652,
+     "ts": 1787700099.7086754
+    }
+   ],
+   "first_ts": 1787699874.2228012,
+   "usd": 1881.98448582832
+  },
+  "HyxHtmAnp5PmKRDuyr3gxJpPaFkLCJpXrd8FXFmapump": {
+   "symbol": "berry",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 116.58287822169238,
+     "ts": 1787699876.8080044
+    }
+   ],
+   "first_ts": 1787699876.8080044,
+   "usd": 892.1739717352855
+  },
+  "2zbY65kYG6tUe4BUUF3hLUk8RRdDpqKzxKmQfpjapump": {
+   "symbol": "Peanutio",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 111.02452472787694,
+     "ts": 1787699876.8086634
+    }
+   ],
+   "first_ts": 1787699876.8086634,
+   "usd": 333.0735741836308
+  },
+  "JCdN12mWdM6dRrPrDTHcFZzs6FaufwfbJFSwRkBqpump": {
+   "symbol": "RETAIL",
+   "wallets": [
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 60.37894675480333,
+     "ts": 1787699877.3362198
+    }
+   ],
+   "first_ts": 1787699877.3362198,
+   "usd": 120.75789350960666
+  },
+  "BPamv5EHNtrRoVV8QYdqtWxFWKLUcDjJmNEjtx4Cpump": {
+   "symbol": "COIN",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 97.37602655603924,
+     "ts": 1787699877.8177664
+    }
+   ],
+   "first_ts": 1787699877.8177664,
+   "usd": 97.37602655603924
+  },
+  "H3yygpRBu1e2SD3pkHPfEWNB5a95dgULsZrt4TJApump": {
+   "symbol": "Dachshund",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 70.66317015874382,
+     "ts": 1787699918.3489199
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 29.365477410939434,
+     "ts": 1787699920.9339895
+    }
+   ],
+   "first_ts": 1787699918.3489199,
+   "usd": 260.732495415023
+  },
+  "82fSfCz8KtGoQB2HusTcxLWczA3ACZSCzkGuGZXppump": {
+   "symbol": "BabyP",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 26.216501809024408,
+     "ts": 1787699919.6918132
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 94.72144942486165,
+     "ts": 1787699968.2681935
+    }
+   ],
+   "first_ts": 1787699919.6918132,
+   "usd": 820.7259668811894
+  },
+  "DQRUpkfJPKMWs4L8ngRZJzs5CidhMzou2o3YLup8pump": {
+   "symbol": "HERO",
+   "wallets": [
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 166.15887569392697,
+     "ts": 1787699922.2971036
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 135.4219389865951,
+     "ts": 1787699963.4156706
+    },
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 2.7140325252333946,
+     "ts": 1787700407.8840601
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 84.06232534765195,
+     "ts": 1787700614.8243454
+    },
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.70761632410088,
+     "ts": 1787700662.4751177
+    }
+   ],
+   "first_ts": 1787699922.2971036,
+   "usd": 1545.8643255881657
+  },
+  "GLorPhfYWUQ6h8V63LEuhgaiRpyv4qKnDmhEnprLPwV4": {
+   "symbol": "glorp",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 105.56402678539281,
+     "ts": 1787699922.8015203
+    }
+   ],
+   "first_ts": 1787699922.8015203,
+   "usd": 105.56402678539281
+  },
+  "3u2sWMJTH6HnAKRiiwUWZWtNfts52VJdASNp13L9pump": {
+   "symbol": "croakie",
+   "wallets": [
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.86695105439478,
+     "ts": 1787699923.3087652
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 127.29655887554483,
+     "ts": 1787699968.2667081
+    }
+   ],
+   "first_ts": 1787699923.3087652,
+   "usd": 625.304363739496
+  },
+  "FDysRkUtWRQEnwDchkbkFASh6zgS8R3UCYSaD7rjpump": {
+   "symbol": "pepo",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 138.0739648069059,
+     "ts": 1787699963.413918
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 163.61749392411934,
+     "ts": 1787699967.506727
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 75.47952244342237,
+     "ts": 1787700012.424263
+    },
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.82090018472468,
+     "ts": 1787700058.6157558
+    }
+   ],
+   "first_ts": 1787699963.413918,
+   "usd": 954.0982163265795
+  },
+  "4dsYDw52hAM2wNZYXUS4L9KMSaek8cRnPPLHGGMCpump": {
+   "symbol": "ATH",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8757303334443205,
+     "ts": 1787699965.2410617
+    }
+   ],
+   "first_ts": 1787699965.2410617,
+   "usd": 3.752621628746577
+  },
+  "3JSNx8K64GSP1K8xGGvbeDrvqk14sieCJBsD86tqpump": {
+   "symbol": "IREN",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8767218124189509,
+     "ts": 1787700009.6622863
+    }
+   ],
+   "first_ts": 1787700009.6622863,
+   "usd": 3.7524188715802023
+  },
+  "Dpm286qCiQ4N2tuCiouP9mzkKv5Yxo77qV7uE8Q6pump": {
+   "symbol": "14K",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 65.32329003807384,
+     "ts": 1787700009.6624238
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 74.23587790062923,
+     "ts": 1787700053.2876627
+    }
+   ],
+   "first_ts": 1787700009.6624238,
+   "usd": 139.55916793870307
+  },
+  "9HHTQ7YMx82E987cNqF9KczyZrfKgqvKNyA2yHSVpump": {
+   "symbol": "CYBERCAT",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 73.10726618956711,
+     "ts": 1787700012.42389
+    }
+   ],
+   "first_ts": 1787700012.42389,
+   "usd": 73.10726618956711
+  },
+  "3xQSkGZJAXLWBQ2ur5iD1RV3aDUSySjDAAUoNRZLpump": {
+   "symbol": "pepo",
+   "wallets": [
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.5079531165023,
+     "ts": 1787700020.8127677
+    }
+   ],
+   "first_ts": 1787700020.8127677,
+   "usd": 570.0318124660092
+  },
+  "ARjLkpJKJYPZwjpXYjyL7pMTWYPggvvh8r5f4HwCpump": {
+   "symbol": "Lylla",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8768912953022567,
+     "ts": 1787700054.3929167
+    }
+   ],
+   "first_ts": 1787700054.3929167,
+   "usd": 1.8768912953022567
+  },
+  "cj84F1CwcW6UMARVL6WKR4rTKy1vLR7PRyxfrjApump": {
+   "symbol": "GINGE",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8766981285988615,
+     "ts": 1787700054.3935232
+    }
+   ],
+   "first_ts": 1787700054.3935232,
+   "usd": 1.8766981285988615
+  },
+  "2wUYPUv2Pnw7NPuDRV8Ddv6bJqB83g29RYutdhSYpump": {
+   "symbol": "rose",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.875816418577408,
+     "ts": 1787700055.7157733
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 95.23161684920018,
+     "ts": 1787700098.484928
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 116.61280004578701,
+     "ts": 1787700101.9436724
+    }
+   ],
+   "first_ts": 1787700055.7157733,
+   "usd": 598.0532666729163
+  },
+  "8fTqJrkSNAEMfjA9K7eVUXow93nrayRgbKsLJBENpump": {
+   "symbol": "CATESEM",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 66.91867616972212,
+     "ts": 1787700058.1227145
+    }
+   ],
+   "first_ts": 1787700058.1227145,
+   "usd": 117.85240036720748
+  },
+  "4kqEkiDmkkyQWayzQB5B3dUP6whgAL3becLH5jexpump": {
+   "symbol": "George",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 4.900127708883758,
+     "ts": 1787700099.708577
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 299.815371001333,
+     "ts": 1787700306.6866658
+    }
+   ],
+   "first_ts": 1787700099.708577,
+   "usd": 2851.233310454866
+  },
+  "GUmbtfjSZkybSFgPibBcvwExEBdXwewJHR5PkTjzpump": {
+   "symbol": "Morty",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 2.900307,
+     "ts": 1787700099.7088535
+    }
+   ],
+   "first_ts": 1787700099.7088535,
+   "usd": 2.900307
+  },
+  "7H5SmR8nD8zSK7RMKivBLP37cxonVqe2zm6DfJM4pKwk": {
+   "symbol": "PISTACHIO",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 29.984429934349127,
+     "ts": 1787700101.196074
+    }
+   ],
+   "first_ts": 1787700101.196074,
+   "usd": 59.96885986869825
+  },
+  "BUikyVWxRkR9PnF31yo6CAJSvYgJdovXoVKwCtZQpump": {
+   "symbol": "whycat",
+   "wallets": [
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 175.9454027950797,
+     "ts": 1787700102.505745
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 137.97073211459585,
+     "ts": 1787700145.342572
+    }
+   ],
+   "first_ts": 1787700102.505745,
+   "usd": 665.8069404998349
+  },
+  "EDxJPcUVHM85Nxq6bbaQ3J2udRbTG5N4DbwKwoUTpump": {
+   "symbol": "FORBIDDEN",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 91.80388124233546,
+     "ts": 1787700102.9847777
+    }
+   ],
+   "first_ts": 1787700102.9847777,
+   "usd": 258.9103175632389
+  },
+  "DuvcCMiQwHCCtxkiC6WKDY4waWDQSrAJxsstpwX8pump": {
+   "symbol": "Pistachio",
+   "wallets": [
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 134.6932885506884,
+     "ts": 1787700146.0368607
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 79.6245308882731,
+     "ts": 1787700188.2948186
+    },
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 4.8712687273319375,
+     "ts": 1787700197.531122
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 89.37104809739155,
+     "ts": 1787700241.6667879
+    },
+    {
+     "w": "EXueF6jatgRR3Dneof9ipvNxKnuAGM5HKZefUs8Ue3zJ",
+     "usd": 102.17756407480759,
+     "ts": 1787700459.7308042
+    },
+    {
+     "w": "EEb8qt7ZRvjimM19NBGjBvsnGX2sUQYvpZT5a4jXeTKZ",
+     "usd": 95.17087377910279,
+     "ts": 1787700770.8673918
+    }
+   ],
+   "first_ts": 1787700146.0368607,
+   "usd": 2455.261134075082
+  },
+  "HFvQHfHbQrpGy5QVEa8Sqt9f1sV72zjKimMEU9j5pump": {
+   "symbol": "MiniP",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.959535786393392,
+     "ts": 1787700148.0471976
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 132.62227338024016,
+     "ts": 1787700366.688337
+    }
+   ],
+   "first_ts": 1787700148.0471976,
+   "usd": 161.58180916663355
+  },
+  "3noZBKK4KkXdyCUwGrHyuzoSuV1Q4buqkBPgzDLQpump": {
+   "symbol": "Berry",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.850431254256016,
+     "ts": 1787700148.0475595
+    },
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.4570188189587,
+     "ts": 1787700156.9644253
+    }
+   ],
+   "first_ts": 1787700148.0475595,
+   "usd": 456.2214877111321
+  },
+  "77JTvYcbfrjEbHabZbHqSQHGb5xWwSArPi8gVsAkpump": {
+   "symbol": "Wassie",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 133.35117912330062,
+     "ts": 1787700150.2433329
+    }
+   ],
+   "first_ts": 1787700150.2433329,
+   "usd": 380.2576817345367
+  },
+  "CiaeSYnmyWTFrcPzXU5Dbwyz57H7HKN3GR984HrDpump": {
+   "symbol": "grindd",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 59.51483882407367,
+     "ts": 1787700150.2437975
+    }
+   ],
+   "first_ts": 1787700150.2437975,
+   "usd": 59.51483882407367
+  },
+  "9mb8VwSsuVXHGRLLEyVQhQJnYLECruevK52AKvQepump": {
+   "symbol": "crycat",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 77.2635690837869,
+     "ts": 1787700188.2944937
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 66.81377073169732,
+     "ts": 1787700305.2773988
+    }
+   ],
+   "first_ts": 1787700188.2944937,
+   "usd": 144.0773398154842
+  },
+  "37dVbFT7LmpjNqQ1xtaKvpxfvBe51FURgv64MNerpump": {
+   "symbol": "SLNH",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.824933992290827,
+     "ts": 1787700193.2304313
+    }
+   ],
+   "first_ts": 1787700193.2304313,
+   "usd": 86.47480197687248
+  },
+  "8kGnHhpHKNnpiMYTxqiX5funDAMRnCYEUUhBbJG2Scra": {
+   "symbol": "KODY",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 29.359330996110454,
+     "ts": 1787700193.2305646
+    }
+   ],
+   "first_ts": 1787700193.2305646,
+   "usd": 88.07799298833136
+  },
+  "4PSxDj1RCuV2oyEdqcKjfCjbGKDmTZdeS1a4Didjpump": {
+   "symbol": "DNDT",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.82368739958969,
+     "ts": 1787700193.2306507
+    }
+   ],
+   "first_ts": 1787700193.2306507,
+   "usd": 86.47106219876908
+  },
+  "FDuaqbfNoe3RKSEMxUTQ6MCyEUUuxGtkvE46CDv9pump": {
+   "symbol": "BELIEVER",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 111.20482145537305,
+     "ts": 1787700193.7176425
+    },
+    {
+     "w": "7naFFwuEJWeWwWYQUkgAWHsxYKg3KctEuUj42JdAMidP",
+     "usd": 388.3050885967354,
+     "ts": 1787700346.0957665
+    },
+    {
+     "w": "5wz9yJ3UtRXWDF1d2uf3ZwNZF9hbFUdaERxZhgdPoCp8",
+     "usd": 223.27542594312283,
+     "ts": 1787700423.0824037
+    },
+    {
+     "w": "Eqpkom7SbqiUNZnD6bJdo8zD7pcLfCCZSggmrGT8Mpma",
+     "usd": 281.52118923263316,
+     "ts": 1787700424.5878136
+    }
+   ],
+   "first_ts": 1787700193.7176425,
+   "usd": 4246.654015010606
+  },
+  "HepBDAaqT9cs9kFokrQkz5ids2cMUAjgftGNZeP5pump": {
+   "symbol": "Munkie",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 137.98011336988517,
+     "ts": 1787700234.7238617
+    },
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.36517027820557,
+     "ts": 1787700271.3952866
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 114.12494102063093,
+     "ts": 1787700366.6886623
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 110.85740968868927,
+     "ts": 1787700465.0669465
+    }
+   ],
+   "first_ts": 1787700234.7238617,
+   "usd": 1865.9006926415825
+  },
+  "2YxmgkymNcoPNbSf22T5t3qjvKsbTyzXWc1m8dg7pump": {
+   "symbol": "Coin",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 88.53166280784444,
+     "ts": 1787700234.7241838
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 116.12010330941284,
+     "ts": 1787700240.8226051
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 110.76438428865882,
+     "ts": 1787700367.7433927
+    }
+   ],
+   "first_ts": 1787700234.7241838,
+   "usd": 1197.8424551911264
+  },
+  "5siN8Q4upbgsPCqqpd2tgQsrvoyuugVcEvnTCwGVpump": {
+   "symbol": "Blu-Goo",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8770147161912991,
+     "ts": 1787700237.254739
+    }
+   ],
+   "first_ts": 1787700237.254739,
+   "usd": 1.8770147161912991
+  },
+  "C2GWJggNTbGEqA7TdpsbU1vnqRCFtTyztBw81Z6mpump": {
+   "symbol": "new",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8770147161912991,
+     "ts": 1787700237.2548783
+    }
+   ],
+   "first_ts": 1787700237.2548783,
+   "usd": 5.6310096785544514
+  },
+  "547tWxWhym8U7Y7DvhGJktpkcs5eHeywvSYnhwvdpump": {
+   "symbol": "fih",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 133.86164301043496,
+     "ts": 1787700240.8230798
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 102.09949200841815,
+     "ts": 1787700242.8164988
+    },
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.68767057906011,
+     "ts": 1787700369.638884
+    },
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.9,
+     "ts": 1787700938.6852522
+    }
+   ],
+   "first_ts": 1787700240.8230798,
+   "usd": 4026.7715454871145
+  },
+  "2gUzWnAJmj1BQf9FHh9gERjYwiJv2MLAE5VbXNJipump": {
+   "symbol": "KOTH",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 116.36750389934883,
+     "ts": 1787700240.8233545
+    },
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 126.60748678245767,
+     "ts": 1787700298.2820184
+    },
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.674821827776,
+     "ts": 1787700369.6390386
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 60.04908126253153,
+     "ts": 1787700465.624747
+    }
+   ],
+   "first_ts": 1787700240.8233545,
+   "usd": 938.0142202911827
+  },
+  "8vJ6T78sia8uEgmdCMMctBzMvKRx4aS4X6kEXw4Apump": {
+   "symbol": "EL NI\u00d1O",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8773378576817443,
+     "ts": 1787700301.146465
+    }
+   ],
+   "first_ts": 1787700301.146465,
+   "usd": 1.8773378576817443
+  },
+  "2sLKA6PzFVjeTUaiKBCkDbDiS8MuoZAeXxZMgs9Apump": {
+   "symbol": "C4T",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 16.787409,
+     "ts": 1787700301.1466172
+    }
+   ],
+   "first_ts": 1787700301.1466172,
+   "usd": 191.3907134798413
+  },
+  "9U1WPXGhyzNNPNChwFbF3QH23cowrMiu2UzTTvYopump": {
+   "symbol": "BLACKBEAR",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 24.500013,
+     "ts": 1787700301.14696
+    }
+   ],
+   "first_ts": 1787700301.14696,
+   "usd": 24.500013
+  },
+  "J4q4wuNqQkWUiYyk6LBTc1ZjaHu6T3DPE2swz6MQpump": {
+   "symbol": "KODY",
+   "wallets": [
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 67.81611958125897,
+     "ts": 1787700305.2770624
+    }
+   ],
+   "first_ts": 1787700305.2770624,
+   "usd": 67.81611958125897
+  },
+  "J7SWU9oFsL7t74o783WnV4KHF4QaVBm5p7VUifXtpump": {
+   "symbol": "Thing",
+   "wallets": [
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 4.516516552021266,
+     "ts": 1787700328.2846537
+    },
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 116.27533798876367,
+     "ts": 1787700361.1541471
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 150.4752089920727,
+     "ts": 1787700367.7436073
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 137.69968525810657,
+     "ts": 1787700461.8807998
+    },
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 4.9,
+     "ts": 1787700462.8740542
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 79.92386810387289,
+     "ts": 1787700465.6253414
+    },
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.69397892373524,
+     "ts": 1787700512.983745
+    }
+   ],
+   "first_ts": 1787700328.2846537,
+   "usd": 2207.323282285688
+  },
+  "4f4YbLPyNtZrvVbtyM8G9cLybRpzsAeBKu8QuUuFpump": {
+   "symbol": "PISTACHIO",
+   "wallets": [
+    {
+     "w": "7naFFwuEJWeWwWYQUkgAWHsxYKg3KctEuUj42JdAMidP",
+     "usd": 388.8609957071217,
+     "ts": 1787700346.0954084
+    },
+    {
+     "w": "5wz9yJ3UtRXWDF1d2uf3ZwNZF9hbFUdaERxZhgdPoCp8",
+     "usd": 223.59507253159495,
+     "ts": 1787700423.0821817
+    },
+    {
+     "w": "Eqpkom7SbqiUNZnD6bJdo8zD7pcLfCCZSggmrGT8Mpma",
+     "usd": 281.9242218876632,
+     "ts": 1787700424.5870018
+    }
+   ],
+   "first_ts": 1787700346.0954084,
+   "usd": 3072.0018660862615
+  },
+  "BfPmBywbNYuMGfTKQM28i7Cj7o5WT6w8ZDg57Wcqpump": {
+   "symbol": "73",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 76.48609788666346,
+     "ts": 1787700360.4039686
+    }
+   ],
+   "first_ts": 1787700360.4039686,
+   "usd": 152.97219577332692
+  },
+  "AgMSmK5abegKebBqon5QNiaiio3RU5vPf9pZkb4Apump": {
+   "symbol": "GIF",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 70.48216231617643,
+     "ts": 1787700360.4041018
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 76.90126627606146,
+     "ts": 1787700611.5511816
+    }
+   ],
+   "first_ts": 1787700360.4041018,
+   "usd": 423.0318628107511
+  },
+  "7K1uqCSJSyaY1grcyuWBUyvGq8uKUGm36rJNBBXcpump": {
+   "symbol": "Pitcoin",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 77.05195931936292,
+     "ts": 1787700360.4041848
+    },
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 116.29993167278806,
+     "ts": 1787700361.1545377
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.786811774787374,
+     "ts": 1787700365.4048283
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 130.1679092152386,
+     "ts": 1787700366.6891804
+    },
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 4.820246048047039,
+     "ts": 1787700376.0561485
+    }
+   ],
+   "first_ts": 1787700360.4041848,
+   "usd": 1214.1344003330996
+  },
+  "G1iBvjhZ9wpGUZdQcvhRSqjow3x6xetsnmEBBMm1pump": {
+   "symbol": "PITCOIN",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 2.8,
+     "ts": 1787700362.2054849
+    }
+   ],
+   "first_ts": 1787700362.2054849,
+   "usd": 2.8
+  },
+  "GvUCjmWSXA5hrTh9smmNA1AU55YCtP9mDLQcrKA1pump": {
+   "symbol": "WSOLP",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.9,
+     "ts": 1787700362.205808
+    }
+   ],
+   "first_ts": 1787700362.205808,
+   "usd": 1.9
+  },
+  "5wckG7jpbGETPTnYUB1Hmxo9QNPumKSHKLUoEL6vpump": {
+   "symbol": "Frog",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 33.18285642446895,
+     "ts": 1787700365.404614
+    }
+   ],
+   "first_ts": 1787700365.404614,
+   "usd": 33.18285642446895
+  },
+  "CjeV6KEdkQu7Xm3ZjRRyuMKkuEzuBC44DtFFuNTfCxW1": {
+   "symbol": "Kody",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.790018552945284,
+     "ts": 1787700365.404744
+    }
+   ],
+   "first_ts": 1787700365.404744,
+   "usd": 28.790018552945284
+  },
+  "835Wrhosiz6fkzkkSfYoKGAZRZBCPixw2pEhMHT6pump": {
+   "symbol": "ret",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 127.80989041138395,
+     "ts": 1787700366.6888847
+    }
+   ],
+   "first_ts": 1787700366.6888847,
+   "usd": 255.6197808227679
+  },
+  "8y1JumKYy8YFpuZRcSUHRsR3ErokPSc7iNbrYPQBpump": {
+   "symbol": "BLOXTARDS",
+   "wallets": [
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.62643995233557,
+     "ts": 1787700369.6391947
+    }
+   ],
+   "first_ts": 1787700369.6391947,
+   "usd": 386.5057598093423
+  },
+  "CbnZkRVhSmnouGUBzL51y8eZ7xA4XEUJZkdmQtpepump": {
+   "symbol": "Pistachio",
+   "wallets": [
+    {
+     "w": "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W",
+     "usd": 140.94025257423957,
+     "ts": 1787700425.976076
+    }
+   ],
+   "first_ts": 1787700425.976076,
+   "usd": 704.7012628711979
+  },
+  "2j8ic8jVznyZF9PNvSSyoB2iEvL8L4urHUGgxyNupump": {
+   "symbol": "frog",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 119.25212825414691,
+     "ts": 1787700461.8813016
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 29.601926117091967,
+     "ts": 1787700463.9968407
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 100.66079278487518,
+     "ts": 1787700565.0862434
+    },
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 6.774860674019875,
+     "ts": 1787701086.2204933
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 74.33271410391151,
+     "ts": 1787701151.7609558
+    },
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.70438045699987,
+     "ts": 1787701152.938377
+    }
+   ],
+   "first_ts": 1787700461.8813016,
+   "usd": 2041.9157328984434
+  },
+  "FMYCDYagaivq2VU9QvCxzNT2xyGMQZhMmxHTq4EJpump": {
+   "symbol": "Perry",
+   "wallets": [
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 116.27848618349509,
+     "ts": 1787700462.3683634
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 26.150329586414507,
+     "ts": 1787700463.996419
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 124.34736409115897,
+     "ts": 1787700464.5819097
+    },
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 4.43973430309972,
+     "ts": 1787700467.122129
+    }
+   ],
+   "first_ts": 1787700462.3683634,
+   "usd": 693.7401127044456
+  },
+  "ApZuxdpzMrbEYTGEzeY9afh5pj9d6qPRJCTgQYiipbKg": {
+   "symbol": "CYBERLEEK",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 9.80093,
+     "ts": 1787700462.874324
+    }
+   ],
+   "first_ts": 1787700462.874324,
+   "usd": 23.402217999999998
+  },
+  "HBahip3uojgcaiPBnoV5VsiezJgNHJPX3V9dcWKypump": {
+   "symbol": "CateBank",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.781803392760718,
+     "ts": 1787700463.9966493
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 92.45594827421988,
+     "ts": 1787700507.5701208
+    }
+   ],
+   "first_ts": 1787700463.9966493,
+   "usd": 429.4201411352958
+  },
+  "Ckjepq24xaorEDE4fGRN1zFXchrUCVqhKzme8UbEpump": {
+   "symbol": "Pistachio",
+   "wallets": [
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.4787953085655309,
+     "ts": 1787700467.6450815
+    }
+   ],
+   "first_ts": 1787700467.6450815,
+   "usd": 1.4363859256965927
+  },
+  "FVLYKhLjZvyQpgWqbFy9w5pSafbXbtvwKUgy2W95pump": {
+   "symbol": "Bait",
+   "wallets": [
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.5163249394951264,
+     "ts": 1787700467.645432
+    }
+   ],
+   "first_ts": 1787700467.645432,
+   "usd": 1.548974818485379
+  },
+  "Bx7ZpwyJkyar31RyKDPini4kihB5CvFCKqYJGLV2pump": {
+   "symbol": "Lakpue",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.876337228467183,
+     "ts": 1787700509.2970393
+    }
+   ],
+   "first_ts": 1787700509.2970393,
+   "usd": 3.751870847744425
+  },
+  "GwV5DG3W8zB1XeW8khE8GLDVum3CLL995BKKo3Skpump": {
+   "symbol": "JV",
+   "wallets": [
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.59060041736748,
+     "ts": 1787700512.9836085
+    }
+   ],
+   "first_ts": 1787700512.9836085,
+   "usd": 289.7718012521025
+  },
+  "DJTneRsoVMw3FSN3dbeUf96AyKpRCLs1cPVUbJuXpump": {
+   "symbol": "Avacio",
+   "wallets": [
+    {
+     "w": "35caaJFwzSNaFwFmP1f33wDP9cUFEXTLDsFnjna7kAjs",
+     "usd": 38.67276485313037,
+     "ts": 1787700514.602874
+    }
+   ],
+   "first_ts": 1787700514.602874,
+   "usd": 154.69105941252147
+  },
+  "BQd7ai21DTr2c4BdGdCjg4enwWkJDW9iccL1P9bopump": {
+   "symbol": "ape",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8765029581011448,
+     "ts": 1787700556.1951518
+    }
+   ],
+   "first_ts": 1787700556.1951518,
+   "usd": 3.7527014112534114
+  },
+  "CvSYvdKz8ZrQCFFGT43EQsS6avqYjv8gADJ3zYHXpump": {
+   "symbol": "BOUNCE",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 116.34643984216407,
+     "ts": 1787700561.625944
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 92.69944870385464,
+     "ts": 1787700611.5508668
+    }
+   ],
+   "first_ts": 1787700561.625944,
+   "usd": 652.3766869845477
+  },
+  "Eiz3YJFjPrgXWjMs5AFJRob6XejE8ymMipwwQGKqs8F5": {
+   "symbol": "FROGE",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 76.56307541293403,
+     "ts": 1787700567.955272
+    }
+   ],
+   "first_ts": 1787700567.955272,
+   "usd": 76.56307541293403
+  },
+  "8EK9b8DbiqqLmKMDRiu9u7oMWefaWLqfeRzAFdXpump": {
+   "symbol": "OCB",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 61.868196287254925,
+     "ts": 1787700567.9555957
+    }
+   ],
+   "first_ts": 1787700567.9555957,
+   "usd": 61.868196287254925
+  },
+  "DyidQqHQvWv9r76bWY7H11uB5qnDE7GyDT7Hq1QCpump": {
+   "symbol": "CATS",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 130.08268004537248,
+     "ts": 1787700567.9564414
+    }
+   ],
+   "first_ts": 1787700567.9564414,
+   "usd": 130.08268004537248
+  },
+  "2pbt7zwqugqj1WzDL7pgpHBPvqhSrjxJkik3f6Fspump": {
+   "symbol": "Waddles",
+   "wallets": [
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.577241610639169,
+     "ts": 1787700575.1056101
+    },
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.20120324703498,
+     "ts": 1787700589.9884713
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 136.85673926648445,
+     "ts": 1787700598.6169302
+    },
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 114.1784337401002,
+     "ts": 1787700600.1403453
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 121.59357601974888,
+     "ts": 1787700610.0605204
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 111.96090069521215,
+     "ts": 1787700707.2761312
+    },
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 4.970090825047888,
+     "ts": 1787700799.8079333
+    }
+   ],
+   "first_ts": 1787700575.1056101,
+   "usd": 2931.9578286063065
+  },
+  "AdqoHD2S7bjFV9HgaKGpgx9dD1Ri2JKHmBpRCNYgpump": {
+   "symbol": "fwog",
+   "wallets": [
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.20120440143694,
+     "ts": 1787700589.9880962
+    }
+   ],
+   "first_ts": 1787700589.9880962,
+   "usd": 426.6036132043108
+  },
+  "4GNwcb7DsywLvHHzigLy31oVSyKH6TzTxXA1w6PDF8hL": {
+   "symbol": "Pax",
+   "wallets": [
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 110.6241175875952,
+     "ts": 1787700600.1408744
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 30.36854023766421,
+     "ts": 1787700608.845542
+    },
+    {
+     "w": "8yN4tH6X5VgJ7Tu9tPSKXK1g5cznr4W3hfKkGvJ5GSVE",
+     "usd": 38.342543252711145,
+     "ts": 1787700616.789494
+    },
+    {
+     "w": "35caaJFwzSNaFwFmP1f33wDP9cUFEXTLDsFnjna7kAjs",
+     "usd": 39.863295350511095,
+     "ts": 1787700618.0748231
+    },
+    {
+     "w": "7NAd2EpYGGeFofpyvgehSXhH5vg6Ry6VRMW2Y6jiqCu1",
+     "usd": 21.88204026658742,
+     "ts": 1787700624.8900688
+    },
+    {
+     "w": "FxN3VZ4BosL5urG2yoeQ156JSdmavm9K5fdLxjkPmaMR",
+     "usd": 24.399219653683417,
+     "ts": 1787700626.8456783
+    },
+    {
+     "w": "suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK",
+     "usd": 23.31212663457942,
+     "ts": 1787700627.5973911
+    },
+    {
+     "w": "2fg5QD1eD7rzNNCsvnhmXFm5hqNgwTTG8p7kQ6f3rx6f",
+     "usd": 25.30440825523079,
+     "ts": 1787700629.1443386
+    },
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.46144679304230457,
+     "ts": 1787700665.0456548
+    },
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 4.529952331732371,
+     "ts": 1787700799.8081503
+    }
+   ],
+   "first_ts": 1787700600.1408744,
+   "usd": 1133.9371956389878
+  },
+  "8cPtp8AmmU2fiHFCqFvNCdkkpai4YvkWNDorB9aFpump": {
+   "symbol": "NOLE",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8760493672247642,
+     "ts": 1787700601.0358114
+    }
+   ],
+   "first_ts": 1787700601.0358114,
+   "usd": 3.752467537653832
+  },
+  "7nCNHypymfyfX4aiL2otVH9ZLa7tcurNBdvWfASLc2Dw": {
+   "symbol": "PENGU",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 27.798336590076897,
+     "ts": 1787700608.8454206
+    },
+    {
+     "w": "8yN4tH6X5VgJ7Tu9tPSKXK1g5cznr4W3hfKkGvJ5GSVE",
+     "usd": 38.32195734459274,
+     "ts": 1787700616.7891192
+    }
+   ],
+   "first_ts": 1787700608.8454206,
+   "usd": 93.91863052474653
+  },
+  "CEx8suJjnszQrVxakjss8VHHo84TVrdUbJhAe6Aipump": {
+   "symbol": "Pax",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.828087911120036,
+     "ts": 1787700608.845713
+    },
+    {
+     "w": "8yN4tH6X5VgJ7Tu9tPSKXK1g5cznr4W3hfKkGvJ5GSVE",
+     "usd": 38.342543252711145,
+     "ts": 1787700616.7896895
+    },
+    {
+     "w": "7NAd2EpYGGeFofpyvgehSXhH5vg6Ry6VRMW2Y6jiqCu1",
+     "usd": 119.96751688245811,
+     "ts": 1787700624.8904977
+    },
+    {
+     "w": "FxN3VZ4BosL5urG2yoeQ156JSdmavm9K5fdLxjkPmaMR",
+     "usd": 107.27287001802767,
+     "ts": 1787700626.846069
+    },
+    {
+     "w": "suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK",
+     "usd": 127.09612561572028,
+     "ts": 1787700627.5978148
+    },
+    {
+     "w": "2fg5QD1eD7rzNNCsvnhmXFm5hqNgwTTG8p7kQ6f3rx6f",
+     "usd": 120.15246192241743,
+     "ts": 1787700629.1449318
+    },
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.421633629812649,
+     "ts": 1787700665.0457916
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 74.54730190016535,
+     "ts": 1787700746.4661946
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 116.48814821199682,
+     "ts": 1787700753.495681
+    }
+   ],
+   "first_ts": 1787700608.845713,
+   "usd": 3154.2989724706094
+  },
+  "AY6dVdZ7DQUGnh3BBhpoXmTvaRGQgsppKkPkfucppump": {
+   "symbol": "SpaceCat",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 22.324018,
+     "ts": 1787700703.2459762
+    }
+   ],
+   "first_ts": 1787700703.2459762,
+   "usd": 22.324018
+  },
+  "EvUbRtWfGmWxGG2eSqmftPHo7kDsjGt3uuYyQVhdpump": {
+   "symbol": "GREP",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 47.16255058684338,
+     "ts": 1787700708.4047122
+    }
+   ],
+   "first_ts": 1787700708.4047122,
+   "usd": 94.32510117368676
+  },
+  "HK8cYnHdWA58qUPz1zdoDssLvs7S7hTYyhk1CFvGpump": {
+   "symbol": "whimsymaxxing",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 76.13511991510926,
+     "ts": 1787700708.4048557
+    }
+   ],
+   "first_ts": 1787700708.4048557,
+   "usd": 152.27023983021851
+  },
+  "83RfCCAo1Qzh1kC2FMUpVTNTkDzBiLJA9chTn3JGpump": {
+   "symbol": "Waddles",
+   "wallets": [
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.72283828007733,
+     "ts": 1787700709.28049
+    }
+   ],
+   "first_ts": 1787700709.28049,
+   "usd": 290.168514840232
+  },
+  "56drQZaqRMWknJrcbRySwB748YNuVwsEU9uADdPipump": {
+   "symbol": "MARLO",
+   "wallets": [
+    {
+     "w": "35caaJFwzSNaFwFmP1f33wDP9cUFEXTLDsFnjna7kAjs",
+     "usd": 39.25922202079223,
+     "ts": 1787700711.1028478
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 30.675531683519363,
+     "ts": 1787700752.0259333
+    },
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.3745161578801,
+     "ts": 1787700773.485917
+    }
+   ],
+   "first_ts": 1787700711.1028478,
+   "usd": 463.8777617451756
+  },
+  "AhznN52PfwjCDqYN73aVqWHPbZfbs1YbxLbC25zCpump": {
+   "symbol": "MORTYKIRK",
+   "wallets": [
+    {
+     "w": "35caaJFwzSNaFwFmP1f33wDP9cUFEXTLDsFnjna7kAjs",
+     "usd": 35.182834581216134,
+     "ts": 1787700711.1030495
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 29.109172722430973,
+     "ts": 1787700752.0262313
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 137.8664603224542,
+     "ts": 1787700789.0567343
+    },
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.68661180205919,
+     "ts": 1787700847.5978327
+    },
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.47937485242858613,
+     "ts": 1787700858.0159256
+    },
+    {
+     "w": "2mB1TSgggG24mmih4WbS6dRzfL77v4MjktWfPi2dTe9U",
+     "usd": 142.31586546481012,
+     "ts": 1787701346.71719
+    }
+   ],
+   "first_ts": 1787700711.1030495,
+   "usd": 806.292178954099
+  },
+  "5mCb8YbHJVF6k899xY2BvW4EVZidfXTcuw66geqzpump": {
+   "symbol": "PISHOUSE",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 116.74647595269232,
+     "ts": 1787700753.4958055
+    },
+    {
+     "w": "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W",
+     "usd": 187.95102493178427,
+     "ts": 1787700762.4151053
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 77.17018951662706,
+     "ts": 1787700844.5858753
+    }
+   ],
+   "first_ts": 1787700753.4958055,
+   "usd": 1179.2137171018412
+  },
+  "21y35ZgRcSrHTYHEZxdPQ6vVZiv9agxKdkcmCMKipump": {
+   "symbol": "FEET",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.87684200020017,
+     "ts": 1787700790.6246352
+    }
+   ],
+   "first_ts": 1787700790.6246352,
+   "usd": 1.87684200020017
+  },
+  "FS5Y6q6hXiAeH5nyzA2L6qWEn8yiqbBTdGZwzaxrSLN9": {
+   "symbol": "X",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 87.97411297813476,
+     "ts": 1787700795.6350858
+    }
+   ],
+   "first_ts": 1787700795.6350858,
+   "usd": 87.97411297813476
+  },
+  "6FAsm1w3foohrteNWJpWi2szPCfnF4xGNKtNkxMVpump": {
+   "symbol": "Kim",
+   "wallets": [
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.65685442781495,
+     "ts": 1787700796.365219
+    }
+   ],
+   "first_ts": 1787700796.365219,
+   "usd": 289.97056328344485
+  },
+  "BigAz8y8svGv1GyD5GLpRGE2RtSps7hVN6B4Mpxopump": {
+   "symbol": "DOGGO",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 63.30493878116433,
+     "ts": 1787700838.197985
+    },
+    {
+     "w": "8yN4tH6X5VgJ7Tu9tPSKXK1g5cznr4W3hfKkGvJ5GSVE",
+     "usd": 38.300016948650985,
+     "ts": 1787700853.325734
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 75.2309500859673,
+     "ts": 1787700892.1108937
+    },
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 125.39186206534943,
+     "ts": 1787701084.846115
+    },
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 4.888066459757723,
+     "ts": 1787701100.2970088
+    },
+    {
+     "w": "EEb8qt7ZRvjimM19NBGjBvsnGX2sUQYvpZT5a4jXeTKZ",
+     "usd": 87.34701284101642,
+     "ts": 1787701287.8734338
+    },
+    {
+     "w": "EXueF6jatgRR3Dneof9ipvNxKnuAGM5HKZefUs8Ue3zJ",
+     "usd": 99.20893478471004,
+     "ts": 1787701290.4500802
+    }
+   ],
+   "first_ts": 1787700838.197985,
+   "usd": 1684.0605819221485
+  },
+  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN": {
+   "symbol": "JUP",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.7564254152317296,
+     "ts": 1787700840.2699504
+    }
+   ],
+   "first_ts": 1787700840.2699504,
+   "usd": 1.7564254152317296
+  },
+  "CfrQ31sqp48buoYhMNtZS42yMzhL2k85aNPntfhipump": {
+   "symbol": "SPACECENTER",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8759053702742796,
+     "ts": 1787700840.2701793
+    }
+   ],
+   "first_ts": 1787700840.2701793,
+   "usd": 1.8759053702742796
+  },
+  "HkogsimP2oPkPbPrGmimbydeeymXTkaUtgFd3ZBcpump": {
+   "symbol": "\u30b9\u30ed\u30f3",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.79599740026071,
+     "ts": 1787700842.0175645
+    }
+   ],
+   "first_ts": 1787700842.0175645,
+   "usd": 28.79599740026071
+  },
+  "BnW4KzJqNf5sLhdPqsjZLC661g95cXk68Wc1nc1upump": {
+   "symbol": "NOFE",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 116.3327354383172,
+     "ts": 1787700843.3795688
+    },
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 109.17055655696505,
+     "ts": 1787700882.0864396
+    },
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.18823645180456,
+     "ts": 1787701025.0051003
+    },
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 5.187825084953672,
+     "ts": 1787701100.296775
+    }
+   ],
+   "first_ts": 1787700843.3795688,
+   "usd": 1091.7594992736674
+  },
+  "6bcRsAHC9uUikmV27BBaMsuTR77TKEwYjV83tUmTpump": {
+   "symbol": "ZOLAR",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 114.16330188006532,
+     "ts": 1787700846.2082942
+    }
+   ],
+   "first_ts": 1787700846.2082942,
+   "usd": 114.16330188006532
+  },
+  "8YVakcmrbeaZUJtpc1ifFjkUKNYLJvXXH6suuFSYpump": {
+   "symbol": "BULLY",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 80.89735615560339,
+     "ts": 1787700846.2087548
+    }
+   ],
+   "first_ts": 1787700846.2087548,
+   "usd": 80.89735615560339
+  },
+  "FeGQmBSgrVjjYMRRds6pMXJ9HwxLMddwfPSEQxnzpump": {
+   "symbol": "Frogcat",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 107.9307700465704,
+     "ts": 1787700880.5010386
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 116.34107299277188,
+     "ts": 1787700889.5426269
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 121.56194737715576,
+     "ts": 1787700892.11066
+    }
+   ],
+   "first_ts": 1787700880.5010386,
+   "usd": 1244.5471505309326
+  },
+  "69PcfUNvqhJagdfjoW2CyWr5qUKWxvtnqXqofTa9pump": {
+   "symbol": "Po",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 53.202696237954406,
+     "ts": 1787700893.4460592
+    }
+   ],
+   "first_ts": 1787700893.4460592,
+   "usd": 53.202696237954406
+  },
+  "4MFC7Y7kgwNVfErZARiLsG8jRpgCPbxGnFQGbJo5pump": {
+   "symbol": "DOGGO",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 66.9180180856025,
+     "ts": 1787700933.6575108
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 66.37347169905907,
+     "ts": 1787700999.1469815
+    }
+   ],
+   "first_ts": 1787700933.6575108,
+   "usd": 133.29148978466156
+  },
+  "9Pfync3ejPC9eHqVzq3nYQJAhyhjqpnB9UsaSfLxpump": {
+   "symbol": "KET",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 18.517445784299518,
+     "ts": 1787700938.6855106
+    }
+   ],
+   "first_ts": 1787700938.6855106,
+   "usd": 18.517445784299518
+  },
+  "2ht8oSnvuj8ivmvLuBtN8UArwpENfo1T9NFcBqQ1P7zT": {
+   "symbol": "NiuLai",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8769208889684843,
+     "ts": 1787700938.68568
+    }
+   ],
+   "first_ts": 1787700938.68568,
+   "usd": 1.8769208889684843
+  },
+  "8pacTPhnbeiYJLKTtRDxgbFvqsqDxPagrkJ6yB8jpump": {
+   "symbol": "lickcat",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8769208889684843,
+     "ts": 1787700938.6857884
+    }
+   ],
+   "first_ts": 1787700938.6857884,
+   "usd": 1.8769208889684843
+  },
+  "AsTGW9RZCz4PyjxFHsFKDvSpZGmj4pCSL3UfuLEYpump": {
+   "symbol": "GUCCIKIRK",
+   "wallets": [
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 105.42713218099333,
+     "ts": 1787700949.686949
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 88.19448970743281,
+     "ts": 1787701083.504156
+    }
+   ],
+   "first_ts": 1787700949.686949,
+   "usd": 381.218415890251
+  },
+  "Dx3CLhc47rCUBQ13tL9HpdppwBDTjK8wBkEvHxwipump": {
+   "symbol": "MaDukes",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 61.20267851565732,
+     "ts": 1787700951.1670718
+    }
+   ],
+   "first_ts": 1787700951.1670718,
+   "usd": 61.20267851565732
+  },
+  "AGEFyvcUNVvR26cSSxtKxnTuunKPuriPaD2LJyvopump": {
+   "symbol": "NOFE",
+   "wallets": [
+    {
+     "w": "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W",
+     "usd": 187.66845215163428,
+     "ts": 1787700956.4649818
+    }
+   ],
+   "first_ts": 1787700956.4649818,
+   "usd": 563.0053564549029
+  },
+  "GDs8cNSezgYJf7uVg9hubS7TsTA8kHNgSs2i99bxpump": {
+   "symbol": "Wiggles",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8760523709578323,
+     "ts": 1787700995.4087145
+    }
+   ],
+   "first_ts": 1787700995.4087145,
+   "usd": 1.8760523709578323
+  },
+  "9Y3fY1kwYUTgLwBU7DZKkEwCsZYj3BrXQNP74ZNEpump": {
+   "symbol": "SMOLCAT",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 2.7987063213427854,
+     "ts": 1787700995.4089108
+    }
+   ],
+   "first_ts": 1787700995.4089108,
+   "usd": 2.7987063213427854
+  },
+  "4HtdcGyHWQvNRPqyCMW3E69DD1WEDpe2cSc54bjrpump": {
+   "symbol": "Pistachio",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 30.027771968244636,
+     "ts": 1787700996.7500513
+    }
+   ],
+   "first_ts": 1787700996.7500513,
+   "usd": 30.027771968244636
+  },
+  "J8Ty4b3ooiSqw7ghefaeWirDZZbqhyneqd49C1ropump": {
+   "symbol": "crog",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 32.82924001856259,
+     "ts": 1787700996.7502286
+    },
+    {
+     "w": "EEb8qt7ZRvjimM19NBGjBvsnGX2sUQYvpZT5a4jXeTKZ",
+     "usd": 138.76165717704347,
+     "ts": 1787701287.8736966
+    },
+    {
+     "w": "EXueF6jatgRR3Dneof9ipvNxKnuAGM5HKZefUs8Ue3zJ",
+     "usd": 123.36577812865532,
+     "ts": 1787701290.4505577
+    }
+   ],
+   "first_ts": 1787700996.7502286,
+   "usd": 557.0841106299602
+  },
+  "9FjqKW1rZmRT2huETfr43vKMRtmf9FEqnJrBZnavpump": {
+   "symbol": "bounce",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.799626688087315,
+     "ts": 1787700996.7503698
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 90.286403265616,
+     "ts": 1787700999.1474354
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 86.82324101156816,
+     "ts": 1787701083.5039635
+    }
+   ],
+   "first_ts": 1787700996.7503698,
+   "usd": 234.7088976533588
+  },
+  "2Dk4LGvYc1e2gkdwvLRR436pANMqX72csupDPEZkpump": {
+   "symbol": "CWS",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 115.55157969217784,
+     "ts": 1787700997.8873675
+    }
+   ],
+   "first_ts": 1787700997.8873675,
+   "usd": 462.20631876871136
+  },
+  "EzijGgbuBXhUqu7dBGkKRytTk6TCMR4Uzr2DnNAvpump": {
+   "symbol": "Feg",
+   "wallets": [
+    {
+     "w": "8yN4tH6X5VgJ7Tu9tPSKXK1g5cznr4W3hfKkGvJ5GSVE",
+     "usd": 38.30520642634558,
+     "ts": 1787701001.0561454
+    }
+   ],
+   "first_ts": 1787701001.0561454,
+   "usd": 114.91561927903673
+  },
+  "EXfooXAQPEfmYdNTX2SVsLDYmmjyn5xzZj85a1Wdpump": {
+   "symbol": "PokerGrok",
+   "wallets": [
+    {
+     "w": "35caaJFwzSNaFwFmP1f33wDP9cUFEXTLDsFnjna7kAjs",
+     "usd": 38.672245169228646,
+     "ts": 1787701001.8952699
+    }
+   ],
+   "first_ts": 1787701001.8952699,
+   "usd": 154.68898067691458
+  },
+  "37Tp5kxFhCupfAbY5ivpfACYSqpzVqT1vL23FAKxpump": {
+   "symbol": "SIGOLI",
+   "wallets": [
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.4788149264052338,
+     "ts": 1787701002.993464
+    }
+   ],
+   "first_ts": 1787701002.993464,
+   "usd": 1.4364447792157016
+  },
+  "CppRucHiofQLuCyBBfWfHWwUJ41qxvqTbmrpMV77pump": {
+   "symbol": "PILL",
+   "wallets": [
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.19895664119022,
+     "ts": 1787701025.0053046
+    }
+   ],
+   "first_ts": 1787701025.0053046,
+   "usd": 426.5968699235707
+  },
+  "81o8ZSoPyfA24CYRKu2zVeLuMZWjorP5Rq5YFKnopump": {
+   "symbol": "Mac",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 75.11944649898328,
+     "ts": 1787701039.9532528
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 84.92290299035562,
+     "ts": 1787701094.528145
+    }
+   ],
+   "first_ts": 1787701039.9532528,
+   "usd": 160.0423494893389
+  },
+  "2GxvbRfN18J4ijYWnEBrXob5tGJxkW9cQmaYkmUXpump": {
+   "symbol": "MARLO",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 22.28280316659496,
+     "ts": 1787701054.081341
+    },
+    {
+     "w": "35caaJFwzSNaFwFmP1f33wDP9cUFEXTLDsFnjna7kAjs",
+     "usd": 38.72889892903626,
+     "ts": 1787701098.8357031
+    }
+   ],
+   "first_ts": 1787701054.081341,
+   "usd": 160.7523031202987
+  },
+  "HNety7pjL2nAyrjt472G27YJdCNdgASARj347CMpump": {
+   "symbol": "Frogcat",
+   "wallets": [
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 90.27778225895713,
+     "ts": 1787701056.9355326
+    }
+   ],
+   "first_ts": 1787701056.9355326,
+   "usd": 90.27778225895713
+  },
+  "DyH4HXDEWiAFf1RuWjtm5azZcpgh4XrbEtkpRWPopump": {
+   "symbol": "CRASHOUT",
+   "wallets": [
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 99.7232578102732,
+     "ts": 1787701059.2870753
+    }
+   ],
+   "first_ts": 1787701059.2870753,
+   "usd": 99.7232578102732
+  },
+  "4pPf9SDKs6ZU8zbM2BMy5tZsgfF6gHDqyEhvmcTrpump": {
+   "symbol": "NOFE",
+   "wallets": [
+    {
+     "w": "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W",
+     "usd": 187.78577094286754,
+     "ts": 1787701069.3882558
+    }
+   ],
+   "first_ts": 1787701069.3882558,
+   "usd": 375.5715418857351
+  },
+  "3AZdzR7wVJY1HCs9Xh7N4Gsm67A7Zoni2LR4yh92pump": {
+   "symbol": "Kero",
+   "wallets": [
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.19578540453423,
+     "ts": 1787701080.973261
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.797526216065755,
+     "ts": 1787701088.964813
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 119.50291292704416,
+     "ts": 1787701145.5889754
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 64.35316056575488,
+     "ts": 1787701255.9905946
+    }
+   ],
+   "first_ts": 1787701080.973261,
+   "usd": 758.5586494347895
+  },
+  "XSTuo1fV7HHMhs4BYiwtrWSLsMCJNrooH2AssWTYZqP": {
+   "symbol": "XST",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 7.39399,
+     "ts": 1787701086.220928
+    }
+   ],
+   "first_ts": 1787701086.220928,
+   "usd": 7.39399
+  },
+  "LYtm2VBLdWJ5DgCuaY16W16WyqJgKHoPBgmNHigpump": {
+   "symbol": "Chudded",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 30.008632055776314,
+     "ts": 1787701088.9647348
+    }
+   ],
+   "first_ts": 1787701088.9647348,
+   "usd": 60.01726411155263
+  },
+  "D3nK8u4onZUydi3XSa3CKdSxV2sthDzp2KMAUHkbpump": {
+   "symbol": "Nofe",
+   "wallets": [
+    {
+     "w": "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W",
+     "usd": 141.60227262225507,
+     "ts": 1787701115.8783793
+    }
+   ],
+   "first_ts": 1787701115.8783793,
+   "usd": 141.60227262225507
+  },
+  "8wpWpXtXgiGqRYERWa4Ns3Ydu8mzu2u18sqqHsJCpump": {
+   "symbol": "Choad",
+   "wallets": [
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.20122739182935,
+     "ts": 1787701134.6565642
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 90.70789829455492,
+     "ts": 1787701136.6764848
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.76550827313275,
+     "ts": 1787701142.9200196
+    },
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 169.0776731254835,
+     "ts": 1787701255.990293
+    },
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.67838109522201,
+     "ts": 1787701261.2781157
+    },
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 19.600002,
+     "ts": 1787701297.6909423
+    }
+   ],
+   "first_ts": 1787701134.6565642,
+   "usd": 1020.8744623885283
+  },
+  "HjL7VwEPXjLgEuCY3fY8pVpMsRcGKfL6vXkxR7iFpump": {
+   "symbol": "CAGE",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8762871761033157,
+     "ts": 1787701140.166265
+    }
+   ],
+   "first_ts": 1787701140.166265,
+   "usd": 1.8762871761033157
+  },
+  "AeYDu41dMnWdcaU5cgVM8gkRmvBaj9tWyk6XdDmapump": {
+   "symbol": "Jade",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.8762878548581325,
+     "ts": 1787701140.1665998
+    }
+   ],
+   "first_ts": 1787701140.1665998,
+   "usd": 1.8762878548581325
+  },
+  "DiEb9r1GWyYFHYYQvjKsvjz7KPXpfNXsTv4PnUuspump": {
+   "symbol": "Sassy",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 115.80600430494025,
+     "ts": 1787701145.5891087
+    }
+   ],
+   "first_ts": 1787701145.5891087,
+   "usd": 115.80600430494025
+  },
+  "5hz1BGbSnjPd62p4L7sYmqvJUVUWxkSYTJqnyBQfpump": {
+   "symbol": "ASCEND",
+   "wallets": [
+    {
+     "w": "BFkVZiBz8WTTWBXVhMEAN2kGXBVpbLVEdRT99TUxKTy8",
+     "usd": 4.672407382370705,
+     "ts": 1787701158.4482944
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 34.2992557673039,
+     "ts": 1787701238.2738667
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 109.24307144132928,
+     "ts": 1787701253.8195505
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 117.48931695413404,
+     "ts": 1787701294.4151492
+    },
+    {
+     "w": "CCCCQCrL6zVjnDeucDzcxJgxAs5ahNmrhw1CDexPhqrd",
+     "usd": 121.59431518576761,
+     "ts": 1787701295.7694986
+    }
+   ],
+   "first_ts": 1787701158.4482944,
+   "usd": 391.9707741132762
+  },
+  "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij": {
+   "symbol": "cbBTC",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 36.902046,
+     "ts": 1787701223.1963274
+    }
+   ],
+   "first_ts": 1787701223.1963274,
+   "usd": 36.902046
+  },
+  "3HbXEE93bhFij2TsQ1Ex8QcBNVrvaMgot31NQTJYpump": {
+   "symbol": "popfrog",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 32.45566228564426,
+     "ts": 1787701238.274213
+    }
+   ],
+   "first_ts": 1787701238.274213,
+   "usd": 32.45566228564426
+  },
+  "CE59zjm8SpXAUQy7zU7EkriadyPbKuckoXkNtFfopump": {
+   "symbol": "PISSTACIO",
+   "wallets": [
+    {
+     "w": "35caaJFwzSNaFwFmP1f33wDP9cUFEXTLDsFnjna7kAjs",
+     "usd": 38.672334679887165,
+     "ts": 1787701263.860469
+    },
+    {
+     "w": "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W",
+     "usd": 281.31816643710283,
+     "ts": 1787701273.1390042
+    }
+   ],
+   "first_ts": 1787701263.860469,
+   "usd": 319.99050111699
+  },
+  "DqTTfAiK6QgbfTebempyBa62Sy6YkSXf5BeNXVnupump": {
+   "symbol": "CAPYDARAM",
+   "wallets": [
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.4735074350506347,
+     "ts": 1787701266.982338
+    }
+   ],
+   "first_ts": 1787701266.982338,
+   "usd": 0.9470148701012694
+  },
+  "9zV8dMSVxFJsaKC6v1ETVxq4ojcJ1BA11sRwupBQpump": {
+   "symbol": "KET",
+   "wallets": [
+    {
+     "w": "7naFFwuEJWeWwWYQUkgAWHsxYKg3KctEuUj42JdAMidP",
+     "usd": 387.82146581736237,
+     "ts": 1787701268.604077
+    },
+    {
+     "w": "5wz9yJ3UtRXWDF1d2uf3ZwNZF9hbFUdaERxZhgdPoCp8",
+     "usd": 222.99734284498334,
+     "ts": 1787701270.0876012
+    },
+    {
+     "w": "Eqpkom7SbqiUNZnD6bJdo8zD7pcLfCCZSggmrGT8Mpma",
+     "usd": 281.1705627175877,
+     "ts": 1787701271.6748354
+    }
+   ],
+   "first_ts": 1787701268.604077,
+   "usd": 1153.768860806653
+  },
+  "ABMoq97oTfL5zSFjQswmL5bcQDiBCdooxkeWahX8pump": {
+   "symbol": "VDM",
+   "wallets": [
+    {
+     "w": "7naFFwuEJWeWwWYQUkgAWHsxYKg3KctEuUj42JdAMidP",
+     "usd": 387.84027252067324,
+     "ts": 1787701268.604601
+    },
+    {
+     "w": "5wz9yJ3UtRXWDF1d2uf3ZwNZF9hbFUdaERxZhgdPoCp8",
+     "usd": 223.0081566993871,
+     "ts": 1787701270.0889418
+    },
+    {
+     "w": "Eqpkom7SbqiUNZnD6bJdo8zD7pcLfCCZSggmrGT8Mpma",
+     "usd": 281.1841975774881,
+     "ts": 1787701271.675487
+    }
+   ],
+   "first_ts": 1787701268.604601,
+   "usd": 1153.8248107490028
+  },
+  "DFEV5EVwYRRbo5AMGnK9b1AX5bDcGAWY5n2YGwtLpump": {
+   "symbol": "MEME1921",
+   "wallets": [
+    {
+     "w": "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W",
+     "usd": 140.79761651640976,
+     "ts": 1787701273.1395001
+    }
+   ],
+   "first_ts": 1787701273.1395001,
+   "usd": 140.79761651640976
+  },
+  "FwmqpHvo5vXXRBcHSckbHConXjy9T7rUZy9paevfpump": {
+   "symbol": "frok",
+   "wallets": [
+    {
+     "w": "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W",
+     "usd": 174.79128450926115,
+     "ts": 1787701273.139934
+    }
+   ],
+   "first_ts": 1787701273.139934,
+   "usd": 349.5825690185223
+  },
+  "EB58A6i2zoLKmkwUMHvVzX1sXnu9nWUWnQ6nnnJypump": {
+   "symbol": "longboi",
+   "wallets": [
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.20945318359878,
+     "ts": 1787701291.6584923
+    }
+   ],
+   "first_ts": 1787701291.6584923,
+   "usd": 142.20945318359878
+  },
+  "9MEzaCMPbUofnBtFcpkRr3nEUNwe6rKhrLVWVubrpump": {
+   "symbol": "PISTACHIO",
+   "wallets": [
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.16642390117116,
+     "ts": 1787701291.6589274
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 28.791579917021547,
+     "ts": 1787701302.5654712
+    }
+   ],
+   "first_ts": 1787701291.6589274,
+   "usd": 199.74958373521426
+  },
+  "GyxH9VDZCpWsnUWTLF1n16fhSj1drR7xcgKuGUh7pump": {
+   "symbol": "PISTACHIO",
+   "wallets": [
+    {
+     "w": "77WSGv1bTtWG9cp998ZF43YZQmtqU9QRawVfFsjxxro2",
+     "usd": 142.16642390117116,
+     "ts": 1787701291.659398
+    },
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 29.423211768270182,
+     "ts": 1787701302.5657618
+    },
+    {
+     "w": "HfaSGMTLSfQc1NuKy46Ma8t5VoNKSESsam1ncdhFP9Jr",
+     "usd": 0.4934514183947851,
+     "ts": 1787701319.041774
+    },
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 125.68284649688094,
+     "ts": 1787701353.366079
+    },
+    {
+     "w": "kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf",
+     "usd": 54.92969842153895,
+     "ts": 1787701354.4521916
+    },
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.59126965730424,
+     "ts": 1787701354.9202375
+    }
+   ],
+   "first_ts": 1787701291.659398,
+   "usd": 478.71011343183045
+  },
+  "8CfMGsD2tEp8DN1xJ1FhSgx144c2AhqMDytJeew9pump": {
+   "symbol": "IVY",
+   "wallets": [
+    {
+     "w": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+     "usd": 1.9,
+     "ts": 1787701297.6906445
+    }
+   ],
+   "first_ts": 1787701297.6906445,
+   "usd": 1.9
+  },
+  "H1oML25Ye1aWdtwWaQKF8yqBDYtnKXt4o1DTxFR2pump": {
+   "symbol": "GrokP",
+   "wallets": [
+    {
+     "w": "AUrkH8jWtG7our71fSYqCp524BAJuf5Tampe267wfyFA",
+     "usd": 23.572249131574015,
+     "ts": 1787701302.5659628
+    }
+   ],
+   "first_ts": 1787701302.5659628,
+   "usd": 47.14449826314803
+  },
+  "F6TPBsPAygNNQeGDWnQZdjQJT1McCBVZwmE43poHpump": {
+   "symbol": "frok",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 115.60922958137832,
+     "ts": 1787701304.0040271
+    }
+   ],
+   "first_ts": 1787701304.0040271,
+   "usd": 231.21845916275663
+  },
+  "25A2cXhKNNF7wrBQkFaWrPV7LoYqcZmusHigaHQ8pump": {
+   "symbol": "PISS",
+   "wallets": [
+    {
+     "w": "9999huSCf6QpepPHQVFLZ9smhsbwkV4XWPLboiy9qqRj",
+     "usd": 116.31798334167078,
+     "ts": 1787701304.0045636
+    }
+   ],
+   "first_ts": 1787701304.0045636,
+   "usd": 232.63596668334156
+  },
+  "446r2sECoXgaYFuGUNLYxJTBqPay8ZUaD7FkK2a5pump": {
+   "symbol": "CAPYDARAM",
+   "wallets": [
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 141.18057982947732,
+     "ts": 1787701305.3302279
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 137.72478451796698,
+     "ts": 1787701350.5503898
+    }
+   ],
+   "first_ts": 1787701305.3302279,
+   "usd": 278.90536434744433
+  },
+  "FCum2wadS9VpoJ14DtQSWqKdAKG2jcW6rj2V9whipump": {
+   "symbol": "Daumen",
+   "wallets": [
+    {
+     "w": "SQHK48QT8SY1vYN44iXji7wQ6CJek8AjfX6mBp47TZq",
+     "usd": 81.82215188476643,
+     "ts": 1787701305.3309522
+    },
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 83.67874639515905,
+     "ts": 1787701350.5500546
+    }
+   ],
+   "first_ts": 1787701305.3309522,
+   "usd": 334.4963648584205
+  },
+  "6yKuuG6T8gZRQ7yaQjpkBzY2oKkDTTSy3EfXMzThpump": {
+   "symbol": "PUNCH",
+   "wallets": [
+    {
+     "w": "3SkBCx49BsK64h6tssBBJZ1WNvpiLdnhnXNmJtP46d7b",
+     "usd": 96.67114888730741,
+     "ts": 1787701311.7302759
+    }
+   ],
+   "first_ts": 1787701311.7302759,
+   "usd": 193.34229777461482
+  },
+  "2i473jpRZivoUSybdwcpUwUvXpXj8YGQNMsJjjCTpump": {
+   "symbol": "pistachio",
+   "wallets": [
+    {
+     "w": "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz",
+     "usd": 100.86135718620432,
+     "ts": 1787701350.549766
+    }
+   ],
+   "first_ts": 1787701350.549766,
+   "usd": 100.86135718620432
+  },
+  "FYCsfSsYR9zowCoXK6hySUjszUq3STSXNrJYUPYcpump": {
+   "symbol": "Frankie",
+   "wallets": [
+    {
+     "w": "FiFawHqxeTVBhv6YbqbLwDVuvokRpPUM1bNwAyxhGc6W",
+     "usd": 140.80926231283627,
+     "ts": 1787701357.5280647
+    }
+   ],
+   "first_ts": 1787701357.5280647,
+   "usd": 140.80926231283627
+  }
+ }
+}

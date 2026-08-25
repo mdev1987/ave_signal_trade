@@ -183,6 +183,13 @@ class SmartWalletWatcher:
             return []
 
     # ------------------------------------------------------------ processing
+    async def process_now(self, wallet: str) -> None:
+        """Decode a wallet's latest swaps now (push/webhook entrypoint)."""
+        swaps = await self.wallet_swaps(wallet)
+        buys = extract_buy(swaps, after_ts=0.0)
+        for b in reversed(buys):  # oldest first
+            self._process_buy(wallet, b)
+
     async def _sweep_wallet(self, wallet: str) -> None:
         res = await self.helius("getSignaturesForAddress",
                                 [wallet, {"limit": 3}])
