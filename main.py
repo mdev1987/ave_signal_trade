@@ -43,6 +43,7 @@ import filter as filt
 import logs
 import parser as parser_mod
 from dexscreener import DexScreenerClient
+from debot import DeBotClient
 from filter import filter_signals
 from jupiter_swap import JupiterError, JupiterSwap
 from models import FILTER
@@ -276,6 +277,19 @@ async def _trade_loop(
         if s.pool_check_enabled
         else None
     )
+    debot = (
+        DeBotClient(
+            enabled=s.debot_enabled,
+            base_url=s.debot_base_url,
+            timeout_s=s.debot_timeout_s,
+            min_interval_s=s.debot_min_interval_s,
+            cache_ttl_s=s.debot_cache_ttl_s,
+        )
+        if s.debot_enabled
+        else None
+    )
+    if debot is not None:
+        asyncio.create_task(debot.warmup())
     rug_checker = (
         RugChecker(
             api_key=s.rugcheck_api_key,
@@ -360,6 +374,7 @@ async def _trade_loop(
         take_profit=s.take_profit, stop_loss=s.stop_loss, timeout_s=s.timeout_s,
         pool_checker=pool_checker,
         rug_checker=rug_checker,
+        debot=debot,
         entry_latency_s=s.entry_latency_s,
         max_entry_mult=s.max_entry_mult,
         max_entry_peak_pct=s.max_entry_peak_pct,

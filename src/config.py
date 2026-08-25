@@ -139,6 +139,12 @@ class Settings:
     ca_mismatch_policy: str = "link"
     # DexPaprika requests/minute cap (free tier: 15 keyless, 30 with key).
     dexpaprika_rpm: int = 14
+    # DeBot.ai community-signal enrichment (journal-only supplementary oracle).
+    debot_enabled: bool = True
+    debot_base_url: str = "https://debot.ai"
+    debot_timeout_s: float = 12.0
+    debot_min_interval_s: float = 1.5
+    debot_cache_ttl_s: float = 45.0
     liq_confirm_window_s: float = 10.0     # how long to retry the DexPaprika check
     # Curve-phase fallback: admit `...pump` mints with no indexed external
     # pool yet when the PumpAPI stream shows fresh trading activity (oracle 2)
@@ -289,6 +295,12 @@ class Settings:
                 lambda v: v if v in ("skip", "link", "mint") else "link"
             )(get(env, "CA_MISMATCH_POLICY", "link").strip().lower()),
             dexpaprika_rpm=get_int(env, "DEXPAPRIKA_RPM", 14),
+            debot_enabled=get(env, "DEBOT_ENABLED", "true").strip().lower()
+            not in ("0", "false", "no"),
+            debot_base_url=get(env, "DEBOT_BASE_URL", "https://debot.ai"),
+            debot_timeout_s=get_float(env, "DEBOT_TIMEOUT_S", 12.0),
+            debot_min_interval_s=get_float(env, "DEBOT_MIN_INTERVAL_S", 1.5),
+            debot_cache_ttl_s=get_float(env, "DEBOT_CACHE_TTL_S", 45.0),
             liq_confirm_window_s=get_float(env, "LIQ_CONFIRM_WINDOW_S", 10.0),
             pool_curve_fallback=get_bool(env, "POOL_CURVE_FALLBACK", True),
             curve_stream_max_age_s=get_float(env, "CURVE_STREAM_MAX_AGE_S", 90.0),
@@ -388,6 +400,7 @@ class Settings:
             ("MAX_ENTRY_PX", f"{self.max_entry_px:g}"),
             ("CA_MISMATCH_POLICY", self.ca_mismatch_policy),
             ("DEXPAPRIKA_RPM", str(self.dexpaprika_rpm)),
+            ("DEBOT_ENABLED", str(self.debot_enabled).lower()),
             ("PRICE_STALE_S", f"{self.price_stale_s:g}"),
             ("TIMEOUT_STALE_GRACE_S", f"{self.timeout_stale_grace_s:g}"),
             ("MAX_TICK_MULT", f"{self.max_tick_mult:g}"),

@@ -107,6 +107,7 @@ class PaperTrader:
         timeout_s: float = 3600.0,
         pool_checker: PoolChecker | None = None,
         rug_checker: RugChecker | None = None,
+        debot: Any | None = None,
         entry_latency_s: float = 2.0,
         max_entry_mult: float = 5.0,
         max_entry_peak_pct: float = 0.0,
@@ -144,6 +145,9 @@ class PaperTrader:
         self.timeout_s = timeout_s
         self.pool_checker = pool_checker
         self.rug_checker = rug_checker
+        # Supplementary DeBot.ai enrichment (journal-only; None-safe).
+        self.debot = debot
+        self._debot_info: dict[str, dict[str, Any]] = {}
         self.entry_latency_s = entry_latency_s
         self.max_entry_mult = max_entry_mult
         self.max_entry_peak_pct = max_entry_peak_pct
@@ -888,6 +892,10 @@ class PaperTrader:
                 "sec_score": sig.sec_score if sig else None,
                 "source": sig.source if sig else None,
                 "alt_cas": list(sig.alt_cas) if (sig and sig.alt_cas) else None,
+                **({
+                    f"debot_{k}": v
+                    for k, v in (self._debot_info.get(mint) or {}).items()
+                }),
             }
             feat.update({k: v for k, v in gate_meta.items()})
             if self.rug_checker is not None:
@@ -1048,6 +1056,27 @@ class PaperTrader:
         # NOTE: Jupiter validation (buy quote, stability, sell quote) is NOT
         # done here anymore. It runs at the ENTRY MOMENT in on_event() so the
         # validated order IS the executed order — see _validated_entry().
+        # DeBot.ai crowd-signal enrichment (best-effort, journal-only): how
+        # many tracked channels are calling this token RIGHT NOW (5m window)
+        # and whether past calls of it pumped. Never gates the trade.
+        if self.debot is not None:
+            try:
+                buzz = await asyncio.wait_for(
+                    self.debot.token_buzz(sig.ca), timeout=12.0
+                )
+            except (TimeoutError, Exception):  # noqa: BLE001
+                buzz = None
+            if buzz:
+                self._debot_info[sig.ca] = buzz
+                logs.journal("debot", ca=sig.ca, **buzz)
+                logger.info(
+                    "DEBOT %s (%s): channels_5m=%s heat=%s gain=%s%% level=%s",
+                    sig.ca[:10], sig.name,
+                    buzz.get("rank_channels_5m"),
+                    buzz.get("heat_signal_count"),
+                    buzz.get("max_price_gain_pct"),
+                    buzz.get("token_level"),
+                )
         self._signals_seen.add(sig.ca)
         self._signals_info[sig.ca] = sig
         self._names[sig.ca] = sig.name
