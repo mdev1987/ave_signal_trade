@@ -2,15 +2,19 @@
 
 Liquidity oracle cascade (first decisive answer wins):
 
-1. **DexPaprika** pool search — the historical gate. An explicit liquidity
-   number is decisive (>= min passes, < min rejects).
-2. **PumpAPI stream state** — zero-latency, already subscribed. For
+1. **PumpAPI stream state** — zero-latency, already subscribed. For
    curve-phase pump.fun mints (`...pump`) with no indexed external pool yet,
    fresh stream activity proves the token is trading RIGHT NOW on its
    bonding curve, whose liquidity is mathematical (an LP-pull rug is
    impossible pre-graduation). This catches the graduation-minute race that
    fail-closed DexPaprika used to lose (WOFI, 2026-08-24: skipped at the
-   exact minute it graduated, then pumped ~1380x).
+   exact minute it graduated, then pumped ~1380x). Asked FIRST for pump
+   mints because it is free and instant.
+2. **DexPaprika** pool search — explicit liquidity number is decisive
+   (>= min passes, < min rejects). Rate-limited globally: the free tier
+   allows only 15 rpm keyless / 30 rpm with a free key and delays data up
+   to 15s, so unthrottled per-retry calls burn the whole minute in seconds
+   and every answer becomes a 429 -> None -> fail-closed.
 3. **DexScreener** `/token-pairs` — fast third-party indexer as the last
    oracle; admits when liquidity >= min OR the pair shows real recent
    trading activity (mcap + m5/h1 volume) on a curve mint.
@@ -29,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
@@ -37,6 +42,27 @@ import httpx
 import logs
 
 logger = logging.getLogger(__name__)
+
+
+class _RpmLimiter:
+    """Shared sliding-window requests-per-minute limiter (async-safe)."""
+
+    def __init__(self, rpm: int) -> None:
+        self.rpm = max(1, int(rpm))
+        self._sent: deque[float] = deque()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            while True:
+                now = time.monotonic()
+                while self._sent and now - self._sent[0] > 60.0:
+                    self._sent.popleft()
+                if len(self._sent) < self.rpm:
+                    self._sent.append(now)
+                    return
+                wait = 60.0 - (now - self._sent[0]) + 0.05
+                await asyncio.sleep(min(wait, 5.0))
 
 
 class PoolChecker:
@@ -79,6 +105,7 @@ class PoolChecker:
         dexscreener: Any | None = None,
         curve_fallback_enabled: bool = True,
         curve_stream_max_age_s: float = 90.0,
+        dexpaprika_rpm: int = 14,
     ) -> None:
         self.dex_paprika_key = dex_paprika_key
         self.dex_paprika_base_url = dex_paprika_base_url.rstrip("/")
@@ -95,6 +122,12 @@ class PoolChecker:
         self.dexscreener = dexscreener
         self.curve_fallback_enabled = curve_fallback_enabled
         self.curve_stream_max_age_s = curve_stream_max_age_s
+        # DexPaprika free tier allows only 15 rpm keyless (30 with free key)
+        # and delays data up to 15s — hammering it per-retry burns the whole
+        # minute in seconds and every answer becomes a 429 -> None ->
+        # fail-closed (2026-08-25 run: 84/84 oracle decisions 'none'). The
+        # limiter makes _pool_liq wait its turn instead of feeding 429s.
+        self._paprika_limiter = _RpmLimiter(dexpaprika_rpm)
         self._client = httpx.AsyncClient(timeout=timeout_s, follow_redirects=True)
         self._pool_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._dev_cache: dict[str, tuple[float, tuple[bool, str]]] = {}
@@ -132,6 +165,7 @@ class PoolChecker:
         if self.dex_paprika_key:
             headers["Authorization"] = f"Bearer {self.dex_paprika_key}"
         try:
+            await self._paprika_limiter.acquire()
             r = await asyncio.wait_for(
                 self._client.get(
                     f"{self.dex_paprika_base_url}/networks/solana/pools/search",
@@ -184,6 +218,16 @@ class PoolChecker:
                 decision = {"liq": None, "src": "stream", "ok": False,
                             "reason": flags}
                 break
+            # Curve-phase admission BEFORE DexPaprika for ...pump mints: the
+            # stream is free and instant while paprika is rate-limited
+            # (15 rpm free tier) and lags fresh pools by seconds — asking it
+            # first wastes the entire budget on tokens the stream already
+            # proves are tradeable. Non-pump mints skip straight to paprika.
+            if self.curve_fallback_enabled and ca.endswith("pump"):
+                verdict = self._curve_verdict(ca)
+                if verdict is not None:
+                    decision = {**verdict}
+                    break
             liq = await self._pool_liq(ca)
             if liq is not None:
                 # Explicit answer: decisive either way (>= min passes).
@@ -193,10 +237,11 @@ class PoolChecker:
                 decision = {"liq": liq, "src": "dexpaprika", "ok": ok,
                             "reason": reason}
                 break
-            verdict = self._curve_verdict(ca)
-            if verdict is not None:
-                decision = {**verdict}
-                break
+            if not (self.curve_fallback_enabled and ca.endswith("pump")):
+                verdict = self._curve_verdict(ca)
+                if verdict is not None:
+                    decision = {**verdict}
+                    break
             if not ds_done:
                 ds_done = True
                 ds = await self._dexscreener_verdict(ca)

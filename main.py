@@ -253,6 +253,7 @@ async def _trade_loop(
         PoolChecker(
             dex_paprika_key=s.dex_paprika_key,
             dex_paprika_base_url=s.dex_paprika_base_url,
+            dexpaprika_rpm=s.dexpaprika_rpm,
             helius_api_keys=s.helius_api_keys,
             helius_base_url=s.helius_base_url,
             min_liquidity_usd=s.min_liquidity_usd,
@@ -313,6 +314,21 @@ async def _trade_loop(
 
     health_timeout_s = s.health_timeout_s
     if health_timeout_s > 0:
+        def _dump_all_stacks() -> str:
+            """Render every thread's current stack (names the wedge culprit)."""
+            import sys as _sys
+            import traceback as _tb
+            import threading as _th
+            frames = _sys._current_frames()
+            out = []
+            for t in _th.enumerate():
+                fr = frames.get(t.ident)
+                if fr is None:
+                    continue
+                out.append(f"--- thread {t.name} ({t.ident}) ---")
+                out.extend(_tb.format_stack(fr))
+            return "\n".join(out)
+
         def _health_watchdog() -> None:
             while True:
                 time.sleep(health_timeout_s)
@@ -322,6 +338,14 @@ async def _trade_loop(
                         "health watchdog: no sweep progress for %.0fs — forcing exit",
                         idle,
                     )
+                    # Dump every thread's stack BEFORE the hard exit: a silent
+                    # freeze tells us nothing; this names exactly which call
+                    # blocked the loop (3 wedges so far, all undiagnosed).
+                    try:
+                        for line in _dump_all_stacks().splitlines():
+                            logger.critical("STACKDUMP %s", line)
+                    except Exception:  # noqa: BLE001 - dump is best-effort
+                        logger.exception("stack dump failed")
                     os._exit(1)
 
         threading.Thread(target=_health_watchdog, daemon=True).start()

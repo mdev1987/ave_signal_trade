@@ -137,6 +137,8 @@ class Settings:
     # original, "skip" rejects ambiguous posts outright, "mint" keeps the
     # posted Mint address (journal-only warning).
     ca_mismatch_policy: str = "link"
+    # DexPaprika requests/minute cap (free tier: 15 keyless, 30 with key).
+    dexpaprika_rpm: int = 14
     liq_confirm_window_s: float = 10.0     # how long to retry the DexPaprika check
     # Curve-phase fallback: admit `...pump` mints with no indexed external
     # pool yet when the PumpAPI stream shows fresh trading activity (oracle 2)
@@ -286,6 +288,7 @@ class Settings:
             ca_mismatch_policy=(
                 lambda v: v if v in ("skip", "link", "mint") else "link"
             )(get(env, "CA_MISMATCH_POLICY", "link").strip().lower()),
+            dexpaprika_rpm=get_int(env, "DEXPAPRIKA_RPM", 14),
             liq_confirm_window_s=get_float(env, "LIQ_CONFIRM_WINDOW_S", 10.0),
             pool_curve_fallback=get_bool(env, "POOL_CURVE_FALLBACK", True),
             curve_stream_max_age_s=get_float(env, "CURVE_STREAM_MAX_AGE_S", 90.0),
@@ -384,6 +387,7 @@ class Settings:
             ("MIN_ENTRY_PX", f"{self.min_entry_px:g}"),
             ("MAX_ENTRY_PX", f"{self.max_entry_px:g}"),
             ("CA_MISMATCH_POLICY", self.ca_mismatch_policy),
+            ("DEXPAPRIKA_RPM", str(self.dexpaprika_rpm)),
             ("PRICE_STALE_S", f"{self.price_stale_s:g}"),
             ("TIMEOUT_STALE_GRACE_S", f"{self.timeout_stale_grace_s:g}"),
             ("MAX_TICK_MULT", f"{self.max_tick_mult:g}"),

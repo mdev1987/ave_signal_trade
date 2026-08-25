@@ -198,18 +198,37 @@ def parse_signal(
 
     # --- copycat detection: referenced token addresses ---------------------
     # DRBT launch posts sometimes embed a DIFFERENT pump token in their
-    # metadata links (e.g. `https://solscan.io/token/<mint>#metadata`, or a
-    # pump-vanity address anywhere in the text). On-chain evidence (2026-08-24
-    # GrokBot/WASTED) shows the posted "Mint:" is then a COPYCAT whose
-    # metadata points at the referenced ORIGINAL. Collect every distinct
-    # candidate so PaperTrader can resolve the mismatch by policy.
+    # metadata links (e.g. `https://solscan.io/token/<mint>#metadata`). On-chain
+    # evidence (2026-08-24 GrokBot/WASTED) shows the posted "Mint:" is then a
+    # COPYCAT whose metadata points at the referenced ORIGINAL.
+    #
+    # IMPORTANT: scan ONLY the Links section at the tail of the RAW message,
+    # and only `solscan.io/token/` pages. The Owner block carries
+    # `solscan.io/account/` links for the creator + funding WALLET — treating
+    # those as candidate tokens made alt_cas fire on every message and
+    # (policy=link) substituted the trading CA to a wallet address
+    # (2026-08-25 run: 204/204 mismatches, 0 arms). `account` = wallet;
+    # `token` = SPL token page. We must scan the RAW markdown (URLs intact)
+    # because _strip_markdown reduces [label](url) to a possibly-truncated
+    # label — but slicing after the last Links: marker keeps the Owner block
+    # out of reach.
+    base = message if isinstance(message, str) else text
+    links_idx = base.rfind("Links:")
+    if links_idx < 0:
+        links_idx = base.rfind("🔗")
+    # No Links section => no metadata links => no copycat references.
+    section = base[links_idx:] if links_idx >= 0 else ""
     cands: list[str] = []
-    for pat in (r"solscan\.io/(?:token|account)/([1-9A-HJ-NP-Za-km-z]{32,44})",
-                r"\b([1-9A-HJ-NP-Za-km-z]{39,44}pump)\b"):
-        for m2 in re.finditer(pat, message if isinstance(message, str) else raw):
-            addr = m2.group(1)
-            if addr and addr != sig.ca:
-                cands.append(addr)
+    for m2 in re.finditer(
+        r"solscan\.io/token/([1-9A-HJ-NP-Za-km-z]{32,44})", section
+    ):
+        addr = m2.group(1)
+        if addr and addr != sig.ca:
+            cands.append(addr)
+    for m2 in re.finditer(r"\b([1-9A-HJ-NP-Za-km-z]{39,44}pump)\b", section):
+        addr = m2.group(1)
+        if addr and addr != sig.ca:
+            cands.append(addr)
     sig.alt_cas = tuple(dict.fromkeys(cands))
 
     return sig
