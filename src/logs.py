@@ -69,7 +69,7 @@ class _RedactFormatter(logging.Formatter):
         return _redact(super().format(record))
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def setup_logging(level: int = logging.INFO, log_file: str | None = None) -> None:
     """Configure root logging to console + rotating ``bot_logs/bot.log``.
 
     Loads the current :class:`config.Settings` to populate the secret list
@@ -96,13 +96,14 @@ def setup_logging(level: int = logging.INFO) -> None:
     console.setFormatter(fmt)
     root.addHandler(console)
 
+    target = Path(BOT_LOG).parent / (log_file or "bot.log")
     file_handler = RotatingFileHandler(
-        BOT_LOG, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
+        target, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
     )
     file_handler.setFormatter(fmt)
     root.addHandler(file_handler)
     logger = logging.getLogger("logs")
-    logger.info("logging to %s", BOT_LOG)
+    logger.info("logging to %s", target)
 
 
 def _collect_secrets(settings) -> tuple[str, ...]:

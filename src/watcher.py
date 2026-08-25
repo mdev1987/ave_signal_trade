@@ -118,6 +118,8 @@ class SmartWalletWatcher:
         self.state: dict[str, str] = {}          # wallet -> last seen signature
         self.known_cas: set[str] = set()          # ever-alerted/seeded CAs
         self.token_hits: dict[str, dict] = {}     # ca -> {wallets:[], first_ts}
+        self.consensus_fired = 0
+        self.tatum_push = False
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._load_state()
@@ -227,6 +229,8 @@ class SmartWalletWatcher:
         n = len(hit["wallets"])
         if fresh or n >= self.consensus_wallets:
             consensus = n >= self.consensus_wallets
+            if consensus:
+                self.consensus_fired += 1
             icon = "🔥" if consensus else "🕵️"
             title = ("CONSENSUS BUY" if consensus else "Smart wallet buy")
             syms = ",".join(w["w"][:5] + "…($" + format(w["usd"], ".0f") + ")"
