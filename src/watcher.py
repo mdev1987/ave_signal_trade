@@ -107,6 +107,7 @@ class SmartWalletWatcher:
         self._http = httpx.AsyncClient(timeout=25)
         self.state: dict[str, float] = {}         # wallet -> last blockTime
         self.known_cas: set[str] = set()
+        self.consensus_alerted: set[str] = set()  # CAs that already had a consensus alert
         self.token_hits: dict[str, dict] = {}
         self.consensus_fired = 0
         self.tatum_push = False
@@ -263,9 +264,12 @@ class SmartWalletWatcher:
         n = len(hit["wallets"])
         if not fresh and n < self.consensus_wallets:
             return
-        consensus = n >= self.consensus_wallets
+        consensus = n >= self.consensus_wallets and ca not in getattr(self, "_consensus_sent", set())
         if consensus:
             self.consensus_fired += 1
+            if not hasattr(self, "_consensus_sent"):
+                self._consensus_sent = set()
+            self._consensus_sent.add(ca)
         icon = "🔥" if consensus else "🕵️"
         title = "CONSENSUS BUY" if consensus else "Smart wallet buy"
         syms = ",".join(x["w"][:5] + "…($" + format(x["usd"], ".0f") + ")"
