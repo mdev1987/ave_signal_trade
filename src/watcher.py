@@ -303,5 +303,5 @@ class SmartWalletWatcher:
     async def stop(self) -> None:
         self._stop.set()
         if self._task:
-            await asyncio.gather(self._task, return_exception=True)
+            await asyncio.gather(self._task, return_exceptions=True)
         await self._http.aclose()
