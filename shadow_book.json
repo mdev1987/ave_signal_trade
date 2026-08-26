@@ -269,6 +269,706 @@
    "ts": 1787702339.1108968,
    "trigger_usd": 141.6284529990676,
    "n_wallets": 1
+  },
+  "8yXx2UK6GcSUvk8L2v1TKMrwvtxfcb3MesRxkFFcpump": {
+   "symbol": "FROGLON",
+   "entry_usd": 118.39269879349821,
+   "peak_usd": 118.39269879349821,
+   "last_usd": 118.39269879349821,
+   "size_sol": 0.05,
+   "ts": 1787702445.376814,
+   "trigger_usd": 118.39269879349821,
+   "n_wallets": 1
+  },
+  "6VxtyGBoe5upqWDHRijnL2iqnW9MaDsacpV87fADpump": {
+   "symbol": "Mustachio",
+   "entry_usd": 69.45859557285121,
+   "peak_usd": 69.45859557285121,
+   "last_usd": 69.45859557285121,
+   "size_sol": 0.05,
+   "ts": 1787702536.8877666,
+   "trigger_usd": 69.45859557285121,
+   "n_wallets": 1
+  },
+  "DaqX9cibfm3uFJP2a7Qpgr2BCh2iiLsNhihy8uh9pump": {
+   "symbol": "Bold",
+   "entry_usd": 136.25097051419957,
+   "peak_usd": 136.25097051419957,
+   "last_usd": 136.25097051419957,
+   "size_sol": 0.05,
+   "ts": 1787702539.2380962,
+   "trigger_usd": 136.25097051419957,
+   "n_wallets": 1
+  },
+  "8Vc9LZ5WyggPFEt6R5o5W44bBNCQVTcr1612JhsLpump": {
+   "symbol": "Rick",
+   "entry_usd": 1.875801379336577,
+   "peak_usd": 1.875801379336577,
+   "last_usd": 1.875801379336577,
+   "size_sol": 0.05,
+   "ts": 1787702542.6660256,
+   "trigger_usd": 1.875801379336577,
+   "n_wallets": 1
+  },
+  "4kqEkiDmkkyQWayzQB5B3dUP6whgAL3becLH5jexpump": {
+   "symbol": "George",
+   "entry_usd": 307.997555080657,
+   "peak_usd": 307.997555080657,
+   "last_usd": 307.997555080657,
+   "size_sol": 0.05,
+   "ts": 1787702543.7394364,
+   "trigger_usd": 307.997555080657,
+   "n_wallets": 2
+  },
+  "472UoxpsikGqkg1Yd4FtJPwcEDk2EBjTgzRLD31Dpump": {
+   "symbol": "PEPE",
+   "entry_usd": 29.110060923663852,
+   "peak_usd": 29.110060923663852,
+   "last_usd": 29.110060923663852,
+   "size_sol": 0.05,
+   "ts": 1787702544.1797678,
+   "trigger_usd": 29.110060923663852,
+   "n_wallets": 1
+  },
+  "AFCu11c4yRtjK1HzvwNnV3Vzh2fyYjDR8QUrp3Ykpump": {
+   "symbol": "Bold",
+   "entry_usd": 30.934829400323483,
+   "peak_usd": 30.934829400323483,
+   "last_usd": 30.934829400323483,
+   "size_sol": 0.05,
+   "ts": 1787702544.184036,
+   "trigger_usd": 30.934829400323483,
+   "n_wallets": 1
+  },
+  "BEWmW1qjBz7h8t9mbWCSdEFPeFmgwvchDQ5bCPfWpump": {
+   "symbol": "MARTIAN",
+   "entry_usd": 96.27793562114327,
+   "peak_usd": 96.27793562114327,
+   "last_usd": 96.27793562114327,
+   "size_sol": 0.05,
+   "ts": 1787702544.4311497,
+   "trigger_usd": 96.27793562114327,
+   "n_wallets": 1
+  },
+  "zRFh96QfN86vqyM6Udz73zL18rbHh5Zw2vR4a4kpump": {
+   "symbol": "Borpa",
+   "entry_usd": 92.01725165599657,
+   "peak_usd": 92.01725165599657,
+   "last_usd": 92.01725165599657,
+   "size_sol": 0.05,
+   "ts": 1787702545.562676,
+   "trigger_usd": 92.01725165599657,
+   "n_wallets": 1
+  },
+  "3Cminyi3K9EjquogmmJ1aveZUvUKRisxHTsua4d7pump": {
+   "symbol": "Opossum",
+   "entry_usd": 76.88044340385228,
+   "peak_usd": 76.88044340385228,
+   "last_usd": 76.88044340385228,
+   "size_sol": 0.05,
+   "ts": 1787702546.1141155,
+   "trigger_usd": 76.88044340385228,
+   "n_wallets": 1
+  },
+  "G2gXUNgVVXxNr5drzhvZFdFEd458zMcfWYtAb2uCpump": {
+   "symbol": "KIMIK3DEV",
+   "entry_usd": 59.92321536290072,
+   "peak_usd": 59.92321536290072,
+   "last_usd": 59.92321536290072,
+   "size_sol": 0.05,
+   "ts": 1787702546.1180615,
+   "trigger_usd": 59.92321536290072,
+   "n_wallets": 2
+  },
+  "ABMoq97oTfL5zSFjQswmL5bcQDiBCdooxkeWahX8pump": {
+   "symbol": "VDM",
+   "entry_usd": 387.84027252067324,
+   "peak_usd": 387.84027252067324,
+   "last_usd": 387.84027252067324,
+   "size_sol": 0.05,
+   "ts": 1787702548.1387324,
+   "trigger_usd": 387.84027252067324,
+   "n_wallets": 3
+  },
+  "955Bvumf1Ee57SdSxakpHoLhuW4R4S7MLZ1sCs5upump": {
+   "symbol": "BEHAVE",
+   "entry_usd": 387.7266108157971,
+   "peak_usd": 387.7266108157971,
+   "last_usd": 387.7266108157971,
+   "size_sol": 0.05,
+   "ts": 1787702550.377956,
+   "trigger_usd": 387.7266108157971,
+   "n_wallets": 1
+  },
+  "AubQmWWdgezTNNyRLxXLXLAhp1UwUKwB4LycmmCQpump": {
+   "symbol": "BEPE",
+   "entry_usd": 174.23885042144306,
+   "peak_usd": 174.23885042144306,
+   "last_usd": 174.23885042144306,
+   "size_sol": 0.05,
+   "ts": 1787702551.3713894,
+   "trigger_usd": 174.23885042144306,
+   "n_wallets": 1
+  },
+  "Be7DADBEFM5BK4KsepsCZvPMKgWCoH43zPfc9WWspump": {
+   "symbol": "Janitor",
+   "entry_usd": 88.80069622131124,
+   "peak_usd": 88.80069622131124,
+   "last_usd": 88.80069622131124,
+   "size_sol": 0.05,
+   "ts": 1787702555.400563,
+   "trigger_usd": 88.80069622131124,
+   "n_wallets": 2
+  },
+  "2sLKA6PzFVjeTUaiKBCkDbDiS8MuoZAeXxZMgs9Apump": {
+   "symbol": "C4T",
+   "entry_usd": 4.367041,
+   "peak_usd": 4.367041,
+   "last_usd": 4.367041,
+   "size_sol": 0.05,
+   "ts": 1787702556.162235,
+   "trigger_usd": 4.367041,
+   "n_wallets": 1
+  },
+  "ApZuxdpzMrbEYTGEzeY9afh5pj9d6qPRJCTgQYiipbKg": {
+   "symbol": "CYBERLEEK",
+   "entry_usd": 27.034481,
+   "peak_usd": 27.034481,
+   "last_usd": 27.034481,
+   "size_sol": 0.05,
+   "ts": 1787702558.5071487,
+   "trigger_usd": 27.034481,
+   "n_wallets": 1
+  },
+  "H2pwX6A9ipitcDk2zfZQBnJc1QvxcX9GUzU2LHrPpump": {
+   "symbol": "Monsters",
+   "entry_usd": 94.21407166187619,
+   "peak_usd": 94.21407166187619,
+   "last_usd": 94.21407166187619,
+   "size_sol": 0.05,
+   "ts": 1787702620.1758327,
+   "trigger_usd": 94.21407166187619,
+   "n_wallets": 1
+  },
+  "A7kxoCqUFFiW3dzLVqnpq6ZgH1StV5Eef6f6GhT4pump": {
+   "symbol": "WhitePist",
+   "entry_usd": 136.6387799614875,
+   "peak_usd": 136.6387799614875,
+   "last_usd": 136.6387799614875,
+   "size_sol": 0.05,
+   "ts": 1787702620.1776192,
+   "trigger_usd": 136.6387799614875,
+   "n_wallets": 1
+  },
+  "HaL2tTt86ezQ8F8SLnvUY4RKc1zerWNTBg1F9bRspump": {
+   "symbol": "UPCAT",
+   "entry_usd": 1.8767892939837438,
+   "peak_usd": 1.8767892939837438,
+   "last_usd": 1.8767892939837438,
+   "size_sol": 0.05,
+   "ts": 1787702635.322747,
+   "trigger_usd": 1.8767892939837438,
+   "n_wallets": 1
+  },
+  "XSTuo1fV7HHMhs4BYiwtrWSLsMCJNrooH2AssWTYZqP": {
+   "symbol": "XST",
+   "entry_usd": 12.399032,
+   "peak_usd": 12.399032,
+   "last_usd": 12.399032,
+   "size_sol": 0.05,
+   "ts": 1787702635.32692,
+   "trigger_usd": 12.399032,
+   "n_wallets": 1
+  },
+  "8deL2bLBymMgteqJg94QFubKLJe2Gop6kJD87D7Upump": {
+   "symbol": "JODIE",
+   "entry_usd": 1.8756511420472788,
+   "peak_usd": 1.8756511420472788,
+   "last_usd": 1.8756511420472788,
+   "size_sol": 0.05,
+   "ts": 1787702635.3312466,
+   "trigger_usd": 1.8756511420472788,
+   "n_wallets": 1
+  },
+  "GNZ8YbKdVTBwJbPRd3hRCV2nqCMpFQuXQcEKB8vmpump": {
+   "symbol": "GR3G",
+   "entry_usd": 109.06183176343514,
+   "peak_usd": 109.06183176343514,
+   "last_usd": 109.06183176343514,
+   "size_sol": 0.05,
+   "ts": 1787702820.8881621,
+   "trigger_usd": 109.06183176343514,
+   "n_wallets": 1
+  },
+  "Fu1MpaihLozgquJhXXFHQNDagERaTJFhLoaedxKQpump": {
+   "symbol": "Gepe",
+   "entry_usd": 115.91310333802673,
+   "peak_usd": 115.91310333802673,
+   "last_usd": 115.91310333802673,
+   "size_sol": 0.05,
+   "ts": 1787702820.8923852,
+   "trigger_usd": 115.91310333802673,
+   "n_wallets": 1
+  },
+  "2KK6PpDv35xJN5V4pmqmjTYpud5BgngMWLGFMmKjpump": {
+   "symbol": "BlackP",
+   "entry_usd": 116.05450621791329,
+   "peak_usd": 116.05450621791329,
+   "last_usd": 116.05450621791329,
+   "size_sol": 0.05,
+   "ts": 1787702820.8969495,
+   "trigger_usd": 116.05450621791329,
+   "n_wallets": 1
+  },
+  "9WxDeyuB2rK2mnVhmvcxuVQbHHXh598XkeGML56Wpump": {
+   "symbol": "CUMMIES",
+   "entry_usd": 63.664506602303206,
+   "peak_usd": 63.664506602303206,
+   "last_usd": 63.664506602303206,
+   "size_sol": 0.05,
+   "ts": 1787702931.1082473,
+   "trigger_usd": 63.664506602303206,
+   "n_wallets": 1
+  },
+  "91YeRQwQxu1KtbQxiue9y7Vmub48BrTF67DErYaWpump": {
+   "symbol": "FWOG",
+   "entry_usd": 103.87411913504891,
+   "peak_usd": 103.87411913504891,
+   "last_usd": 103.87411913504891,
+   "size_sol": 0.05,
+   "ts": 1787702931.112546,
+   "trigger_usd": 103.87411913504891,
+   "n_wallets": 1
+  },
+  "3KMh9WaVF9CRH2Xj5B5CmC7AutXoPUjjLvTJDTzLpump": {
+   "symbol": "COIN",
+   "entry_usd": 67.989523409376,
+   "peak_usd": 67.989523409376,
+   "last_usd": 67.989523409376,
+   "size_sol": 0.05,
+   "ts": 1787702931.1171143,
+   "trigger_usd": 67.989523409376,
+   "n_wallets": 1
+  },
+  "2Vhfk6MjEJEx8QBCRPVNLGE6KfAkan5m4A3Ep6YPpump": {
+   "symbol": "SLOP CANNON",
+   "entry_usd": 117.76316499182063,
+   "peak_usd": 117.76316499182063,
+   "last_usd": 117.76316499182063,
+   "size_sol": 0.05,
+   "ts": 1787702973.2333486,
+   "trigger_usd": 117.76316499182063,
+   "n_wallets": 1
+  },
+  "4Aqo3XfWzWdJwQSH7Btv2tibfkZ9bQw9JGEwd1Atpump": {
+   "symbol": "FROG",
+   "entry_usd": 117.59850021130936,
+   "peak_usd": 117.59850021130936,
+   "last_usd": 117.59850021130936,
+   "size_sol": 0.05,
+   "ts": 1787703136.6652424,
+   "trigger_usd": 117.59850021130936,
+   "n_wallets": 1
+  },
+  "9XLesEjQJ4zMF6a1XPac56B7wiD4byPibsKXz6Uzpump": {
+   "symbol": "quant",
+   "entry_usd": 120.57224461609692,
+   "peak_usd": 120.57224461609692,
+   "last_usd": 120.57224461609692,
+   "size_sol": 0.05,
+   "ts": 1787703136.6694667,
+   "trigger_usd": 120.57224461609692,
+   "n_wallets": 1
+  },
+  "3igFLqbdPS3TNxeGrVkS4WbsA8Pddnp4nycKNYmFpump": {
+   "symbol": "murk",
+   "entry_usd": 115.67850058338482,
+   "peak_usd": 115.67850058338482,
+   "last_usd": 115.67850058338482,
+   "size_sol": 0.05,
+   "ts": 1787703136.6740813,
+   "trigger_usd": 115.67850058338482,
+   "n_wallets": 1
+  },
+  "ZQm2peLcn2YdGjoVZQy92dBKCPRtUheSSZR9WRipump": {
+   "symbol": "TOES",
+   "entry_usd": 1.8760286104645976,
+   "peak_usd": 1.8760286104645976,
+   "last_usd": 1.8760286104645976,
+   "size_sol": 0.05,
+   "ts": 1787703154.1179903,
+   "trigger_usd": 1.8760286104645976,
+   "n_wallets": 1
+  },
+  "2pbt7zwqugqj1WzDL7pgpHBPvqhSrjxJkik3f6Fspump": {
+   "symbol": "Waddles",
+   "entry_usd": 6.673811,
+   "peak_usd": 6.673811,
+   "last_usd": 6.673811,
+   "size_sol": 0.05,
+   "ts": 1787703156.3881454,
+   "trigger_usd": 6.673811,
+   "n_wallets": 10
+  },
+  "ENMJPKSQUwugAZahvQqDBYcYyKbRmKWh2WNXSXCnpump": {
+   "symbol": "Untaneko",
+   "entry_usd": 107.0345309368462,
+   "peak_usd": 107.0345309368462,
+   "last_usd": 107.0345309368462,
+   "size_sol": 0.05,
+   "ts": 1787703301.258393,
+   "trigger_usd": 107.0345309368462,
+   "n_wallets": 1
+  },
+  "B7y28L1HopVQb5jMFnpRSFTvnYYwz45ASBX8YqJQpump": {
+   "symbol": "Avocado",
+   "entry_usd": 72.88481460807327,
+   "peak_usd": 72.88481460807327,
+   "last_usd": 72.88481460807327,
+   "size_sol": 0.05,
+   "ts": 1787703521.8407285,
+   "trigger_usd": 72.88481460807327,
+   "n_wallets": 1
+  },
+  "6hDfuLG675uDxQh33e4roc9xg5PSL2opJ8dzwmnWpump": {
+   "symbol": "Toma",
+   "entry_usd": 17.971894,
+   "peak_usd": 17.971894,
+   "last_usd": 17.971894,
+   "size_sol": 0.05,
+   "ts": 1787703597.1446557,
+   "trigger_usd": 17.971894,
+   "n_wallets": 1
+  },
+  "CdCCLLV2aKijEzEBm4FwrgxkwZVnF4LTQYiDYLzdpump": {
+   "symbol": "Toadstacio",
+   "entry_usd": 110.04616859400394,
+   "peak_usd": 110.04616859400394,
+   "last_usd": 110.04616859400394,
+   "size_sol": 0.05,
+   "ts": 1787703934.0103872,
+   "trigger_usd": 110.04616859400394,
+   "n_wallets": 1
+  },
+  "4cYkfAWZadZrLpXcfAaZmEtDSzGbWYQhfVwWxMM2pump": {
+   "symbol": "OCS\u2060",
+   "entry_usd": 127.1460630359737,
+   "peak_usd": 127.1460630359737,
+   "last_usd": 127.1460630359737,
+   "size_sol": 0.05,
+   "ts": 1787703934.014671,
+   "trigger_usd": 127.1460630359737,
+   "n_wallets": 1
+  },
+  "BbF6bnegMqFfEA9yuwBeDWgoWPnL82rtQRiBLUKApump": {
+   "symbol": "Catacio",
+   "entry_usd": 49.04570229649118,
+   "peak_usd": 49.04570229649118,
+   "last_usd": 49.04570229649118,
+   "size_sol": 0.05,
+   "ts": 1787704003.9027023,
+   "trigger_usd": 49.04570229649118,
+   "n_wallets": 1
+  },
+  "9CANf2weGXHdCdCP8pcAZZh7zm37s3ra6D7MNyPEpump": {
+   "symbol": "Flurry",
+   "entry_usd": 29.03451954768248,
+   "peak_usd": 29.03451954768248,
+   "last_usd": 29.03451954768248,
+   "size_sol": 0.05,
+   "ts": 1787704003.9051485,
+   "trigger_usd": 29.03451954768248,
+   "n_wallets": 1
+  },
+  "9JT6NFViXX2YdYNTWyfm7DXzQVWoV1yZL36gxQ7pump": {
+   "symbol": "DOG",
+   "entry_usd": 1.876371565918652,
+   "peak_usd": 1.876371565918652,
+   "last_usd": 1.876371565918652,
+   "size_sol": 0.05,
+   "ts": 1787704003.9091177,
+   "trigger_usd": 1.876371565918652,
+   "n_wallets": 1
+  },
+  "HyedtHSc8CoyhbucjTVWL9cUhU9Q6HWtBHSz4pNepump": {
+   "symbol": "PEANUT",
+   "entry_usd": 136.92250672941722,
+   "peak_usd": 136.92250672941722,
+   "last_usd": 136.92250672941722,
+   "size_sol": 0.05,
+   "ts": 1787704078.6514163,
+   "trigger_usd": 136.92250672941722,
+   "n_wallets": 1
+  },
+  "HyRZwEZ4c3ZK83Sq7rLa5izXbn8R1PvFbMRFPwGUpump": {
+   "symbol": "BOLD",
+   "entry_usd": 136.94569484433933,
+   "peak_usd": 136.94569484433933,
+   "last_usd": 136.94569484433933,
+   "size_sol": 0.05,
+   "ts": 1787704078.6555636,
+   "trigger_usd": 136.94569484433933,
+   "n_wallets": 1
+  },
+  "WumydogCmSwBRuDQ2hJe3KqPoY7Keg8tT5SP17h8use": {
+   "symbol": "muse",
+   "entry_usd": 126.33640088799447,
+   "peak_usd": 126.33640088799447,
+   "last_usd": 126.33640088799447,
+   "size_sol": 0.05,
+   "ts": 1787704078.6599395,
+   "trigger_usd": 126.33640088799447,
+   "n_wallets": 1
+  },
+  "HaAdCH867q7TjkbuoF9CVjn1QSXJppQDDiTnpLCzpump": {
+   "symbol": "NFT",
+   "entry_usd": 116.33509423747341,
+   "peak_usd": 116.33509423747341,
+   "last_usd": 116.33509423747341,
+   "size_sol": 0.05,
+   "ts": 1787704109.130007,
+   "trigger_usd": 116.33509423747341,
+   "n_wallets": 1
+  },
+  "59oHqL4isuwUX7mZH1QNykHsX8wndmVXB63ArBQXpump": {
+   "symbol": "Froovik",
+   "entry_usd": 29.39028808222553,
+   "peak_usd": 29.39028808222553,
+   "last_usd": 29.39028808222553,
+   "size_sol": 0.05,
+   "ts": 1787704112.3577013,
+   "trigger_usd": 29.39028808222553,
+   "n_wallets": 1
+  },
+  "97J88zkfLEzGWqkeCUGDvz6XufJxqqnxprZTv6gstwDu": {
+   "symbol": "stickman",
+   "entry_usd": 106.50312622394965,
+   "peak_usd": 106.50312622394965,
+   "last_usd": 106.50312622394965,
+   "size_sol": 0.05,
+   "ts": 1787704114.8319583,
+   "trigger_usd": 106.50312622394965,
+   "n_wallets": 2
+  },
+  "BuwyEUP8hPvVCVR7jwWzmPGAXao9SWHg96ru4SEDpump": {
+   "symbol": "Froglets",
+   "entry_usd": 29.28526647377506,
+   "peak_usd": 29.28526647377506,
+   "last_usd": 29.28526647377506,
+   "size_sol": 0.05,
+   "ts": 1787704113.9386046,
+   "trigger_usd": 29.28526647377506,
+   "n_wallets": 1
+  },
+  "12Li46Z4cPchttT28rpf2b9MwF4ia8WX1LqPSd8Epump": {
+   "symbol": "SEYONG",
+   "entry_usd": 28.622550700494514,
+   "peak_usd": 28.622550700494514,
+   "last_usd": 28.622550700494514,
+   "size_sol": 0.05,
+   "ts": 1787704113.9431708,
+   "trigger_usd": 28.622550700494514,
+   "n_wallets": 1
+  },
+  "CQiovQdTU6ArmW8SzDuHEhk84dKojinPpCPiTc25pump": {
+   "symbol": "Mac",
+   "entry_usd": 72.78719979181402,
+   "peak_usd": 72.78719979181402,
+   "last_usd": 72.78719979181402,
+   "size_sol": 0.05,
+   "ts": 1787704115.4571931,
+   "trigger_usd": 72.78719979181402,
+   "n_wallets": 2
+  },
+  "AytcqQK6RBjDq1gP3fgtrhrU4tb5iT9REdYQouQ1pump": {
+   "symbol": "GOVC",
+   "entry_usd": 54.97667398081025,
+   "peak_usd": 54.97667398081025,
+   "last_usd": 54.97667398081025,
+   "size_sol": 0.05,
+   "ts": 1787704116.3424635,
+   "trigger_usd": 54.97667398081025,
+   "n_wallets": 1
+  },
+  "FMTdc7uzzgAPMJ4nUPp6dHhM1gzL8i3X24QY45Rcpump": {
+   "symbol": "AGTM",
+   "entry_usd": 96.01534765019818,
+   "peak_usd": 96.01534765019818,
+   "last_usd": 96.01534765019818,
+   "size_sol": 0.05,
+   "ts": 1787704117.100105,
+   "trigger_usd": 96.01534765019818,
+   "n_wallets": 1
+  },
+  "DJ9Poo5sXC1oHWnWpdhUiWawFzof6c3w2He5QVH6PNPC": {
+   "symbol": "DENOM",
+   "entry_usd": 38.523787517626786,
+   "peak_usd": 38.523787517626786,
+   "last_usd": 38.523787517626786,
+   "size_sol": 0.05,
+   "ts": 1787704118.074857,
+   "trigger_usd": 38.523787517626786,
+   "n_wallets": 1
+  },
+  "6g2SGJLgMVDSqumCWS1fmdnph8fD1oRTDnMsF4c2pump": {
+   "symbol": "wif",
+   "entry_usd": 27.902565567075754,
+   "peak_usd": 27.902565567075754,
+   "last_usd": 27.902565567075754,
+   "size_sol": 0.05,
+   "ts": 1787704118.775802,
+   "trigger_usd": 27.902565567075754,
+   "n_wallets": 1
+  },
+  "D2uDZwsckpj1RK8LdMNcX8cxV2AyPV89ZByBE7EEpump": {
+   "symbol": "Dgrok",
+   "entry_usd": 38.442634794260904,
+   "peak_usd": 38.442634794260904,
+   "last_usd": 38.442634794260904,
+   "size_sol": 0.05,
+   "ts": 1787704118.7804232,
+   "trigger_usd": 38.442634794260904,
+   "n_wallets": 1
+  },
+  "8DHDe41CTSQZxqrAW4CAaWZRXrzUyKXn4CK1ctV9pump": {
+   "symbol": "Bull",
+   "entry_usd": 38.43697715077233,
+   "peak_usd": 38.43697715077233,
+   "last_usd": 38.43697715077233,
+   "size_sol": 0.05,
+   "ts": 1787704118.7850828,
+   "trigger_usd": 38.43697715077233,
+   "n_wallets": 1
+  },
+  "CCcDZ3jYpEZa7WNWBkHB6VNjrxVWY9WL5TJB64twpump": {
+   "symbol": "RUNNER",
+   "entry_usd": 0.4754316753088642,
+   "peak_usd": 0.4754316753088642,
+   "last_usd": 0.4754316753088642,
+   "size_sol": 0.05,
+   "ts": 1787704120.1893568,
+   "trigger_usd": 0.4754316753088642,
+   "n_wallets": 1
+  },
+  "3UeHszgMnLs9jL1Jv3be9NECvG6WobE1Rjhx1Vrspump": {
+   "symbol": "TEQUILA",
+   "entry_usd": 279.3726047583584,
+   "peak_usd": 279.3726047583584,
+   "last_usd": 279.3726047583584,
+   "size_sol": 0.05,
+   "ts": 1787704122.855113,
+   "trigger_usd": 279.3726047583584,
+   "n_wallets": 3
+  },
+  "9RHQhHEi3oHbe5CMKB2HzuUBhBPg1syNDC5kuQWupump": {
+   "symbol": "SUGAR",
+   "entry_usd": 279.2095703574973,
+   "peak_usd": 279.2095703574973,
+   "last_usd": 279.2095703574973,
+   "size_sol": 0.05,
+   "ts": 1787704122.8612993,
+   "trigger_usd": 279.2095703574973,
+   "n_wallets": 3
+  },
+  "8ziSVoWjdEq58jh4WLjtdmoo2HQeox5fR2GS8T2Xpump": {
+   "symbol": "JMAML",
+   "entry_usd": 302.3811957185345,
+   "peak_usd": 302.3811957185345,
+   "last_usd": 302.3811957185345,
+   "size_sol": 0.05,
+   "ts": 1787704123.6757154,
+   "trigger_usd": 302.3811957185345,
+   "n_wallets": 1
+  },
+  "DFvZsxbe9sGE5iLwzpLrBXV2GHxTGQDz6poVN3wFpump": {
+   "symbol": "MEME1921",
+   "entry_usd": 94.54968520400344,
+   "peak_usd": 94.54968520400344,
+   "last_usd": 94.54968520400344,
+   "size_sol": 0.05,
+   "ts": 1787704127.33481,
+   "trigger_usd": 94.54968520400344,
+   "n_wallets": 4
+  },
+  "Gj73gE9bJYgG9ZHKy9GVwzoX3u3dXadYBVorHrP5doge": {
+   "symbol": "MARTIANS",
+   "entry_usd": 95.50126351183951,
+   "peak_usd": 95.50126351183951,
+   "last_usd": 95.50126351183951,
+   "size_sol": 0.05,
+   "ts": 1787704127.3377006,
+   "trigger_usd": 95.50126351183951,
+   "n_wallets": 1
+  },
+  "CzXrBB5RZpsFL7yAFTrCqe7yNXK4QKeSuBXV53kepump": {
+   "symbol": "Groyper",
+   "entry_usd": 94.2300823111727,
+   "peak_usd": 94.2300823111727,
+   "last_usd": 94.2300823111727,
+   "size_sol": 0.05,
+   "ts": 1787704127.3417122,
+   "trigger_usd": 94.2300823111727,
+   "n_wallets": 1
+  },
+  "2FGC7tpzhZrcRkJ6Y7phza64jhm6EyeFtwkcgHWgpump": {
+   "symbol": "$SIBAU",
+   "entry_usd": 88.41390431842332,
+   "peak_usd": 88.41390431842332,
+   "last_usd": 88.41390431842332,
+   "size_sol": 0.05,
+   "ts": 1787704129.2326126,
+   "trigger_usd": 88.41390431842332,
+   "n_wallets": 2
+  },
+  "BUGwZjvjDQBiWWuNGrEwEuJNo2JZMKgs8HFnePvjT75Y": {
+   "symbol": "FROOVIK",
+   "entry_usd": 90.52276978837313,
+   "peak_usd": 90.52276978837313,
+   "last_usd": 90.52276978837313,
+   "size_sol": 0.05,
+   "ts": 1787704129.2378051,
+   "trigger_usd": 90.52276978837313,
+   "n_wallets": 2
+  },
+  "DfQib7Rzz5u7gEoLchetkAtrttGNmMdyKECQfSA1pump": {
+   "symbol": "artcoin",
+   "entry_usd": 141.27181786932093,
+   "peak_usd": 141.27181786932093,
+   "last_usd": 141.27181786932093,
+   "size_sol": 0.05,
+   "ts": 1787704129.9499986,
+   "trigger_usd": 141.27181786932093,
+   "n_wallets": 4
+  },
+  "EhGXTc8AKQCpoxqnrNUN4ytRSJZUVeCf3W5oXcRGpump": {
+   "symbol": "DOG",
+   "entry_usd": 1.875858631476303,
+   "peak_usd": 1.875858631476303,
+   "last_usd": 1.875858631476303,
+   "size_sol": 0.05,
+   "ts": 1787704132.9620862,
+   "trigger_usd": 1.875858631476303,
+   "n_wallets": 1
+  },
+  "HjL7VwEPXjLgEuCY3fY8pVpMsRcGKfL6vXkxR7iFpump": {
+   "symbol": "CAGE",
+   "entry_usd": 1.8759110518066735,
+   "peak_usd": 1.8759110518066735,
+   "last_usd": 1.8759110518066735,
+   "size_sol": 0.05,
+   "ts": 1787704132.9644277,
+   "trigger_usd": 1.8759110518066735,
+   "n_wallets": 1
+  },
+  "JE9AxJtS8Qxfdzdx5cr1Am8uZ6gzDL5mCC3psRYjpump": {
+   "symbol": "GR3G",
+   "entry_usd": 114.41860257089785,
+   "peak_usd": 114.41860257089785,
+   "last_usd": 114.41860257089785,
+   "size_sol": 0.05,
+   "ts": 1787704134.4569628,
+   "trigger_usd": 114.41860257089785,
+   "n_wallets": 1
   }
  },
  "closed": [],

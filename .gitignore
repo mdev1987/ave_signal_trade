@@ -1,25 +1,32 @@
-# Python-generated files
+
+bot_logs/
+build/
+config.ini
+dist/
+docs/
+*.egg-info
+.env
+.freebuff
+.opencode/
+paper_positions*.json
 __pycache__/
 *.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-# Virtual environments
-.venv/
-.env
-docs/
-.vscode/
-.opencode/
-# Telegram session + tgdata config + paper-trade checkpoints
-config.ini
+# Python-generated files
+.ruff_cache/
+# runtime state
+.runwisp/
+runwisp.toml
+*.session
+shadow_book.json
 telegram_session.session
 telegram_session.session-journal
-*.session
-paper_positions*.json
+# Telegram session + tgdata config + paper-trade checkpoints
+throwaway_key.json
+tpositions.json
 # trade_log.csv, bot.log, journal.json files
-bot_logs/
-.runwisp/
-.ruff_cache/
-.freebuff
-runwisp.toml
+.venv/
+# Virtual environments
+.vscode/
+watched_tokens.json
+watcher_state.json
+wheels/
