@@ -276,13 +276,16 @@ class SmartWalletWatcher:
         title = "CONSENSUS BUY" if consensus else "Smart wallet buy"
         syms = ",".join(x["w"][:5] + "…($" + format(x["usd"], ".0f") + ")"
                         for x in hit["wallets"][-4:])
-        logger.info("%s %s %s (%s)", title, b.get("symbol","?"), ca[:10], syms)
-        if self.notifier:
+        # Telegram: CONSENSUS only — single-wallet buys go to journal/log
+        if self.notifier and consensus:
             import asyncio as _aio
             _aio.get_running_loop().create_task(self.notifier.send_alert(
                 f"{icon} {title}: {hit['symbol'] if hit['symbol']!='?' else ca[:6]+'…'}",
                 f"📍 `{ca}`\n🕵️ Smart wallets ({n}): {syms}\n"
                 f"💵 Tracked volume ${hit['usd']:,.0f}"))
+        if not consensus:
+            logger.info("%s %s %s (%s) — journal only", title,
+                        b.get("symbol","?"), ca[:10], syms)
         if self.on_smart_buy:
             try:
                 await self.on_smart_buy(ca, hit.get("symbol",""), usd, n)

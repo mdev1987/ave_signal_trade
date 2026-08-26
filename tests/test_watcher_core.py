@@ -1,6 +1,7 @@
 """Tests: Shyft full-tx buy parsing + status card."""
 
-import sys, pathlib
+import sys
+import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from watcher import parse_shyft_buys  # noqa: E402
@@ -15,7 +16,8 @@ def _tx(bt, deltas):
     """deltas: {accountIndex: (mint, owner, pre, post)}"""
     pre, post = [], []
     for idx, (mint_, owner_, p0, p1) in deltas.items():
-        ui = lambda v: {"uiAmount": v, "decimals": 6}
+        def ui(v):
+            return {"uiAmount": v, "decimals": 6}
         pre.append({"accountIndex": idx, "mint": mint_,
                     "owner": owner_, "uiTokenAmount": ui(p0)})
         post.append({"accountIndex": idx, "mint": mint_,
