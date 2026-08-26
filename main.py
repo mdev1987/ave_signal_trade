@@ -235,23 +235,14 @@ async def _run_watch(s: cfg.Settings) -> int:
                       Path(s.shadow_state_file), s.start_balance_sol,
                       jupiter=jupiter)
 
-    # hook: every processed smart buy feeds the shadow book
-    orig_process = w._process_buy
-
-    async def process_and_track(wallet: str, b: dict) -> None:
-        await orig_process(wallet, b)
-        ca = b["ca"]
-        if b.get("usd", 0) < s.watch_min_buy_usd:
-            return
-        if ca in book.open or len(book.open) >= 12:
-            return
-        if any(c.get("ca") == ca for c in book.closed[-100:]):
-            return
-        hit = w.token_hits.get(ca) or {}
-        await book.open_position(
-            ca, b["symbol"], b["usd"], b["usd"], len(hit.get("wallets", [])))
-
-    w._process_buy = process_and_track  # type: ignore[method-assign]
+    # shadow book opens automatically via on_smart_buy callback
+    w.on_smart_buy = lambda ca, sym, usd, n: book.open_position(
+        ca, sym, usd, usd, n) if (
+        usd >= s.watch_min_buy_usd
+        and ca not in book.open
+        and len(book.open) < 12
+        and not any(c.get("ca") == ca for c in book.closed[-100:])
+    ) else asyncio.sleep(0)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

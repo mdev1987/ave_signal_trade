@@ -74,7 +74,7 @@ class Settings:
     status_every_min: float = 30.0
     # watcher
     watch_poll_s: float = 45.0
-    watch_min_buy_usd: float = 100.0
+    watch_min_buy_usd: float = 50.0
     watch_consensus_wallets: int = 2
     # dexscreener
     dexscreener_base_url: str = "https://api.dexscreener.com"
@@ -94,7 +94,7 @@ def load_settings(path: str = ".env") -> Settings:
         shadow_state_file=get(env, "SHADOW_STATE_FILE", "shadow_book.json"),
         status_every_min=get_float(env, "STATUS_EVERY_MIN", 30.0),
         watch_poll_s=get_float(env, "WATCH_POLL_S", 45.0),
-        watch_min_buy_usd=get_float(env, "WATCH_MIN_BUY_USD", 100.0),
+        watch_min_buy_usd=get_float(env, "WATCH_MIN_BUY_USD", 50.0),
         watch_consensus_wallets=get_int(env, "WATCH_CONSENSUS_WALLETS", 2),
         dexscreener_base_url=get(env, "DEXSCREENER_BASE_URL",
                                  "https://api.dexscreener.com"),

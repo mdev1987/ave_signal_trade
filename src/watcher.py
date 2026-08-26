@@ -87,6 +87,7 @@ class SmartWalletWatcher:
         min_buy_usd: float = 100.0,
         consensus_wallets: int = 2,
         consensus_window_s: float = 7200.0,
+        on_smart_buy=None,  # async fn(ca, symbol, usd, n_wallets)
         first_lookback_s: float = 600.0,
         manage_interval_s: float = 1.0,
     ) -> None:
@@ -110,6 +111,7 @@ class SmartWalletWatcher:
         self.consensus_alerted: set[str] = set()  # CAs that already had a consensus alert
         self.token_hits: dict[str, dict] = {}
         self.consensus_fired = 0
+        self.on_smart_buy = on_smart_buy
         self.tatum_push = False
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
@@ -242,7 +244,7 @@ class SmartWalletWatcher:
         cur = self.state.get(f"ts:{wallet}", 0)
         self.state[f"ts:{wallet}"] = max(cur, newest + 1)
 
-    def _process_buy(self, wallet: str, b: dict) -> None:
+    async def _process_buy(self, wallet: str, b: dict) -> None:
         ca = b["ca"]
         now = time.time()
         hit = self.token_hits.setdefault(
@@ -281,6 +283,11 @@ class SmartWalletWatcher:
                 f"{icon} {title}: {hit['symbol'] if hit['symbol']!='?' else ca[:6]+'…'}",
                 f"📍 `{ca}`\n🕵️ Smart wallets ({n}): {syms}\n"
                 f"💵 Tracked volume ${hit['usd']:,.0f}"))
+        if self.on_smart_buy:
+            try:
+                await self.on_smart_buy(ca, hit.get("symbol",""), usd, n)
+            except Exception:
+                logger.exception("on_smart_buy callback failed")
 
     async def run(self) -> None:
         logger.info("watcher started: %d wallets, poll %.0fs (shyft)",
