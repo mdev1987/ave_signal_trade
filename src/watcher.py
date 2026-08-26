@@ -178,10 +178,18 @@ class SmartWalletWatcher:
                                                    "accept": "application/json"},
                                      params={"limit": self.swap_lookback,
                                              "order": "DESC"})
+            if r.status_code == 401:
+                logger.error(
+                    "moralis 401 for %s… — API key invalid/expired on this "
+                    "host; check MORALIS_API_KEY in .env", wallet[:10])
+                return []
             if r.status_code != 200:
+                logger.warning("moralis swaps %s… HTTP %s",
+                               wallet[:10], r.status_code)
                 return []
             return r.json().get("result") or []
-        except Exception:
+        except Exception as exc:
+            logger.warning("moralis swaps %s… error %s", wallet[:10], exc)
             return []
 
     # ------------------------------------------------------------ processing

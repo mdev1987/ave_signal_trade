@@ -1,9 +1,10 @@
-# OxMgr supervision - watcher only (old strategy removed)
+# OxMgr supervision - watcher only
+# NOTE: cwd below points at THIS machine's clone. On another VPS edit it.
 version = 1
 
 [[apps]]
 name = "watcher"
-command = "bash -lc 'exec uv run main.py watch'"
+command = "uv run main.py watch"
 cwd = "/home/mdev/Programming/ave_signal_trade"   # EDIT per machine
 restart_policy = "always"
 max_restarts = 1000
@@ -11,7 +12,10 @@ crash_restart_limit = 0            # network outages retry forever
 restart_delay_secs = 5
 stop_signal = "SIGTERM"
 stop_timeout_secs = 20
-health_cmd = "find bot_logs/watcher.log -mmin -6 | grep -q ."
+health_cmd = "find bot_logs/watcher.log -mmin -6"
 health_interval_secs = 60
 health_timeout_secs = 5
 health_max_failures = 3
+
+[apps.env]
+PATH = "/home/mdev/.local/bin:/usr/local/bin:/usr/bin:/bin"

@@ -129,6 +129,14 @@ def _collect_secrets(settings) -> tuple[str, ...]:
     return tuple(v for v in candidates if v)
 
 
+def register_secrets(values) -> None:
+    """Add runtime-discovered secrets (api keys etc.) to the redactor."""
+    global _REDACT
+    vals = [str(v) for v in values
+            if v and len(str(v)) >= 12 and str(v) not in _REDACT]
+    _REDACT = tuple(set(_REDACT) | set(vals))
+
+
 def journal(event: str, **fields) -> None:
     """Append one JSON line to ``bot_logs/journal.json``.
 
