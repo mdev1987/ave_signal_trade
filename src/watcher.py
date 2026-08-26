@@ -140,8 +140,9 @@ class SmartWalletWatcher:
 
     def _save_state(self) -> None:
         try:
+            # self.state keys are already "ts:<wallet>" — do NOT re-prefix
             self.state_file.write_text(json.dumps({
-                **{f"ts:{w}": t for w, t in self.state.items()},
+                **self.state,
                 "known_cas": sorted(self.known_cas),
                 "token_hits": self.token_hits,
             }, indent=1))
@@ -210,10 +211,9 @@ class SmartWalletWatcher:
             if self.ds is not None:
                 try:
                     snap = await self.ds.token_pairs("solana", ca)
-                    pair = max(snap["pairs"], key=lambda p: (
-                        p.get("liquidity") or {}).get("usd") or 0) \
-                        if snap and snap.get("pairs") else None
-                    px = float(pair.get("priceUsd") or 0) if pair else 0.0
+                    # token_pairs() returns a normalized single-pair dict
+                    # ({"price_usd": ...}) or None — not a {"pairs": [...]} wrapper
+                    px = float(snap.get("price_usd") or 0) if snap else 0.0
                 except Exception:
                     px = 0.0
             hit = (now, px)

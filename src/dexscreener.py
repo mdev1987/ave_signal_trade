@@ -102,7 +102,13 @@ class DexScreenerClient:
         }
 
     async def token_pairs(self, chain: str, ca: str) -> dict[str, Any] | None:
-        """Normalized best-pair snapshot for one token, or None on failure."""
+        """Normalized best-pair snapshot for one token, or None on failure.
+
+        DexScreener's ``priceUsd`` is the BASE token's price. We prefer pairs
+        where the requested token is the base (its price is then correct);
+        tokens that are only ever a quote (e.g. stablecoins) are skipped
+        rather than mispriced.
+        """
         await self._throttle()
         try:
             r = await asyncio.wait_for(
@@ -113,7 +119,23 @@ class DexScreenerClient:
                 logger.warning("dexscreener 429 (rate limit)")
                 return None
             r.raise_for_status()
-            return self.normalize(self._best_pair(r.json()))
+            data = r.json()
+            # endpoint returns a list of pairs; tolerate a {"pairs": [...]} wrapper too
+            pairs = data.get("pairs") if isinstance(data, dict) else data
+            if not isinstance(pairs, list) or not pairs:
+                return None
+            ca_l = ca.lower()
+            base_pairs = [p for p in pairs
+                          if (p.get("baseToken") or {}).get("address", "").lower() == ca_l]
+            pool = base_pairs or pairs
+            best = self._best_pair(pool)
+            if best is None:
+                return None
+            norm = self.normalize(best)
+            if not base_pairs:
+                # requested token is only a quote — base price is wrong for it
+                return None
+            return norm
         except Exception as e:  # noqa: BLE001
             logger.warning("dexscreener token-pairs failed %s: %s", ca, e)
             return None
