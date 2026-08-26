@@ -221,9 +221,9 @@ async def _run_watch(s: cfg.Settings) -> int:
                            rpm=s.dexscreener_rpm)
 
     w = SmartWalletWatcher(
-        helius_keys=[x.strip() for x in cfg.get(env, "HELIUS_API_KEYS",
-                                                "").split(",") if x.strip()],
-        moralis_key=(cfg.get(env, "MORALIS_API_KEY") or "").strip(),
+        shyft_key=(cfg.get(env, "SHYFT_API_KEY") or "").strip(),
+        shyft_rpc=cfg.get(env, "SHYFT_RPC_URL", "https://rpc.shyft.to"),
+        ds=ds,
         notifier=notifier,
         poll_s=s.watch_poll_s,
         min_buy_usd=s.watch_min_buy_usd,

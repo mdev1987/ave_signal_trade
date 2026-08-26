@@ -1,20 +1,17 @@
 """Smart-money watcher: poll the discovered wallets, alert on new buys.
 
-Loop (default 45s):
-  1. Cheap liveness check per wallet via Helius ``getSignaturesForAddress``
-     (limit 3 — a few hundred compute-credit-free RPC reads).
-  2. Only when a wallet's newest signature changed since last sweep, fetch its
-     recent swaps from the Moralis Solana gateway and process BUY entries
-     newer than the last processed timestamp.
-  3. Alerts:
-     - any tracked wallet buys a token we have never seen → "🕵️ Smart buy"
-     - ≥ CONSENSUS_WALLETS distinct tracked wallets bought the same unseen
-       token within CONSENSUS_WINDOW_S → "🔥 Consensus" (stronger signal)
-  4. Every alerted token is recorded in watched_tokens.json so it is never
-     double-alerted, with the wallets that touched it.
+Single-provider design (Shyft):
+  One ``getTransactionsForAddress`` call per wallet per sweep returns FULL
+  transactions since the last sweep — server-side blockTime filter, parsed
+  token balances included. Buys are derived locally as "wallet received a
+  non-SOL token it didn't hold before"; USD value is enriched from the
+  DexScreener price feed that the shadow book already uses.
 
-Rate budget: Moralis wallet-swaps costs ~50 CU; only changed wallets hit it,
-so a quiet network costs zero CU.
+Alerts:
+  - tracked wallet buys an unseen CA -> 🕵️ Smart buy
+  - >= CONSENSUS_WALLETS into same unseen CA within window -> 🔥 Consensus
+
+State: per-wallet last-seen blockTime persisted so restarts resume cleanly.
 """
 
 from __future__ import annotations
@@ -23,7 +20,6 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -33,63 +29,56 @@ import logs
 logger = logging.getLogger(__name__)
 
 SOL = "So11111111111111111111111111111111111111112"
+WSOL = SOL
 
 
-def _iso_to_ts(s: str) -> float:
-    return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+def parse_shyft_buys(wallet: str, txs: list[dict]) -> list[dict]:
+    """Derive buy rows from full Shyft transaction payloads.
 
-
-def extract_buy(swaps: list[dict], after_ts: float) -> list[dict]:
-    """New buy rows from a wallet-swaps payload (newest first).
-
-    A row counts when transactionType == 'buy' for the non-SOL side, i.e. the
-    wallet RECEIVED a token other than wSOL.
+    A row is emitted when the tracked wallet's balance of a non-wSOL token
+    INCREASED inside a successful transaction. Returns oldest-first.
     """
-    out = []
-    for t in swaps or []:
-        try:
-            ts = _iso_to_ts(t["blockTimestamp"])
-        except Exception:
+    rows: list[dict] = []
+    for tx in txs or []:
+        if (tx.get("meta") or {}).get("err") is not None:
             continue
-        if ts <= after_ts:
-            break  # payload is DESC; everything older is already seen
-        if t.get("transactionType") != "buy":
-            continue
-        # wallet-swaps payload: baseToken may be a plain address string
-        base = t.get("baseToken")
-        if isinstance(base, dict):
-            ca = base.get("address")
-            sym = base.get("symbol") or "?"
-        else:
-            ca, sym = (base or ""), "?"
-        if not ca or ca == SOL:
-            continue
-        sold = t.get("sold") or {}
-        if not isinstance(sold, dict):
-            sold = {}
-        try:
-            usd = float(sold.get("usdAmount") or 0)
-        except (TypeError, ValueError):
-            usd = 0.0
-        if sym == "?":
-            sym = str(t.get("pairLabel") or "").split("/")[0] or "?"
-        out.append({
-            "wallet": t.get("walletAddress"),
-            "ca": ca,
-            "symbol": sym,
-            "usd": usd,
-            "ts": ts,
-            "exchange": t.get("exchangeName"),
-        })
-    return out
+        bt = tx.get("blockTime") or 0
+        meta = tx.get("meta") or {}
+        pre = {(b.get("accountIndex")): b for b in meta.get("preTokenBalances") or []}
+        for pb in meta.get("postTokenBalances") or []:
+            mint = pb.get("mint")
+            if not mint or mint == WSOL:
+                continue
+            if pb.get("owner") != wallet:
+                continue
+            pre_amt = 0.0
+            old = pre.get(pb.get("accountIndex"))
+            if old and old.get("mint") == mint:
+                try:
+                    pre_amt = float(old.get("uiTokenAmount", {}).get("uiAmount") or 0)
+                except (TypeError, ValueError):
+                    pre_amt = 0.0
+            try:
+                post_amt = float(
+                    pb.get("uiTokenAmount", {}).get("uiAmount") or 0)
+            except (TypeError, ValueError):
+                continue
+            delta = post_amt - pre_amt
+            if delta <= 0:
+                continue
+            rows.append({"wallet": wallet, "ca": mint, "ts": float(bt),
+                         "amount": delta})
+    rows.sort(key=lambda r: r["ts"])
+    return rows
 
 
 class SmartWalletWatcher:
     def __init__(
         self,
         *,
-        helius_keys: list[str],
-        moralis_key: str,
+        shyft_key: str,
+        shyft_rpc: str = "https://rpc.shyft.to",
+        ds=None,
         notifier=None,
         wallets_file: str = "smart_money_wallets.json",
         state_file: str = "watcher_state.json",
@@ -98,163 +87,181 @@ class SmartWalletWatcher:
         min_buy_usd: float = 100.0,
         consensus_wallets: int = 2,
         consensus_window_s: float = 7200.0,
-        swap_lookback: int = 6,
+        first_lookback_s: float = 600.0,
+        manage_interval_s: float = 1.0,
     ) -> None:
         wf = Path(wallets_file)
         data = json.loads(wf.read_text()) if wf.exists() else {}
         self.wallets = list(data.keys())
-        self.helius_keys = helius_keys
-        self.moralis_key = moralis_key
+        self.shyft_key = shyft_key
+        self.shyft_rpc = shyft_rpc.rstrip("/")
+        self.ds = ds
         self.notifier = notifier
         self.poll_s = poll_s
         self.min_buy_usd = min_buy_usd
         self.consensus_wallets = consensus_wallets
         self.consensus_window_s = consensus_window_s
-        self.swap_lookback = swap_lookback
+        self.first_lookback_s = first_lookback_s
         self.state_file = Path(state_file)
         self.tokens_file = Path(tokens_file)
-        self._hidx = 0
-        self._http = httpx.AsyncClient(timeout=20)
-        self.state: dict[str, str] = {}          # wallet -> last seen signature
-        self.known_cas: set[str] = set()          # ever-alerted/seeded CAs
-        self.token_hits: dict[str, dict] = {}     # ca -> {wallets:[], first_ts}
+        self._http = httpx.AsyncClient(timeout=25)
+        self.state: dict[str, float] = {}         # wallet -> last blockTime
+        self.known_cas: set[str] = set()
+        self.token_hits: dict[str, dict] = {}
         self.consensus_fired = 0
         self.tatum_push = False
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
+        self._price_cache: dict[str, tuple[float, float]] = {}
         self._load_state()
 
     # ------------------------------------------------------------- state io
     def _load_state(self) -> None:
-        if self.state_file.exists():
-            try:
-                st = json.loads(self.state_file.read_text())
-                self.state = st.get("last_sig", {})
-                self.known_cas = set(st.get("known_cas", []))
-                self.token_hits = st.get("token_hits", {})
-            except Exception:
-                logger.exception("watcher state load failed")
-        # seed tokens from the discovery file so they never alert as "new"
-        wf = self.state_file.parent / "smart_money_wallets.json"
+        if not self.state_file.exists():
+            return
         try:
-            for meta in json.loads(wf.read_text()).values():
-                for sym in meta.get("symbols", []):
-                    pass  # symbols only; CAs arrive via live flow
+            st = json.loads(self.state_file.read_text())
+            sigs = st.get("last_sig") or {}
+            # migrate legacy signature-based state: start fresh lookback
+            self.state = {k: v for k, v in st.items()
+                          if k.startswith("ts:") and isinstance(v, (int, float))}
+            if not self.state and sigs:
+                cutoff = time.time() - self.first_lookback_s
+                for w in sigs:
+                    self.state[f"ts:{w}"] = cutoff
+            self.known_cas = set(st.get("known_cas", []))
+            self.token_hits = st.get("token_hits", {})
         except Exception:
-            pass
+            logger.exception("watcher state load failed")
 
     def _save_state(self) -> None:
         try:
             self.state_file.write_text(json.dumps({
-                "last_sig": self.state,
+                **{f"ts:{w}": t for w, t in self.state.items()},
                 "known_cas": sorted(self.known_cas),
                 "token_hits": self.token_hits,
             }, indent=1))
         except Exception:
             logger.exception("watcher state save failed")
 
-    # -------------------------------------------------------------- fetchers
-    async def helius(self, method: str, params: list):
-        for _ in range(len(self.helius_keys)):
-            k = self.helius_keys[self._hidx % len(self.helius_keys)]
-            self._hidx += 1
+    # ---------------------------------------------------------------- shyft
+    async def _fetch_txs(self, wallet: str, since_ts: float) -> list[dict]:
+        sep = "&" if "?" in self.shyft_rpc else "?api-key="
+        url = f"{self.shyft_rpc}{sep}api-key={self.shyft_key}"
+        txs: list[dict] = []
+        cursor = None
+        for _ in range(4):                      # up to ~400 txs per sweep
+            filters = {"blockTime": {"gte": int(since_ts)},
+                       "status": "any"}
+            params: list = [wallet, {
+                "transactionDetails": "full",
+                "encoding": "json",
+                "limit": 100,
+                "commitment": "confirmed",
+                "filters": filters,
+            }]
+            if cursor:
+                params[1]["paginationToken"] = cursor
             try:
-                r = await self._http.post(
-                    f"https://mainnet.helius-rpc.com/?api-key={k}",
-                    json={"jsonrpc": "2.0", "id": "1",
-                          "method": method, "params": params})
-                if r.status_code == 429:
-                    continue
-                j = r.json()
-                return None if j.get("error") else j.get("result")
-            except Exception:
-                continue
-        return None
-
-    async def wallet_swaps(self, wallet: str) -> list[dict]:
-        url = f"https://solana-gateway.moralis.io/account/mainnet/{wallet}/swaps"
-        try:
-            r = await self._http.get(url, headers={"X-API-Key": self.moralis_key,
-                                                   "accept": "application/json"},
-                                     params={"limit": self.swap_lookback,
-                                             "order": "DESC"})
-            if r.status_code == 401:
-                logger.error(
-                    "moralis 401 for %s… — API key invalid/expired on this "
-                    "host; check MORALIS_API_KEY in .env", wallet[:10])
-                return []
+                r = await self._http.post(url, json={
+                    "jsonrpc": "2.0", "id": "1",
+                    "method": "getTransactionsForAddress", "params": params})
+            except Exception as exc:
+                logger.warning("shyft %s… error %s", wallet[:10], exc)
+                return txs
             if r.status_code != 200:
-                logger.warning("moralis swaps %s… HTTP %s",
-                               wallet[:10], r.status_code)
-                return []
-            return r.json().get("result") or []
-        except Exception as exc:
-            logger.warning("moralis swaps %s… error %s", wallet[:10], exc)
-            return []
+                logger.warning("shyft HTTP %s for %s…",
+                               r.status_code, wallet[:10])
+                return txs
+            j = r.json()
+            res = j.get("result") or {}
+            batch = res.get("data") or []
+            txs += batch
+            cursor = res.get("paginationToken")
+            if not cursor or len(batch) < 100:
+                break
+        return txs
 
-    # ------------------------------------------------------------ processing
+    async def _usd(self, ca: str, amount: float) -> float:
+        """USD value of ``amount`` tokens via DexScreener (60s cache)."""
+        hit = self._price_cache.get(ca)
+        now = time.time()
+        if not hit or now - hit[0] > 60:
+            px = 0.0
+            if self.ds is not None:
+                try:
+                    snap = await self.ds.token_pairs("solana", ca)
+                    pair = max(snap["pairs"], key=lambda p: (
+                        p.get("liquidity") or {}).get("usd") or 0) \
+                        if snap and snap.get("pairs") else None
+                    px = float(pair.get("priceUsd") or 0) if pair else 0.0
+                except Exception:
+                    px = 0.0
+            hit = (now, px)
+            self._price_cache[ca] = hit
+        return hit[1] * amount
+
+    # ------------------------------------------------------------- pipeline
     async def process_now(self, wallet: str) -> None:
-        """Decode a wallet's latest swaps now (push/webhook entrypoint)."""
-        swaps = await self.wallet_swaps(wallet)
-        buys = extract_buy(swaps, after_ts=0.0)
-        for b in reversed(buys):  # oldest first
-            self._process_buy(wallet, b)
+        """Decode a wallet's last hour of activity now (push entrypoint)."""
+        await self._sweep_wallet(wallet, since=time.time() - 3600)
 
-    async def _sweep_wallet(self, wallet: str) -> None:
-        res = await self.helius("getSignaturesForAddress",
-                                [wallet, {"limit": 3}])
-        newest = res[0]["signature"] if res else None
-        last = self.state.get(wallet)
-        if not newest or newest == last:
-            return  # nothing new from this wallet
-        swaps = await self.wallet_swaps(wallet)
-        after_ts = 0.0
-        buys = extract_buy(swaps, after_ts=after_ts)
-        for b in reversed(buys):  # oldest first
-            self._process_buy(wallet, b)
-        self.state[wallet] = newest
+    async def _sweep_wallet(self, wallet: str,
+                            since: float | None = None) -> None:  # noqa: C901
+        if since is None:
+            since = self.state.get(f"ts:{wallet}",
+                                   time.time() - self.first_lookback_s)
+        txs = await self._fetch_txs(wallet, since)
+        if not txs:
+            return
+        buys = parse_shyft_buys(wallet, txs)
+        newest = max((t.get("blockTime") or 0) for t in txs) if txs else int(since)
+        for b in buys:                          # oldest first
+            b["usd"] = await self._usd(b["ca"], b["amount"])
+            await self._process_buy(wallet, b)
+        cur = self.state.get(f"ts:{wallet}", 0)
+        self.state[f"ts:{wallet}"] = max(cur, newest + 1)
 
     def _process_buy(self, wallet: str, b: dict) -> None:
         ca = b["ca"]
         now = time.time()
         hit = self.token_hits.setdefault(
-            ca, {"symbol": b["symbol"], "wallets": [], "first_ts": now,
-                 "usd": 0.0})
-        already = wallet in [w["w"] for w in hit["wallets"]]
-        hit["usd"] += b["usd"]
+            ca, {"symbol": "?", "wallets": [], "first_ts": now, "usd": 0.0})
+        already = wallet in [x["w"] for x in hit["wallets"]]
+        usd = b.get("usd") or 0.0
+        hit["usd"] += usd
         if not already:
-            hit["wallets"].append({"w": wallet, "usd": b["usd"], "ts": now})
+            hit["wallets"].append({"w": wallet, "usd": usd, "ts": now})
         fresh = ca not in self.known_cas
-        if b["usd"] < self.min_buy_usd and len(hit["wallets"]) < self.consensus_wallets:
-            logs.journal("watch_skip", ca=ca, wallet=wallet[:10],
-                         usd=b["usd"], reason="small")
+        if not already:
+            logs.journal("smart_buy_seen", ca=ca, wallet=wallet[:10],
+                         usd=round(usd, 2), n_smart=len(hit["wallets"]),
+                         fresh=fresh)
+        if len(hit["wallets"]) < self.consensus_wallets and usd < self.min_buy_usd:
             return
         if fresh:
             self.known_cas.add(ca)
-            logs.journal("smart_buy", ca=ca, symbol=b["symbol"],
-                         wallet=wallet[:10], usd=b["usd"],
-                         n_smart=len(hit["wallets"]))
         n = len(hit["wallets"])
-        if fresh or n >= self.consensus_wallets:
-            consensus = n >= self.consensus_wallets
-            if consensus:
-                self.consensus_fired += 1
-            icon = "🔥" if consensus else "🕵️"
-            title = ("CONSENSUS BUY" if consensus else "Smart wallet buy")
-            syms = ",".join(w["w"][:5] + "…($" + format(w["usd"], ".0f") + ")"
-                            for w in hit["wallets"][-4:])
-            logger.info("%s %s %s via %s (%s)", title, b['symbol'], ca[:10],
-                        wallet[:8], syms)
-            if self.notifier:
-                import asyncio
-                asyncio.get_event_loop().create_task(self.notifier.send_alert(
-                    f"{icon} {title}: {b['symbol']}",
-                    f"📍 `{ca}`\n🕵️ Smart wallets ({n}): {syms}\n"
-                    f"💵 Tracked volume ${hit['usd']:,.0f}"))
+        if not fresh and n < self.consensus_wallets:
+            return
+        consensus = n >= self.consensus_wallets
+        if consensus:
+            self.consensus_fired += 1
+        icon = "🔥" if consensus else "🕵️"
+        title = "CONSENSUS BUY" if consensus else "Smart wallet buy"
+        syms = ",".join(x["w"][:5] + "…($" + format(x["usd"], ".0f") + ")"
+                        for x in hit["wallets"][-4:])
+        logger.info("%s %s %s (%s)", title, b.get("symbol","?"), ca[:10], syms)
+        if self.notifier:
+            import asyncio as _aio
+            _aio.get_running_loop().create_task(self.notifier.send_alert(
+                f"{icon} {title}: {hit['symbol'] if hit['symbol']!='?' else ca[:6]+'…'}",
+                f"📍 `{ca}`\n🕵️ Smart wallets ({n}): {syms}\n"
+                f"💵 Tracked volume ${hit['usd']:,.0f}"))
 
     async def run(self) -> None:
-        logger.info("watcher started: %d wallets, poll %.0fs", len(self.wallets),
-                    self.poll_s)
+        logger.info("watcher started: %d wallets, poll %.0fs (shyft)",
+                    len(self.wallets), self.poll_s)
         while not self._stop.is_set():
             t0 = time.time()
             for w in list(self.wallets):
@@ -265,8 +272,7 @@ class SmartWalletWatcher:
                 if self._stop.is_set():
                     break
             self._save_state()
-            elapsed = time.time() - t0
-            wait = max(1.0, self.poll_s - elapsed)
+            wait = max(1.0, self.poll_s - (time.time() - t0))
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=wait)
             except TimeoutError:
@@ -280,4 +286,3 @@ class SmartWalletWatcher:
         if self._task:
             await asyncio.gather(self._task, return_exception=True)
         await self._http.aclose()
-
