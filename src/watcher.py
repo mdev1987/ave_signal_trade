@@ -146,8 +146,8 @@ class SmartWalletWatcher:
 
     # ---------------------------------------------------------------- shyft
     async def _fetch_txs(self, wallet: str, since_ts: float) -> list[dict]:
-        sep = "&" if "?" in self.shyft_rpc else "?api-key="
-        url = f"{self.shyft_rpc}{sep}api-key={self.shyft_key}"
+        base = self.shyft_rpc.split("?")[0].rstrip("/")
+        url = f"{base}?api_key={self.shyft_key}"
         txs: list[dict] = []
         cursor = None
         for _ in range(4):                      # up to ~400 txs per sweep
@@ -157,7 +157,7 @@ class SmartWalletWatcher:
                 "transactionDetails": "full",
                 "encoding": "json",
                 "limit": 100,
-                "commitment": "confirmed",
+                "commitment": {"commitment": "confirmed"},
                 "filters": filters,
             }]
             if cursor:
