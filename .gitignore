@@ -1,32 +1,39 @@
-
-bot_logs/
-build/
-config.ini
-dist/
-docs/
-*.egg-info
+# ---- secrets / credentials ----
 .env
+.env.bak
+throwaway_key.json
+*.session
+telegram_session.session*
+config.ini
+
+# ---- runtime state (auto-generated) ----
+bot_logs/
+watcher_state.json
+watched_tokens.json
+shadow_book.json
+shadow_book_*.json
+positions*.json
+tpositions.json
+smart_wallets.json
+smart_money_wallets_pertoken.json
+.runwisp/
 .freebuff
-.opencode/
-paper_positions*.json
+
+# ---- python / tooling ----
 __pycache__/
 *.py[oc]
-# Python-generated files
-.ruff_cache/
-# runtime state
-.runwisp/
-runwisp.toml
-*.session
-shadow_book.json
-telegram_session.session
-telegram_session.session-journal
-# Telegram session + tgdata config + paper-trade checkpoints
-throwaway_key.json
-tpositions.json
-# trade_log.csv, bot.log, journal.json files
 .venv/
-# Virtual environments
-.vscode/
-watched_tokens.json
-watcher_state.json
+.ruff_cache/
+build/
+dist/
 wheels/
+*.egg-info
+
+# ---- editors / misc ----
+.vscode/
+.opencode/
+docs/
+
+# ---- retired stack configs ----
+runwisp.toml
+paper_positions.json
