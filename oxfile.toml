@@ -1,21 +1,22 @@
-# OxMgr supervision - watcher only
-# NOTE: cwd below points at THIS machine's clone. On another VPS edit it.
 version = 1
 
 [[apps]]
 name = "watcher"
 command = "uv run main.py watch"
-cwd = "/home/mdev/Programming/ave_signal_trade"   # EDIT per machine
+cwd = "/home/mdev/ave_signal_trade"
 restart_policy = "always"
 max_restarts = 1000
-crash_restart_limit = 0            # network outages retry forever
+crash_restart_limit = 0
 restart_delay_secs = 5
 stop_signal = "SIGTERM"
 stop_timeout_secs = 20
-health_cmd = "find bot_logs/watcher.log -mmin -6"
+health_cmd = "/usr/local/bin/find bot_logs/watcher.log -mmin -6"
 health_interval_secs = 60
 health_timeout_secs = 5
 health_max_failures = 3
 
 [apps.env]
 PATH = "/home/mdev/.local/bin:/usr/local/bin:/usr/bin:/bin"
+HOME = "/home/mdev"
+# ^ mirror of the working VPS config. Local dev: edit cwd/PATH then:
+#   git update-index --skip-worktree oxfile.toml
