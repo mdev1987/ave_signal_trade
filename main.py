@@ -194,7 +194,7 @@ class ShadowBook:
             if exit_reason:
                 pnl = pos.get("banked_pnl", 0.0) + \
                     pos["size_sol"] * (mult - 1.0)
-                rec = {"symbol": pos["symbol"], "reason": exit_reason,
+                rec = {"ca": ca, "symbol": pos["symbol"], "reason": exit_reason,
                        "mult": round(mult, 3), "pnl_sol": round(pnl, 5),
                        "hold_min": int((time.time() - pos["ts"]) / 60)}
                 self.closed.append(rec)
@@ -241,11 +241,15 @@ async def _run_watch(s: cfg.Settings) -> int:
     def process_and_track(wallet: str, b: dict) -> None:
         orig_process(wallet, b)
         ca = b["ca"]
-        if ca not in book.open and all(c["symbol"] != b["symbol"]
-                                       for c in book.closed[-50:]):
-            hit = w.token_hits.get(ca) or {}
-            asyncio.ensure_future(book.open_position(
-                ca, b["symbol"], b["usd"], b["usd"], len(hit.get("wallets", []))))
+        if b["usd"] < s.watch_min_buy_usd:
+            return
+        if ca in book.open or len(book.open) >= 12:
+            return
+        if any(c.get("ca") == ca for c in book.closed[-100:]):
+            return
+        hit = w.token_hits.get(ca) or {}
+        asyncio.ensure_future(book.open_position(
+            ca, b["symbol"], b["usd"], b["usd"], len(hit.get("wallets", []))))
 
     w._process_buy = process_and_track  # type: ignore[method-assign]
 
