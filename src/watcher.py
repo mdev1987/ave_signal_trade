@@ -113,6 +113,7 @@ class SmartWalletWatcher:
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._price_cache: dict[str, tuple[float, float]] = {}
+        self._last_rpc_ts = 0.0
         self._load_state()
 
     # ------------------------------------------------------------- state io
@@ -145,6 +146,14 @@ class SmartWalletWatcher:
             logger.exception("watcher state save failed")
 
     # ---------------------------------------------------------------- shyft
+    async def _throttle(self, min_gap_s: float = 0.15) -> None:
+        """Keep Shyft RPC under the plan's 10 req/sec (burst-safe)."""
+        now = time.monotonic()
+        wait = self._last_rpc_ts + min_gap_s - now
+        if wait > 0:
+            await asyncio.sleep(wait)
+        self._last_rpc_ts = time.monotonic()
+
     async def _fetch_txs(self, wallet: str, since_ts: float) -> list[dict]:
         base = self.shyft_rpc.split("?")[0].rstrip("/")
         url = f"{base}?api_key={self.shyft_key}"
@@ -162,13 +171,20 @@ class SmartWalletWatcher:
             }]
             if cursor:
                 params[1]["paginationToken"] = cursor
-            try:
-                r = await self._http.post(url, json={
-                    "jsonrpc": "2.0", "id": "1",
-                    "method": "getTransactionsForAddress", "params": params})
-            except Exception as exc:
-                logger.warning("shyft %s… error %s", wallet[:10], exc)
-                return txs
+            for attempt in range(2):          # one 429-retry
+                await self._throttle()
+                try:
+                    r = await self._http.post(url, json={
+                        "jsonrpc": "2.0", "id": "1",
+                        "method": "getTransactionsForAddress",
+                        "params": params})
+                except Exception as exc:
+                    logger.warning("shyft %s… error %s", wallet[:10], exc)
+                    return txs
+                if r.status_code == 429:
+                    await asyncio.sleep(0.6 * (attempt + 1))
+                    continue
+                break
             if r.status_code != 200:
                 logger.warning("shyft HTTP %s for %s…",
                                r.status_code, wallet[:10])
@@ -217,8 +233,11 @@ class SmartWalletWatcher:
         buys = parse_shyft_buys(wallet, txs)
         newest = max((t.get("blockTime") or 0) for t in txs) if txs else int(since)
         for b in buys:                          # oldest first
-            b["usd"] = await self._usd(b["ca"], b["amount"])
-            await self._process_buy(wallet, b)
+            try:
+                b["usd"] = await self._usd(b["ca"], b["amount"])
+                await self._process_buy(wallet, b)
+            except Exception:
+                logger.exception("buy processing failed %s", b.get("ca","")[:10])
         cur = self.state.get(f"ts:{wallet}", 0)
         self.state[f"ts:{wallet}"] = max(cur, newest + 1)
 
