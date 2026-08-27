@@ -533,6 +533,7 @@ async def _run_discover(s: cfg.Settings, args=None) -> int:
         early_window_s=s.discover_early_window_s,
         tx_per_pool=s.discover_tx_per_pool,
         min_buy_usd=s.discover_min_buy_usd,
+        max_buy_usd=s.discover_max_buy_usd,
         out_file=s.discover_out_file,
         pump_pct=s.discover_pump_pct,
         enrich=s.discover_enrich,

@@ -199,8 +199,9 @@ class WalletDiscovery:
         max_wallets: int = 40,
         early_window_s: float = 1800.0,   # "early" = within 30 min of pool birth
         tx_per_pool: int = 60,
-        min_buy_usd: float = 50.0,
-        out_file: str = "smart_money_wallets.json",
+                 min_buy_usd: float = 50.0,
+                 max_buy_usd: float = 1_000_000.0,
+                 out_file: str = "smart_money_wallets.json",
         pump_pct: float = 100.0,          # token "pumped" if 24h chg >= this
         enrich: bool = True,              # fetch token details to set `pumped`
         replace: bool = False,            # overwrite file instead of merging
@@ -367,7 +368,7 @@ class WalletDiscovery:
             else:
                 continue
             wallet = tx.get("sender")
-            if not wallet or usd < self.min_buy_usd:
+            if not wallet or usd < self.min_buy_usd or usd > self.max_buy_usd:
                 continue
             ts = _to_ts(tx.get("created_at"))
             early = pool_born is not None and ts is not None and \

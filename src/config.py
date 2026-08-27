@@ -90,6 +90,7 @@ class Settings:
     discover_early_window_s: float = 1800.0
     discover_tx_per_pool: int = 60
     discover_min_buy_usd: float = 50.0
+    discover_max_buy_usd: float = 1_000_000.0  # ignore freak volume*price outliers
     discover_out_file: str = "smart_money_wallets.json"
     discover_pump_pct: float = 100.0  # token counts as "pumped" if 24h chg >= this
     discover_enrich: bool = True      # fetch token details to mark pumped (no DeBot)
@@ -125,6 +126,7 @@ def load_settings(path: str = ".env") -> Settings:
         discover_early_window_s=get_float(env, "DISCOVER_EARLY_WINDOW_S", 1800.0),
         discover_tx_per_pool=get_int(env, "DISCOVER_TX_PER_POOL", 60),
         discover_min_buy_usd=get_float(env, "DISCOVER_MIN_BUY_USD", 50.0),
+        discover_max_buy_usd=get_float(env, "DISCOVER_MAX_BUY_USD", 1_000_000.0),
         discover_out_file=get(env, "DISCOVER_OUT_FILE", "smart_money_wallets.json"),
         discover_pump_pct=get_float(env, "DISCOVER_PUMP_PCT", 100.0),
         discover_enrich=get_bool(env, "DISCOVER_ENRICH", True),
