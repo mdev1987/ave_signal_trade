@@ -124,11 +124,11 @@ class ShadowBook:
 
     async def open_position(self, ca: str, symbol: str, usd_entry: float,
                             trigger_usd: float, n_wallets: int) -> None:
+        # token_pairs() returns a normalized single-pair dict ({"price_usd": ...})
+        # or None — not a {"pairs": [...]} wrapper.
         snap = await self.ds.token_pairs("solana", ca)
-        pair = max(snap["pairs"],
-                   key=lambda p: (p.get("liquidity") or {}).get("usd") or 0) \
-            if snap and snap.get("pairs") else None
-        px = float((pair or {}).get("priceUsd") or usd_entry or 0)
+        px = float(snap.get("price_usd") or usd_entry or 0) if snap \
+            else float(usd_entry or 0)
         if px <= 0:
             px = usd_entry
         entry_note = "dexscreener"
@@ -152,6 +152,7 @@ class ShadowBook:
             "tokens_raw": tokens_raw, "entry_note": entry_note,
             "size_sol": self.size_sol, "ts": time.time(),
             "trigger_usd": trigger_usd, "n_wallets": n_wallets,
+            "tp1_done": False, "tp1_banked": False, "tp1_mult": 2.0,
         }
         logs.journal("shadow_entry_px", ca=ca, px=px, note=entry_note)
         logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
@@ -161,10 +162,10 @@ class ShadowBook:
     async def refresh_prices(self) -> None:
         for ca in list(self.open):
             snap = await self.ds.token_pairs("solana", ca)
-            pair = max(snap["pairs"],
-                       key=lambda p: (p.get("liquidity") or {}).get("usd") or 0)\
-                if snap and snap.get("pairs") else None
-            pxs = (pair or {}).get("priceUsd")
+            # token_pairs() returns a normalized single-pair dict or None
+            if not snap:
+                continue
+            pxs = snap.get("price_usd")
             if not pxs:
                 continue
             px = float(pxs)
@@ -179,7 +180,7 @@ class ShadowBook:
                 exit_reason = "sl"
             elif peak_mult >= 1.10 and px <= pos["peak_usd"] * (1 - self.retrace):
                 exit_reason = "trail"
-            elif pos["tp1_done"] is False and peak_mult >= pos.get("tp1_mult", 2.0) \
+            elif not pos.get("tp1_done") and peak_mult >= pos.get("tp1_mult", 2.0) \
                     and not pos.get("tp1_banked"):
                 # partial TP: bank half at 2x (virtual), runner continues
                 pos["tp1_banked"] = True
@@ -199,7 +200,7 @@ class ShadowBook:
                        "hold_min": int((time.time() - pos["ts"]) / 60)}
                 self.closed.append(rec)
                 del self.open[ca]
-                logs.journal("shadow_close", ca=ca, **rec)
+                logs.journal("shadow_close", **rec)
         self.save()
 
     # ------------------------------------------------------------- reporting
@@ -424,15 +425,12 @@ def cmd_sim(args) -> int:
         ds = DexScreenerClient(
             base_url=cfg.load_settings().dexscreener_base_url)
         snap = await ds.token_pairs("solana", args.ca)
-        pair = max(snap["pairs"],
-                   key=lambda p: (p.get("liquidity") or {}).get("usd") or 0) \
-            if snap and snap.get("pairs") else None
-        if pair:
-            pc = pair.get("priceChange", {})
-            print(f"market : ${float(pair.get('priceUsd') or 0):.8f} "
-                  f"liq=${(pair.get('liquidity') or {}).get('usd') or 0:,.0f} "
-                  f"mcap=${pair.get('marketCap') or 0:,.0f} "
-                  f"m5={pc.get('m5')}% h1={pc.get('h1')}%")
+        # token_pairs() returns a normalized single-pair dict or None
+        if snap:
+            print(f"market : ${float(snap.get('price_usd') or 0):.8f} "
+                  f"liq=${snap.get('liq') or 0:,.0f} "
+                  f"mcap=${snap.get('mcap') or 0:,.0f} "
+                  f"m5={snap.get('vol_m5')}% h1={snap.get('vol_h1')}%")
 
         q = await j.quote(args.ca, int(size * 1e9), force=True)
         if q is None or not q.success:
