@@ -23,6 +23,8 @@ import sys
 import time
 from pathlib import Path
 
+_SOL_MINT = "So11111111111111111111111111111111111111112"  # WSOL
+
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 import base58
@@ -122,31 +124,47 @@ class ShadowBook:
         except Exception:
             log.exception("shadow book save failed")
 
+    async def _sol_usd(self) -> float:
+        """Current SOL price in USD, used to derive a USD entry from a SOL quote."""
+        try:
+            s = await self.ds.token_pairs("solana", _SOL_MINT)
+            return float(s.get("price_usd") or 0) if s else 0.0
+        except Exception:
+            return 0.0
+
     async def open_position(self, ca: str, symbol: str, usd_entry: float,
                             trigger_usd: float, n_wallets: int) -> None:
-        # token_pairs() returns a normalized single-pair dict ({"price_usd": ...})
-        # or None — not a {"pairs": [...]} wrapper.
+        # Entry price MUST be in the same unit as refresh_prices' DexScreener
+        # price_usd (USD per token). We use DexScreener as the canonical source
+        # so TP1 / trail / hard-stop thresholds compare like-for-like. (An
+        # earlier bug stored a SOL-per-token Jupiter price as USD-per-token,
+        # producing a ~100x mismatch that fired TP1 instantly.)
         snap = await self.ds.token_pairs("solana", ca)
-        px = float(snap.get("price_usd") or usd_entry or 0) if snap \
-            else float(usd_entry or 0)
-        if px <= 0:
-            px = usd_entry
-        entry_note = "dexscreener"
+        px = float(snap.get("price_usd") or 0) if snap else 0.0
         tokens_raw = 0
+        entry_note = "dexscreener"
         if self.jupiter is not None:
             q = await self.jupiter.quote(ca, int(self.size_sol * 1e9),
                                          force=True)
-            if q is not None and q.success:
-                dec = await self.jupiter.token_decimals(ca) or 6
-                tokens_raw = q.output_amount
-                px = self.size_sol / (tokens_raw / (10 ** dec))
-                entry_note = f"jup impact={q.price_impact_pct:.2f}%"
-            else:
+            if q is None or not q.success:
                 reason = q.reason if q else "quote_exception"
                 logs.journal("shadow_skip", ca=ca, symbol=symbol,
                              reason=f"untradable:{reason}")
                 log.info("shadow skip %s (%s): %s", ca[:10], symbol, reason)
                 return
+            tokens_raw = q.output_amount
+            entry_note = f"jup impact={q.price_impact_pct:.2f}%"
+            # Fallback if DexScreener had no usable price: derive USD/token from
+            # the Jupiter fill (size_sol SOL spent -> tokens received) and SOL USD.
+            if px <= 0:
+                dec = await self.jupiter.token_decimals(ca) or 6
+                sol_usd = await self._sol_usd()
+                if sol_usd and tokens_raw:
+                    px = (self.size_sol * sol_usd) / (tokens_raw / (10 ** dec))
+        if px <= 0:
+            logs.journal("shadow_skip", ca=ca, symbol=symbol, reason="no_price")
+            log.info("shadow skip %s (%s): no price", ca[:10], symbol)
+            return
         self.open[ca] = {
             "symbol": symbol, "entry_usd": px, "peak_usd": px, "last_usd": px,
             "tokens_raw": tokens_raw, "entry_note": entry_note,
@@ -229,6 +247,7 @@ async def _run_watch(s: cfg.Settings) -> int:
         poll_s=s.watch_poll_s,
         min_buy_usd=s.watch_min_buy_usd,
         consensus_wallets=s.watch_consensus_wallets,
+        first_lookback_s=s.watch_first_lookback_s,
         state_file="watcher_state.json",
     )
     jupiter = JupiterSwap(dry_run=True)
@@ -236,10 +255,15 @@ async def _run_watch(s: cfg.Settings) -> int:
                       Path(s.shadow_state_file), s.start_balance_sol,
                       jupiter=jupiter)
 
-    # shadow book opens automatically via on_smart_buy callback
+    # shadow book opens automatically via on_smart_buy callback. During the
+    # initial lookback window we only TRACK buys (so consensus alerts still
+    # fire) and defer opening, so we never enter late — after a wallet's move
+    # has already happened — which would systematically buy high.
+    backfill_done = asyncio.Event()
     w.on_smart_buy = lambda ca, sym, usd, n: book.open_position(
         ca, sym, usd, usd, n) if (
-        usd >= s.watch_min_buy_usd
+        backfill_done.is_set()
+        and usd >= s.watch_min_buy_usd
         and ca not in book.open
         and len(book.open) < 12
         and not any(c.get("ca") == ca for c in book.closed[-100:])
@@ -316,6 +340,13 @@ async def _run_watch(s: cfg.Settings) -> int:
     await notifier.send_startup(build_status(book.snapshot(
         len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True})))
     w.start()
+
+    async def _enable_live_opens() -> None:
+        await asyncio.sleep(s.watch_first_lookback_s)
+        backfill_done.set()
+        log.info("initial lookback complete — live position opening enabled")
+
+    asyncio.create_task(_enable_live_opens())
     status_task = asyncio.create_task(status_loop())
 
     manage_s = 5.0
