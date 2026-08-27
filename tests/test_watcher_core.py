@@ -2,7 +2,9 @@
 
 import sys
 import pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+_ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "src"))
 
 from watcher import parse_shyft_buys  # noqa: E402
 from main import build_status        # noqa: E402

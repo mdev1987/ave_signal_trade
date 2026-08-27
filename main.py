@@ -42,6 +42,20 @@ from watcher import SmartWalletWatcher
 log = logging.getLogger("main")
 
 
+def _log_task_result(task: asyncio.Task) -> None:
+    """Log (not swallow) any exception from a background task so a crash shows.
+
+    Fire-and-forget ``create_task`` calls lose their exception unless someone
+    retrieves ``task.result()``; without this a crashed task is invisible.
+    """
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        log.exception("background task %s failed", task.get_name())
+
+
 # ------------------------------------------------------------------ status --
 def build_status(st: dict) -> str:
     """Compact markdown status card from watcher/shadow state dict."""
@@ -105,6 +119,7 @@ class ShadowBook:
         self.balance_sol = float(start_balance_sol)
         self.open: dict[str, dict] = {}
         self.closed: list[dict] = []
+        self._lock = asyncio.Lock()
         self._load()
 
     def _win_rate(self) -> float:
@@ -187,25 +202,28 @@ class ShadowBook:
             return
         # Simulated wallet: deploy size_sol on open. Skip if it would
         # over-leverage the tracked balance (can't open what we can't fund).
-        if self.balance_sol < self.size_sol:
-            logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                         reason="insufficient_balance")
-            log.info("shadow skip %s (%s): insufficient balance %.4f",
-                      ca[:10], symbol, self.balance_sol)
-            return
-        bal_before = self.balance_sol
-        self.balance_sol -= self.size_sol
-        self.open[ca] = {
-            "symbol": symbol, "entry_usd": px, "peak_usd": px, "last_usd": px,
-            "tokens_raw": tokens_raw, "entry_note": entry_note,
-            "size_sol": self.size_sol, "ts": time.time(),
-            "trigger_usd": trigger_usd, "n_wallets": n_wallets,
-            "tp1_done": False, "tp1_banked": False, "tp1_mult": 2.0,
-        }
-        logs.journal("shadow_entry_px", ca=ca, px=px, note=entry_note)
-        logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
-                     trigger=trigger_usd, n=n_wallets)
-        self.save()
+        # The mutation is locked so an in-flight refresh_prices() (running in
+        # the main loop) can never interleave and double-count balance/positions.
+        async with self._lock:
+            if self.balance_sol < self.size_sol:
+                logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                             reason="insufficient_balance")
+                log.info("shadow skip %s (%s): insufficient balance %.4f",
+                          ca[:10], symbol, self.balance_sol)
+                return
+            bal_before = self.balance_sol
+            self.balance_sol -= self.size_sol
+            self.open[ca] = {
+                "symbol": symbol, "entry_usd": px, "peak_usd": px, "last_usd": px,
+                "tokens_raw": tokens_raw, "entry_note": entry_note,
+                "size_sol": self.size_sol, "ts": time.time(),
+                "trigger_usd": trigger_usd, "n_wallets": n_wallets,
+                "tp1_done": False, "tp1_banked": False, "tp1_mult": 2.0,
+            }
+            logs.journal("shadow_entry_px", ca=ca, px=px, note=entry_note)
+            logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
+                         trigger=trigger_usd, n=n_wallets)
+            self.save()
         if self.notifier is not None:
             try:
                 asyncio.get_running_loop().create_task(self.notifier.send_open(
@@ -218,70 +236,75 @@ class ShadowBook:
                 log.exception("send_open failed")
 
     async def refresh_prices(self) -> None:
-        for ca in list(self.open):
-            snap = await self.ds.token_pairs("solana", ca)
-            # token_pairs() returns a normalized single-pair dict or None
-            if not snap:
-                continue
-            pxs = snap.get("price_usd")
-            if not pxs:
-                continue
-            px = float(pxs)
-            pos = self.open[ca]
-            pos["last_usd"] = px
-            pos["peak_usd"] = max(pos["peak_usd"], px)
-            entry = pos["entry_usd"]
-            mult = px / entry if entry else 0
-            peak_mult = pos["peak_usd"] / entry if entry else 0
-            exit_reason = None
-            if self.hard_stop > 0 and mult <= (1 - self.hard_stop):
-                exit_reason = "sl"
-            elif peak_mult >= 1.10 and px <= pos["peak_usd"] * (1 - self.retrace):
-                exit_reason = "trail"
-            elif not pos.get("tp1_done") and peak_mult >= pos.get("tp1_mult", 2.0) \
-                    and not pos.get("tp1_banked"):
-                # partial TP: bank half at 2x (virtual), runner continues
-                pos["tp1_banked"] = True
-                pos["banked_pnl"] = pos["size_sol"] * 0.5 * (2.0 - 1.0)
-                logs.journal("shadow_tp1", ca=ca, symbol=pos["symbol"])
-            if exit_reason and self.jupiter is not None and pos.get("tokens_raw"):
-                try:
-                    sq = await self.jupiter.quote_sell(ca, pos["tokens_raw"])
-                    if sq is not None and sq.success:
-                        sol_out = sq.output_amount / 1e9
-                        mult = sol_out / pos["size_sol"]
-                        pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
-                except Exception:
-                    log.exception("sell-quote failed for %s; using price-ratio pnl",
-                                  ca[:10])
-            if exit_reason:
-                pnl = pos.get("banked_pnl", 0.0) + \
-                    pos["size_sol"] * (mult - 1.0)
-                rec = {"ca": ca, "symbol": pos["symbol"], "reason": exit_reason,
-                       "mult": round(mult, 3), "pnl_sol": round(pnl, 5),
-                       "hold_min": int((time.time() - pos["ts"]) / 60)}
-                self.closed.append(rec)
-                bal_before = self.balance_sol
-                self.balance_sol += self.size_sol + pnl
-                del self.open[ca]
-                logs.journal("shadow_close", **rec)
-                if self.notifier is not None:
+        # Single lock around the whole scan: refresh and open_position run in
+        # different tasks, and both read/write self.open / self.balance_sol.
+        # Serializing them prevents lost updates (e.g. an open landing in the
+        # middle of a close, or a balance miscount).
+        async with self._lock:
+            for ca in list(self.open):
+                snap = await self.ds.token_pairs("solana", ca)
+                # token_pairs() returns a normalized single-pair dict or None
+                if not snap:
+                    continue
+                pxs = snap.get("price_usd")
+                if not pxs:
+                    continue
+                px = float(pxs)
+                pos = self.open[ca]
+                pos["last_usd"] = px
+                pos["peak_usd"] = max(pos["peak_usd"], px)
+                entry = pos["entry_usd"]
+                mult = px / entry if entry else 0
+                peak_mult = pos["peak_usd"] / entry if entry else 0
+                exit_reason = None
+                if self.hard_stop > 0 and mult <= (1 - self.hard_stop):
+                    exit_reason = "sl"
+                elif peak_mult >= 1.10 and px <= pos["peak_usd"] * (1 - self.retrace):
+                    exit_reason = "trail"
+                elif not pos.get("tp1_done") and peak_mult >= pos.get("tp1_mult", 2.0) \
+                        and not pos.get("tp1_banked"):
+                    # partial TP: bank half at 2x (virtual), runner continues
+                    pos["tp1_banked"] = True
+                    pos["banked_pnl"] = pos["size_sol"] * 0.5 * (2.0 - 1.0)
+                    logs.journal("shadow_tp1", ca=ca, symbol=pos["symbol"])
+                if exit_reason and self.jupiter is not None and pos.get("tokens_raw"):
                     try:
-                        asyncio.get_running_loop().create_task(
-                            self.notifier.send_close(
-                                ca=ca, name=pos["symbol"], reason=exit_reason,
-                                mult=mult, pnl_sol=pnl,
-                                hold_s=time.time() - pos["ts"],
-                                entry_px=pos["entry_usd"], exit_px=pos["last_usd"],
-                                size_sol=pos["size_sol"],
-                                balance_before=bal_before,
-                                balance_after=self.balance_sol,
-                                open_count=len(self.open),
-                                max_positions=self.max_positions,
-                                win_rate=self._win_rate()))
+                        sq = await self.jupiter.quote_sell(ca, pos["tokens_raw"])
+                        if sq is not None and sq.success:
+                            sol_out = sq.output_amount / 1e9
+                            mult = sol_out / pos["size_sol"]
+                            pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
                     except Exception:
-                        log.exception("send_close failed")
-        self.save()
+                        log.exception("sell-quote failed for %s; using price-ratio pnl",
+                                      ca[:10])
+                if exit_reason:
+                    pnl = pos.get("banked_pnl", 0.0) + \
+                        pos["size_sol"] * (mult - 1.0)
+                    rec = {"ca": ca, "symbol": pos["symbol"], "reason": exit_reason,
+                           "mult": round(mult, 3), "pnl_sol": round(pnl, 5),
+                           "hold_min": int((time.time() - pos["ts"]) / 60)}
+                    self.closed.append(rec)
+                    bal_before = self.balance_sol
+                    self.balance_sol += self.size_sol + pnl
+                    del self.open[ca]
+                    logs.journal("shadow_close", **rec)
+                    if self.notifier is not None:
+                        try:
+                            asyncio.get_running_loop().create_task(
+                                self.notifier.send_close(
+                                    ca=ca, name=pos["symbol"], reason=exit_reason,
+                                    mult=mult, pnl_sol=pnl,
+                                    hold_s=time.time() - pos["ts"],
+                                    entry_px=pos["entry_usd"], exit_px=pos["last_usd"],
+                                    size_sol=pos["size_sol"],
+                                    balance_before=bal_before,
+                                    balance_after=self.balance_sol,
+                                    open_count=len(self.open),
+                                    max_positions=self.max_positions,
+                                    win_rate=self._win_rate()))
+                        except Exception:
+                            log.exception("send_close failed")
+            self.save()
 
     # ------------------------------------------------------------- reporting
     def snapshot(self, wallets_n: int, alerts: int, consensus: int,
@@ -333,7 +356,7 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     _skip_log = {}
 
-    def _on_smart_buy(ca, sym, usd, n):
+    async def _on_smart_buy(ca, sym, usd, n):
         if not backfill_done.is_set():
             reason = "deferred:lookback"
         elif usd < s.watch_min_buy_usd:
@@ -350,12 +373,12 @@ async def _run_watch(s: cfg.Settings) -> int:
             reason = "skip:open_spacing"
         else:
             last_open["t"] = time.time()
-            return book.open_position(ca, sym, usd, usd, n)
+            await book.open_position(ca, sym, usd, usd, n)
+            return
         now = time.time()
         if _skip_log.get(ca, 0) < now - 300:
             _skip_log[ca] = now
             log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-        return asyncio.sleep(0)
 
     w.on_smart_buy = _on_smart_buy
 
@@ -392,7 +415,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             hit = next((x for x in cand if x in set(w.wallets)), None)
             if hit:
                 w.tatum_push = True
-                asyncio.create_task(w.process_now(hit))
+                asyncio.create_task(w.process_now(hit)).add_done_callback(
+                    _log_task_result)
         except Exception:
             log.exception("webhook parse failed")
         return web.Response(text="ok")
@@ -432,8 +456,9 @@ async def _run_watch(s: cfg.Settings) -> int:
         backfill_done.set()
         log.info("initial lookback complete — live position opening enabled")
 
-    asyncio.create_task(_enable_live_opens())
+    asyncio.create_task(_enable_live_opens()).add_done_callback(_log_task_result)
     status_task = asyncio.create_task(status_loop())
+    status_task.add_done_callback(_log_task_result)
 
     manage_s = 5.0
     try:
@@ -470,14 +495,14 @@ def cmd_tatum_setup(_args) -> int:
 
 
 def cmd_status(_args) -> int:
-    from watcher import SmartWalletWatcher as _W  # noqa: F401 (state compat)
     book = ShadowBook(DexScreenerClient(), 0, 0, 0,
                       Path(cfg.load_settings().shadow_state_file), 0)
     st = json.loads(Path("watcher_state.json").read_text()) \
         if Path("watcher_state.json").exists() else {}
-    snap = book.snapshot(len(st.get("last_sig", {})),
-                         st.get("alerts", 0), st.get("consensus", 0),
-                         0, {})
+    wallets_n = len([k for k in st if k.startswith("ts:")])
+    snap = book.snapshot(wallets_n,
+                          st.get("alerts", 0), st.get("consensus", 0),
+                          0, {})
     print(build_status(snap))
     return 0
 

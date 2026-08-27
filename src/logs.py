@@ -109,32 +109,26 @@ def setup_logging(level: int = logging.INFO, log_file: str | None = None) -> Non
 def _collect_secrets(settings) -> tuple[str, ...]:
     """Collect non-empty secrets to redact from every log line.
 
-    Starts from known :class:`config.Settings` secret fields, then also scans
-    ``os.environ`` for any variable whose name looks like a secret (contains
-    ``KEY``, ``TOKEN``, ``SECRET``, ``HASH``, ``PASS`` or ``PRIVATE``) so keys
-    that are not part of Settings are still masked.
+    Reads secret fields defensively (some may be absent on a given
+    :class:`config.Settings` variant) and also scans ``os.environ`` for any
+    variable whose name looks like a secret (contains ``KEY``, ``TOKEN``,
+    ``SECRET``, ``HASH``, ``PASS`` or ``PRIVATE``) so keys that are not part of
+    Settings are still masked.
+
+    The goal is to NEVER let a raw key/token reach ``bot.log`` or the console.
     """
     candidates: list[str] = [
-        settings.bot_token,
-        settings.private_key,
-        settings.jupiter_api_key,
-        settings.dex_paprika_key,
-        settings.helius_api_keys,
-        settings.telegram_api_hash,
+        getattr(settings, name, "") or ""
+        for name in (
+            "bot_token", "private_key", "jupiter_api_key",
+            "dex_paprika_key", "helius_api_keys", "telegram_api_hash",
+        )
     ]
     for name, value in os.environ.items():
         upper = name.upper()
         if any(tok in upper for tok in ("KEY", "TOKEN", "SECRET", "HASH", "PASS", "PRIVATE")):
             candidates.append(value)
     return tuple(v for v in candidates if v)
-
-
-def register_secrets(values) -> None:
-    """Add runtime-discovered secrets (api keys etc.) to the redactor."""
-    global _REDACT
-    vals = [str(v) for v in values
-            if v and len(str(v)) >= 12 and str(v) not in _REDACT]
-    _REDACT = tuple(set(_REDACT) | set(vals))
 
 
 def journal(event: str, **fields) -> None:

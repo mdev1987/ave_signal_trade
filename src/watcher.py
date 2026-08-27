@@ -32,6 +32,22 @@ SOL = "So11111111111111111111111111111111111111112"
 WSOL = SOL
 
 
+def _report_crash(task: asyncio.Task) -> None:
+    """Surface (not swallow) an unexpected exception from a background task.
+
+    Without this, a coroutine spawned via ``create_task`` that raises will
+    fail silently and the bot keeps running minus that task (e.g. the whole
+    sweep loop) — exactly the kind of "it just stopped finding trades" bug
+    that is invisible in the logs.
+    """
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("watcher background task crashed: %s", task.get_name())
+
+
 def parse_shyft_buys(wallet: str, txs: list[dict]) -> list[dict]:
     """Derive buy rows from full Shyft transaction payloads.
 
@@ -111,6 +127,7 @@ class SmartWalletWatcher:
         self.consensus_alerted: set[str] = set()  # CAs that already had a consensus alert
         self.token_hits: dict[str, dict] = {}
         self.consensus_fired = 0
+        self._consensus_sent: set[str] = set()
         self.on_smart_buy = on_smart_buy
         self.tatum_push = False
         self._stop = asyncio.Event()
@@ -283,11 +300,9 @@ class SmartWalletWatcher:
         n = len(hit["wallets"])
         if not fresh and n < self.consensus_wallets:
             return
-        consensus = n >= self.consensus_wallets and ca not in getattr(self, "_consensus_sent", set())
+        consensus = n >= self.consensus_wallets and ca not in self._consensus_sent
         if consensus:
             self.consensus_fired += 1
-            if not hasattr(self, "_consensus_sent"):
-                self._consensus_sent = set()
             self._consensus_sent.add(ca)
         icon = "🔥" if consensus else "🕵️"
         title = "CONSENSUS BUY" if consensus else "Smart wallet buy"
@@ -324,6 +339,7 @@ class SmartWalletWatcher:
 
     def start(self) -> None:
         self._task = asyncio.create_task(self.run())
+        self._task.add_done_callback(_report_crash)
 
     async def stop(self) -> None:
         self._stop.set()
