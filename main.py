@@ -331,16 +331,30 @@ async def _run_watch(s: cfg.Settings) -> int:
     last_open = {"t": 0.0}
     open_gap_s = 20.0
 
+    _skip_log = {}
+
     def _on_smart_buy(ca, sym, usd, n):
-        if (backfill_done.is_set()
-                and usd >= s.watch_min_buy_usd
-                and ca not in book.open
-                and len(book.open) < book.max_positions
-                and book.balance_sol >= book.size_sol
-                and not any(c.get("ca") == ca for c in book.closed[-100:])
-                and time.time() - last_open["t"] >= open_gap_s):
+        if not backfill_done.is_set():
+            reason = "deferred:lookback"
+        elif usd < s.watch_min_buy_usd:
+            reason = "skip:below_min_buy"
+        elif ca in book.open:
+            reason = "skip:already_open"
+        elif len(book.open) >= book.max_positions:
+            reason = "skip:max_positions"
+        elif book.balance_sol < book.size_sol:
+            reason = "skip:insufficient_balance"
+        elif any(c.get("ca") == ca for c in book.closed[-100:]):
+            reason = "skip:recently_closed"
+        elif time.time() - last_open["t"] < open_gap_s:
+            reason = "skip:open_spacing"
+        else:
             last_open["t"] = time.time()
             return book.open_position(ca, sym, usd, usd, n)
+        now = time.time()
+        if _skip_log.get(ca, 0) < now - 300:
+            _skip_log[ca] = now
+            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
         return asyncio.sleep(0)
 
     w.on_smart_buy = _on_smart_buy
@@ -407,7 +421,14 @@ async def _run_watch(s: cfg.Settings) -> int:
     w.start()
 
     async def _enable_live_opens() -> None:
-        await asyncio.sleep(s.watch_first_lookback_s)
+        secs = float(s.watch_first_lookback_s)
+        log.info("initial lookback: deferring live opens for %.0fs", secs)
+        remaining = secs
+        while remaining > 0:
+            await asyncio.sleep(min(30.0, remaining))
+            remaining -= 30.0
+            if remaining > 0:
+                log.info("still in initial lookback — %.0fs remaining", remaining)
         backfill_done.set()
         log.info("initial lookback complete — live position opening enabled")
 

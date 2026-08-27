@@ -17,7 +17,9 @@ def load_env(path: str = ".env") -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, _, v = line.partition("=")
-        env[k.strip()] = v.strip()
+        # strip a trailing inline comment (e.g. "KEY=val   # note")
+        v = v.split("#", 1)[0].strip()
+        env[k.strip()] = v
     return env
 
 
@@ -76,7 +78,7 @@ class Settings:
     watch_poll_s: float = 45.0
     watch_min_buy_usd: float = 50.0
     watch_consensus_wallets: int = 2
-    watch_first_lookback_s: float = 600.0
+    watch_first_lookback_s: float = 90.0
     # dexscreener
     dexscreener_base_url: str = "https://api.dexscreener.com"
     dexscreener_rpm: int = 300
@@ -97,7 +99,7 @@ def load_settings(path: str = ".env") -> Settings:
         watch_poll_s=get_float(env, "WATCH_POLL_S", 45.0),
         watch_min_buy_usd=get_float(env, "WATCH_MIN_BUY_USD", 50.0),
         watch_consensus_wallets=get_int(env, "WATCH_CONSENSUS_WALLETS", 2),
-        watch_first_lookback_s=get_float(env, "WATCH_FIRST_LOOKBACK_S", 600.0),
+        watch_first_lookback_s=get_float(env, "WATCH_FIRST_LOOKBACK_S", 90.0),
         dexscreener_base_url=get(env, "DEXSCREENER_BASE_URL",
                                  "https://api.dexscreener.com"),
         dexscreener_rpm=get_int(env, "DEXSCREENER_RPM", 300),
