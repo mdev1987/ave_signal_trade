@@ -38,6 +38,7 @@ from logs import setup_logging
 from notifier import TelegramNotifier
 from tatum_notify import TatumNotifications
 from watcher import SmartWalletWatcher
+from wallet_discovery import WalletDiscovery
 
 log = logging.getLogger("main")
 
@@ -106,7 +107,8 @@ class ShadowBook:
     def __init__(self, ds: DexScreenerClient, size_sol: float,
                  retrace_pct: float, hard_stop_pct: float,
                  state_file: Path, start_balance_sol: float,
-                 jupiter=None, notifier=None, max_positions: int = 12) -> None:
+                 jupiter=None, notifier=None, max_positions: int = 12,
+                 tp1_mult: float = 1.5, trail_start_mult: float = 1.3) -> None:
         self.jupiter = jupiter
         self.notifier = notifier
         self.max_positions = int(max_positions)
@@ -114,6 +116,8 @@ class ShadowBook:
         self.size_sol = float(size_sol)
         self.retrace = float(retrace_pct)
         self.hard_stop = float(hard_stop_pct)
+        self.tp1_mult = float(tp1_mult)
+        self.trail_start_mult = float(trail_start_mult)
         self.state_file = state_file
         self.start_balance_sol = float(start_balance_sol)
         self.balance_sol = float(start_balance_sol)
@@ -218,7 +222,7 @@ class ShadowBook:
                 "tokens_raw": tokens_raw, "entry_note": entry_note,
                 "size_sol": self.size_sol, "ts": time.time(),
                 "trigger_usd": trigger_usd, "n_wallets": n_wallets,
-                "tp1_done": False, "tp1_banked": False, "tp1_mult": 2.0,
+                "tp1_done": False, "tp1_banked": False, "tp1_mult": self.tp1_mult,
             }
             logs.journal("shadow_entry_px", ca=ca, px=px, note=entry_note)
             logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
@@ -259,13 +263,16 @@ class ShadowBook:
                 exit_reason = None
                 if self.hard_stop > 0 and mult <= (1 - self.hard_stop):
                     exit_reason = "sl"
-                elif peak_mult >= 1.10 and px <= pos["peak_usd"] * (1 - self.retrace):
+                elif peak_mult >= self.trail_start_mult and \
+                        px <= pos["peak_usd"] * (1 - self.retrace):
+                    # only trail after the position has actually run (avoids
+                    # stopping out on the first tiny dip before any upside)
                     exit_reason = "trail"
                 elif not pos.get("tp1_done") and peak_mult >= pos.get("tp1_mult", 2.0) \
                         and not pos.get("tp1_banked"):
-                    # partial TP: bank half at 2x (virtual), runner continues
+                    # partial TP: bank half at tp1_mult (virtual), runner continues
                     pos["tp1_banked"] = True
-                    pos["banked_pnl"] = pos["size_sol"] * 0.5 * (2.0 - 1.0)
+                    pos["banked_pnl"] = pos["size_sol"] * 0.5 * (pos["tp1_mult"] - 1.0)
                     logs.journal("shadow_tp1", ca=ca, symbol=pos["symbol"])
                 if exit_reason and self.jupiter is not None and pos.get("tokens_raw"):
                     try:
@@ -280,8 +287,12 @@ class ShadowBook:
                 if exit_reason:
                     pnl = pos.get("banked_pnl", 0.0) + \
                         pos["size_sol"] * (mult - 1.0)
+                    # Trade-level multiple (incl. any banked TP1) for honest
+                    # reporting — the exit-leg `mult` alone misleads when a
+                    # partial was already banked (e.g. Bear: exit 0.70x but net +).
+                    trade_mult = (pos["size_sol"] + pnl) / pos["size_sol"]
                     rec = {"ca": ca, "symbol": pos["symbol"], "reason": exit_reason,
-                           "mult": round(mult, 3), "pnl_sol": round(pnl, 5),
+                           "mult": round(trade_mult, 3), "pnl_sol": round(pnl, 5),
                            "hold_min": int((time.time() - pos["ts"]) / 60)}
                     self.closed.append(rec)
                     bal_before = self.balance_sol
@@ -291,9 +302,9 @@ class ShadowBook:
                     if self.notifier is not None:
                         try:
                             asyncio.get_running_loop().create_task(
-                                self.notifier.send_close(
-                                    ca=ca, name=pos["symbol"], reason=exit_reason,
-                                    mult=mult, pnl_sol=pnl,
+                            self.notifier.send_close(
+                                ca=ca, name=pos["symbol"], reason=exit_reason,
+                                mult=trade_mult, pnl_sol=pnl,
                                     hold_s=time.time() - pos["ts"],
                                     entry_px=pos["entry_usd"], exit_px=pos["last_usd"],
                                     size_sol=pos["size_sol"],
@@ -342,7 +353,8 @@ async def _run_watch(s: cfg.Settings) -> int:
     book = ShadowBook(ds, s.size_sol, s.trail_retrace_pct, s.hard_stop_pct,
                       Path(s.shadow_state_file), s.start_balance_sol,
                       jupiter=jupiter, notifier=notifier,
-                      max_positions=max_positions)
+                      max_positions=max_positions,
+                      tp1_mult=s.tp1_mult, trail_start_mult=s.trail_start_mult)
 
     # shadow book opens automatically via on_smart_buy callback. During the
     # initial lookback window we only TRACK buys (so consensus alerts still
@@ -359,6 +371,11 @@ async def _run_watch(s: cfg.Settings) -> int:
     async def _on_smart_buy(ca, sym, usd, n):
         if not backfill_done.is_set():
             reason = "deferred:lookback"
+        elif n < s.open_min_wallets:
+            # Design rule: open only on consensus (>=OPEN_MIN_WALLETS
+            # wallets into the same token). Single-wallet buys are mostly
+            # noise and were the dominant leak in the losing sessions.
+            reason = f"skip:consensus<{s.open_min_wallets}"
         elif usd < s.watch_min_buy_usd:
             reason = "skip:below_min_buy"
         elif ca in book.open:
@@ -372,9 +389,21 @@ async def _run_watch(s: cfg.Settings) -> int:
         elif time.time() - last_open["t"] < open_gap_s:
             reason = "skip:open_spacing"
         else:
-            last_open["t"] = time.time()
-            await book.open_position(ca, sym, usd, usd, n)
-            return
+            # Quality gate: only trade liquid tokens. On illiquid pump tokens
+            # exit slippage turns a +12% price move into a -5% SOL fill
+            # (observed: Grokstreet), silently destroying paper PnL.
+            try:
+                snap = await ds.token_pairs("solana", ca)
+            except Exception:
+                snap = None
+            if not snap:
+                reason = "skip:no_market"
+            elif (snap.get("liq") or 0) < s.open_min_liq_usd:
+                reason = "skip:low_liq"
+            else:
+                last_open["t"] = time.time()
+                await book.open_position(ca, sym, usd, usd, n)
+                return
         now = time.time()
         if _skip_log.get(ca, 0) < now - 300:
             _skip_log[ca] = now
@@ -476,6 +505,46 @@ async def _run_watch(s: cfg.Settings) -> int:
 
 def cmd_watch(args) -> int:
     return asyncio.run(_run_watch(cfg.load_settings()))
+
+
+async def _run_discover(s: cfg.Settings) -> int:
+    setup_logging()
+    env = cfg.load_env()
+    debot_enabled = bool(cfg.get(env, "DEBOT_ENABLED", "1") not in ("0", "false", "no"))
+    debot = None
+    if debot_enabled:
+        try:
+            from debot import DeBotClient
+
+            debot = DeBotClient(enabled=True)
+            await debot.warmup()
+        except Exception:
+            log.warning("debot unavailable for discovery — using DexPaprika only")
+    disc = WalletDiscovery(
+        debot=debot,
+        chain="solana",
+        max_tokens=s.discover_max_tokens,
+        max_wallets=s.discover_max_wallets,
+        early_window_s=s.discover_early_window_s,
+        tx_per_pool=s.discover_tx_per_pool,
+        min_buy_usd=s.discover_min_buy_usd,
+        out_file=s.discover_out_file,
+    )
+    top = await disc.run()
+    await disc.close()
+    if debot is not None:
+        await debot.aclose()
+    print(f"discovered {len(top)} candidate wallets "
+          f"(written to {s.discover_out_file})")
+    for st in top[:15]:
+        print(f"  {st.address}  score={st.score:.3f}  "
+              f"tokens={st.distinct_tokens} early={st.early_buys} "
+              f"pumped={st.pumped_hits} ${st.total_usd:,.0f}")
+    return 0
+
+
+def cmd_discover(_args) -> int:
+    return asyncio.run(_run_discover(cfg.load_settings()))
 
 
 def cmd_tatum_setup(_args) -> int:
@@ -635,6 +704,10 @@ def build_parser() -> argparse.ArgumentParser:
     ts.set_defaults(func=cmd_tatum_setup)
     st = sub.add_parser("status", help="print status card")
     st.set_defaults(func=cmd_status)
+    disc = sub.add_parser(
+        "discover",
+        help="batch-find smart-money wallets -> smart_money_wallets.json")
+    disc.set_defaults(func=cmd_discover)
     sim = sub.add_parser("sim", help="Jupiter buy+sell round-trip for a CA")
     sim.add_argument("ca")
     sim.add_argument("--size", type=float, default=None,

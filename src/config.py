@@ -69,8 +69,12 @@ class Settings:
     chat_id: str = ""
     # strategy
     size_sol: float = 0.05
-    trail_retrace_pct: float = 0.40
-    hard_stop_pct: float = 0.50
+    trail_retrace_pct: float = 0.35
+    hard_stop_pct: float = 0.40
+    trail_start_mult: float = 1.30     # only trail after a peak >= this
+    tp1_mult: float = 1.50             # bank 50% at this multiple (was 2.0)
+    open_min_wallets: int = 2           # consensus gate for OPENS (design: >=2)
+    open_min_liq_usd: float = 5000.0    # skip illiquid tokens (exit slippage)
     start_balance_sol: float = 2.0
     shadow_state_file: str = "shadow_book.json"
     status_every_min: float = 30.0
@@ -79,6 +83,13 @@ class Settings:
     watch_min_buy_usd: float = 50.0
     watch_consensus_wallets: int = 2
     watch_first_lookback_s: float = 90.0
+    # discovery (batch wallet finder)
+    discover_max_tokens: int = 25
+    discover_max_wallets: int = 40
+    discover_early_window_s: float = 1800.0
+    discover_tx_per_pool: int = 60
+    discover_min_buy_usd: float = 50.0
+    discover_out_file: str = "smart_money_wallets.json"
     # dexscreener
     dexscreener_base_url: str = "https://api.dexscreener.com"
     dexscreener_rpm: int = 300
@@ -91,8 +102,12 @@ def load_settings(path: str = ".env") -> Settings:
         bot_token=get(env, "BOT_TOKEN", ""),
         chat_id=get(env, "CHAT_ID", ""),
         size_sol=get_float(env, "SIZE_SOL", 0.05),
-        trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", 0.40),
-        hard_stop_pct=get_float(env, "HARD_STOP_PCT", 0.50),
+        trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", 0.35),
+        hard_stop_pct=get_float(env, "HARD_STOP_PCT", 0.40),
+        trail_start_mult=get_float(env, "TRAIL_START_MULT", 1.30),
+        tp1_mult=get_float(env, "TP1_MULT", 1.50),
+        open_min_wallets=get_int(env, "OPEN_MIN_WALLETS", 2),
+        open_min_liq_usd=get_float(env, "OPEN_MIN_LIQ_USD", 5000.0),
         start_balance_sol=get_float(env, "START_BALANCE_SOL", 2.0),
         shadow_state_file=get(env, "SHADOW_STATE_FILE", "shadow_book.json"),
         status_every_min=get_float(env, "STATUS_EVERY_MIN", 30.0),
@@ -100,6 +115,13 @@ def load_settings(path: str = ".env") -> Settings:
         watch_min_buy_usd=get_float(env, "WATCH_MIN_BUY_USD", 50.0),
         watch_consensus_wallets=get_int(env, "WATCH_CONSENSUS_WALLETS", 2),
         watch_first_lookback_s=get_float(env, "WATCH_FIRST_LOOKBACK_S", 90.0),
+        # discovery (batch wallet finder)
+        discover_max_tokens=get_int(env, "DISCOVER_MAX_TOKENS", 25),
+        discover_max_wallets=get_int(env, "DISCOVER_MAX_WALLETS", 40),
+        discover_early_window_s=get_float(env, "DISCOVER_EARLY_WINDOW_S", 1800.0),
+        discover_tx_per_pool=get_int(env, "DISCOVER_TX_PER_POOL", 60),
+        discover_min_buy_usd=get_float(env, "DISCOVER_MIN_BUY_USD", 50.0),
+        discover_out_file=get(env, "DISCOVER_OUT_FILE", "smart_money_wallets.json"),
         dexscreener_base_url=get(env, "DEXSCREENER_BASE_URL",
                                  "https://api.dexscreener.com"),
         dexscreener_rpm=get_int(env, "DEXSCREENER_RPM", 300),
