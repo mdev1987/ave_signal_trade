@@ -263,9 +263,14 @@ class SmartWalletWatcher:
             hit["symbol"] = sym
         already = wallet in [x["w"] for x in hit["wallets"]]
         usd = b.get("usd") or 0.0
-        hit["usd"] += usd
-        if not already:
-            hit["wallets"].append({"w": wallet, "usd": usd, "ts": now})
+        # Per-wallet minimum: a wallet only counts toward consensus if its own
+        # buy meets WATCH_MIN_BUY_USD. This makes the threshold meaningful
+        # (otherwise tiny buys still pile into consensus, causing bursts).
+        qualifies = usd >= self.min_buy_usd
+        if qualifies:
+            hit["usd"] += usd
+            if not already:
+                hit["wallets"].append({"w": wallet, "usd": usd, "ts": now})
         fresh = ca not in self.known_cas
         if not already:
             logs.journal("smart_buy_seen", ca=ca, wallet=wallet[:10],
@@ -288,16 +293,10 @@ class SmartWalletWatcher:
         title = "CONSENSUS BUY" if consensus else "Smart wallet buy"
         syms = ",".join(x["w"][:5] + "…($" + format(x["usd"], ".0f") + ")"
                         for x in hit["wallets"][-4:])
-        # Telegram: CONSENSUS only — single-wallet buys go to journal/log
-        if self.notifier and consensus:
-            import asyncio as _aio
-            _aio.get_running_loop().create_task(self.notifier.send_alert(
-                f"{icon} {title}: {hit['symbol'] if hit['symbol']!='?' else ca[:6]+'…'}",
-                f"📍 `{ca}`\n🕵️ Smart wallets ({n}): {syms}\n"
-                f"💵 Tracked volume ${hit['usd']:,.0f}"))
-        if not consensus:
-            logger.info("%s %s %s (%s) — journal only", title,
-                        b.get("symbol","?"), ca[:10], syms)
+        # All buy signals go to journal/log only; the Telegram feed is reserved
+        # for the shadow book's OPEN / CLOSE position cards (see ShadowBook).
+        logger.info("%s %s %s (%s) — journal only", title,
+                    b.get("symbol","?"), ca[:10], syms)
         if self.on_smart_buy:
             try:
                 await self.on_smart_buy(ca, hit.get("symbol",""), usd, n)

@@ -92,17 +92,26 @@ class ShadowBook:
     def __init__(self, ds: DexScreenerClient, size_sol: float,
                  retrace_pct: float, hard_stop_pct: float,
                  state_file: Path, start_balance_sol: float,
-                 jupiter=None) -> None:
+                 jupiter=None, notifier=None, max_positions: int = 12) -> None:
         self.jupiter = jupiter
+        self.notifier = notifier
+        self.max_positions = int(max_positions)
         self.ds = ds
         self.size_sol = float(size_sol)
         self.retrace = float(retrace_pct)
         self.hard_stop = float(hard_stop_pct)
         self.state_file = state_file
         self.start_balance_sol = float(start_balance_sol)
+        self.balance_sol = float(start_balance_sol)
         self.open: dict[str, dict] = {}
         self.closed: list[dict] = []
         self._load()
+
+    def _win_rate(self) -> float:
+        if not self.closed:
+            return 0.0
+        wins = sum(1 for c in self.closed if c.get("pnl_sol", 0.0) >= 0.0)
+        return wins / len(self.closed) * 100.0
 
     def _load(self) -> None:
         if not self.state_file.exists():
@@ -154,6 +163,17 @@ class ShadowBook:
                 return
             tokens_raw = q.output_amount
             entry_note = f"jup impact={q.price_impact_pct:.2f}%"
+            # Simulate the SELL side too: a token may be buyable yet have no
+            # TOKEN->SOL route (CATE/ELON/Google-AI all passed buy but failed
+            # sell). Opening such a position would error on live close, so we
+            # gate it here in paper exactly as live would.
+            sq = await self.jupiter.quote_sell(ca, tokens_raw)
+            if sq is None or not sq.success:
+                reason = sq.reason if sq else "quote_exception"
+                logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                             reason=f"unsellable:{reason}")
+                log.info("shadow skip %s (%s): unsellable %s", ca[:10], symbol, reason)
+                return
             # Fallback if DexScreener had no usable price: derive USD/token from
             # the Jupiter fill (size_sol SOL spent -> tokens received) and SOL USD.
             if px <= 0:
@@ -165,6 +185,16 @@ class ShadowBook:
             logs.journal("shadow_skip", ca=ca, symbol=symbol, reason="no_price")
             log.info("shadow skip %s (%s): no price", ca[:10], symbol)
             return
+        # Simulated wallet: deploy size_sol on open. Skip if it would
+        # over-leverage the tracked balance (can't open what we can't fund).
+        if self.balance_sol < self.size_sol:
+            logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                         reason="insufficient_balance")
+            log.info("shadow skip %s (%s): insufficient balance %.4f",
+                      ca[:10], symbol, self.balance_sol)
+            return
+        bal_before = self.balance_sol
+        self.balance_sol -= self.size_sol
         self.open[ca] = {
             "symbol": symbol, "entry_usd": px, "peak_usd": px, "last_usd": px,
             "tokens_raw": tokens_raw, "entry_note": entry_note,
@@ -176,6 +206,16 @@ class ShadowBook:
         logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
                      trigger=trigger_usd, n=n_wallets)
         self.save()
+        if self.notifier is not None:
+            try:
+                asyncio.get_running_loop().create_task(self.notifier.send_open(
+                    ca=ca, name=symbol, price=px, size_sol=self.size_sol,
+                    balance_before=bal_before, balance_after=self.balance_sol,
+                    open_count=len(self.open), max_positions=self.max_positions,
+                    n_wallets=n_wallets, trigger_usd=trigger_usd,
+                    win_rate=self._win_rate()))
+            except Exception:
+                log.exception("send_open failed")
 
     async def refresh_prices(self) -> None:
         for ca in list(self.open):
@@ -205,11 +245,15 @@ class ShadowBook:
                 pos["banked_pnl"] = pos["size_sol"] * 0.5 * (2.0 - 1.0)
                 logs.journal("shadow_tp1", ca=ca, symbol=pos["symbol"])
             if exit_reason and self.jupiter is not None and pos.get("tokens_raw"):
-                sq = await self.jupiter.quote_sell(ca, pos["tokens_raw"])
-                if sq is not None and sq.success:
-                    sol_out = sq.output_amount / 1e9
-                    mult = sol_out / pos["size_sol"]
-                    pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
+                try:
+                    sq = await self.jupiter.quote_sell(ca, pos["tokens_raw"])
+                    if sq is not None and sq.success:
+                        sol_out = sq.output_amount / 1e9
+                        mult = sol_out / pos["size_sol"]
+                        pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
+                except Exception:
+                    log.exception("sell-quote failed for %s; using price-ratio pnl",
+                                  ca[:10])
             if exit_reason:
                 pnl = pos.get("banked_pnl", 0.0) + \
                     pos["size_sol"] * (mult - 1.0)
@@ -217,8 +261,26 @@ class ShadowBook:
                        "mult": round(mult, 3), "pnl_sol": round(pnl, 5),
                        "hold_min": int((time.time() - pos["ts"]) / 60)}
                 self.closed.append(rec)
+                bal_before = self.balance_sol
+                self.balance_sol += self.size_sol + pnl
                 del self.open[ca]
                 logs.journal("shadow_close", **rec)
+                if self.notifier is not None:
+                    try:
+                        asyncio.get_running_loop().create_task(
+                            self.notifier.send_close(
+                                ca=ca, name=pos["symbol"], reason=exit_reason,
+                                mult=mult, pnl_sol=pnl,
+                                hold_s=time.time() - pos["ts"],
+                                entry_px=pos["entry_usd"], exit_px=pos["last_usd"],
+                                size_sol=pos["size_sol"],
+                                balance_before=bal_before,
+                                balance_after=self.balance_sol,
+                                open_count=len(self.open),
+                                max_positions=self.max_positions,
+                                win_rate=self._win_rate()))
+                    except Exception:
+                        log.exception("send_close failed")
         self.save()
 
     # ------------------------------------------------------------- reporting
@@ -251,23 +313,37 @@ async def _run_watch(s: cfg.Settings) -> int:
         state_file="watcher_state.json",
     )
     jupiter = JupiterSwap(dry_run=True)
+    # Cap positions by available capital so we never deploy more than the
+    # tracked balance (0.5 SOL start / 0.05 size => 10 max, not 12).
+    max_positions = max(1, int(round(s.start_balance_sol / s.size_sol)))
     book = ShadowBook(ds, s.size_sol, s.trail_retrace_pct, s.hard_stop_pct,
                       Path(s.shadow_state_file), s.start_balance_sol,
-                      jupiter=jupiter)
+                      jupiter=jupiter, notifier=notifier,
+                      max_positions=max_positions)
 
     # shadow book opens automatically via on_smart_buy callback. During the
     # initial lookback window we only TRACK buys (so consensus alerts still
     # fire) and defer opening, so we never enter late — after a wallet's move
     # has already happened — which would systematically buy high.
     backfill_done = asyncio.Event()
-    w.on_smart_buy = lambda ca, sym, usd, n: book.open_position(
-        ca, sym, usd, usd, n) if (
-        backfill_done.is_set()
-        and usd >= s.watch_min_buy_usd
-        and ca not in book.open
-        and len(book.open) < 12
-        and not any(c.get("ca") == ca for c in book.closed[-100:])
-    ) else asyncio.sleep(0)
+    # Space out opens so a backlog (e.g. post-lookback batch) can't dump a
+    # burst of positions at once. 20s gap => at most ~3 opens/min.
+    last_open = {"t": 0.0}
+    open_gap_s = 20.0
+
+    def _on_smart_buy(ca, sym, usd, n):
+        if (backfill_done.is_set()
+                and usd >= s.watch_min_buy_usd
+                and ca not in book.open
+                and len(book.open) < book.max_positions
+                and book.balance_sol >= book.size_sol
+                and not any(c.get("ca") == ca for c in book.closed[-100:])
+                and time.time() - last_open["t"] >= open_gap_s):
+            last_open["t"] = time.time()
+            return book.open_position(ca, sym, usd, usd, n)
+        return asyncio.sleep(0)
+
+    w.on_smart_buy = _on_smart_buy
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -284,18 +360,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                                  w.consensus_fired, time.time() - started,
                                  {"tatum": bool(w.tatum_push),
                                   "dexscreener": True})
-            try:
-                await notifier.send_alert("📊 Status", build_status(snap))
-            except Exception:
-                log.exception("status send failed")
-
-    # alert counting hook via notifier wrapper
-    orig_alert = notifier.send_alert
-    async def counted(title, detail="", **kw):
-        if title.startswith(("🕵️", "🔥")):
-            alerts["n"] += 1
-        await orig_alert(title, detail, **kw)
-    notifier.send_alert = counted  # type: ignore[method-assign]
+            log.info("status: %s", build_status(snap))
 
     # tatum push (optional) ----------------------------------------------
     tatum_url = cfg.get(env, "WATCH_WEBHOOK_URL", "")
@@ -337,7 +402,7 @@ async def _run_watch(s: cfg.Settings) -> int:
         except Exception:
             log.exception("tatum registration failed — polling fallback only")
 
-    await notifier.send_startup(build_status(book.snapshot(
+    log.info("bot started: %s", build_status(book.snapshot(
         len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True})))
     w.start()
 

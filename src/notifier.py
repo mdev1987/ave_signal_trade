@@ -213,18 +213,28 @@ class TelegramNotifier:
         balance_after: float | None = None,
         open_count: int | None = None,
         max_positions: int | None = None,
+        n_wallets: int | None = None,
+        trigger_usd: float | None = None,
+        win_rate: float | None = None,
         dex: str | None = None,
         source: str | None = None,
     ) -> None:
-        """Position opened card."""
+        """Position opened card (full detail)."""
         lines = [f"{ICONS['open']} **OPENED** `{name}`", f"📍 `{ca}`"]
         meta = self._meta_line(dex, source)
         if meta:
             lines.append(meta)
-        entry = f"💵 Entry `{self._fmt_px(price)}` SOL"
+        entry = f"💵 Entry `${self._fmt_px(price)}`"
         if size_sol is not None:
             entry += f"  💰 Size `{size_sol:g}` SOL"
         lines.append(entry)
+        extra = []
+        if n_wallets is not None:
+            extra.append(f"🕵️ Wallets `{n_wallets}`")
+        if trigger_usd is not None:
+            extra.append(f"🔥 Trigger `${trigger_usd:,.0f}`")
+        if extra:
+            lines.append("  ".join(extra))
         if open_count is not None and max_positions is not None:
             lines.append(f"📊 Positions `{open_count}/{max_positions}`")
         if balance_before is not None and balance_after is not None:
@@ -233,6 +243,8 @@ class TelegramNotifier:
             )
         elif balance_before is not None:
             lines.append(f"💼 Balance `{balance_before:.4f}` SOL")
+        if win_rate is not None:
+            lines.append(f"🏆 WinRate `{win_rate:.1f}%`")
         await self._send("\n".join(lines))
 
     async def send_close(
@@ -250,13 +262,15 @@ class TelegramNotifier:
         balance_after: float | None = None,
         open_count: int | None = None,
         max_positions: int | None = None,
+        win_rate: float | None = None,
         dex: str | None = None,
         source: str | None = None,
     ) -> None:
-        """Position closed card (tp / sl / timeout / liq_collapse)."""
+        """Position closed card (tp / sl / trail / timeout / liq_collapse)."""
         label, r_icon = {
             "tp": ("TAKE PROFIT", "🎯"),
             "sl": ("STOP LOSS", "🛑"),
+            "trail": ("TRAILING STOP", "🔻"),
             "timeout": ("TIMEOUT", "⏱️"),
             "liq_collapse": ("LIQ COLLAPSE", "🚨"),
         }.get(reason, (reason.upper(), ICONS["close"]))
@@ -273,10 +287,10 @@ class TelegramNotifier:
             lines.append(meta)
         if entry_px is not None:
             exit_part = (
-                f" → 📉 Exit `{self._fmt_px(exit_px)}` SOL"
+                f" → 📉 Exit `${self._fmt_px(exit_px)}`"
                 if exit_px is not None else ""
             )
-            lines.append(f"📈 Entry `{self._fmt_px(entry_px)}` SOL{exit_part}")
+            lines.append(f"📈 Entry `${self._fmt_px(entry_px)}`{exit_part}")
         pnl = f"{pnl_icon} PnL `{sign}{pnl_sol:.4f}` SOL (`{sign}{pct:.1f}%`, `{mult:.2f}x`)"
         if size_sol is not None:
             pnl += f"  💰 Size `{size_sol:g}` SOL"
@@ -289,6 +303,8 @@ class TelegramNotifier:
             lines.append(
                 f"💼 Balance `{balance_before:.4f}` → `{balance_after:.4f}` SOL"
             )
+        if win_rate is not None:
+            lines.append(f"🏆 WinRate `{win_rate:.1f}%`")
         await self._send("\n".join(lines))
 
     async def send_summary(self, summary: dict[str, Any]) -> None:
