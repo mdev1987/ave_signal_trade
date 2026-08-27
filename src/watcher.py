@@ -115,7 +115,7 @@ class SmartWalletWatcher:
         self.tatum_push = False
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
-        self._price_cache: dict[str, tuple[float, float]] = {}
+        self._price_cache: dict[str, tuple[float, float, str | None]] = {}
         self._last_rpc_ts = 0.0
         self._load_state()
 
@@ -203,20 +203,25 @@ class SmartWalletWatcher:
         return txs
 
     async def _usd(self, ca: str, amount: float) -> float:
-        """USD value of ``amount`` tokens via DexScreener (60s cache)."""
+        """USD value of ``amount`` tokens via DexScreener (60s cache).
+
+        The cache entry is ``(ts, price_usd, symbol)``; the symbol is reused
+        by the caller to populate ``b["symbol"]`` for alerts.
+        """
         hit = self._price_cache.get(ca)
         now = time.time()
         if not hit or now - hit[0] > 60:
-            px = 0.0
+            px, sym = 0.0, None
             if self.ds is not None:
                 try:
                     snap = await self.ds.token_pairs("solana", ca)
                     # token_pairs() returns a normalized single-pair dict
                     # ({"price_usd": ...}) or None — not a {"pairs": [...]} wrapper
                     px = float(snap.get("price_usd") or 0) if snap else 0.0
+                    sym = snap.get("symbol") if snap else None
                 except Exception:
-                    px = 0.0
-            hit = (now, px)
+                    px, sym = 0.0, None
+            hit = (now, px, sym)
             self._price_cache[ca] = hit
         return hit[1] * amount
 
@@ -238,6 +243,9 @@ class SmartWalletWatcher:
         for b in buys:                          # oldest first
             try:
                 b["usd"] = await self._usd(b["ca"], b["amount"])
+                cached = self._price_cache.get(b["ca"])
+                if cached and cached[2]:
+                    b["symbol"] = cached[2]
                 await self._process_buy(wallet, b)
             except Exception:
                 logger.exception("buy processing failed %s", b.get("ca","")[:10])
@@ -247,8 +255,12 @@ class SmartWalletWatcher:
     async def _process_buy(self, wallet: str, b: dict) -> None:
         ca = b["ca"]
         now = time.time()
+        sym = b.get("symbol") or "?"
         hit = self.token_hits.setdefault(
-            ca, {"symbol": "?", "wallets": [], "first_ts": now, "usd": 0.0})
+            ca, {"symbol": sym, "wallets": [], "first_ts": now, "usd": 0.0})
+        # upgrade from '?' once a real symbol is known
+        if sym != "?" and hit["symbol"] == "?":
+            hit["symbol"] = sym
         already = wallet in [x["w"] for x in hit["wallets"]]
         usd = b.get("usd") or 0.0
         hit["usd"] += usd

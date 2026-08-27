@@ -9,18 +9,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
 import telegramify_markdown
 from telegram import Bot
 from telegram import MessageEntity as TGMessageEntity
+from telegram.error import RetryAfter, TimedOut
 
 import config
 
 log = logging.getLogger(__name__)
 
 SEP = "•"
+# Pace outbound messages so Telegram's flood-control (≈20 msg/min per chat)
+# is never tripped. A minimum gap between sends bounds the rate; the per-minute
+# cap is a backstop. On a 429 we honour retry_after and back off.
+_MIN_GAP_S = 3.5        # => at most ~17 messages/minute
+_MAX_PER_MIN = 18       # safety backstop (never hit while pacing above)
 
 ICONS = {
     "start": "🚀",
@@ -46,17 +53,44 @@ class TelegramNotifier:
         self._bot: Bot | None = None
         if self._enabled:
             self._bot = Bot(s.bot_token)
+        self._lock = asyncio.Lock()
+        self._last_send = 0.0
+        self._sent: list[float] = []
 
     # ----------------------------------------------------------------- send
     async def _send(self, text: str) -> None:
-        """Send one message with resolved markdown entities (best-effort)."""
+        """Send one message, paced to avoid Telegram flood control.
+
+        Alerts/opens/closes funnel through here. Messages are serialised and
+        spaced by ``_MIN_GAP_S`` so a burst (e.g. 37 consensus hits on a fresh
+        start) is spread over ~2 min instead of tripping Telegram's 429.
+        """
         if not self._enabled or self._bot is None:
             log.debug("telegram disabled — dropping: %s", text[:80])
             return
-        await self.send_to(self._chat_id, text)
+        async with self._lock:
+            now = time.monotonic()
+            # drop timestamps older than 60s
+            self._sent = [t for t in self._sent if now - t < 60.0]
+            if len(self._sent) >= _MAX_PER_MIN:
+                log.warning(
+                    "telegram rate limit (%d/min) — dropping message", _MAX_PER_MIN
+                )
+                return
+            # honour the minimum gap between successive sends
+            wait = _MIN_GAP_S - (now - self._last_send)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            await self.send_to(self._chat_id, text)
+            self._last_send = time.monotonic()
+            self._sent.append(self._last_send)
 
     async def send_to(self, chat_id: int | str, text: str) -> None:
         """Send one message to an explicit chat id (used for command replies).
+
+        Honours Telegram flood-control (``RetryAfter``) and timeouts by backing
+        off instead of erroring out. Command replies go here directly and skip
+        the per-minute pacing.
 
         Args:
             chat_id: Target chat id.
@@ -65,8 +99,7 @@ class TelegramNotifier:
         if not self._enabled or self._bot is None:
             log.debug("telegram disabled — dropping: %s", text[:80])
             return
-        last_exc: Exception | None = None
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 rendered, entities = telegramify_markdown.convert(text, latex_escape=False)
                 tg_entities = self._to_tg_entities(entities)
@@ -74,11 +107,16 @@ class TelegramNotifier:
                     chat_id=chat_id, text=rendered, entities=tg_entities
                 )
                 return
+            except RetryAfter as exc:
+                # Telegram says "too many requests" — back off, don't warn-spam
+                log.info("telegram flood control — retry after %.0fs", exc.retry_after)
+                await asyncio.sleep(exc.retry_after + 1.0)
+            except TimedOut:
+                await asyncio.sleep(5.0)
             except Exception as exc:  # noqa: BLE001
-                last_exc = exc
                 log.warning("telegram send failed (attempt %d): %s", attempt + 1, exc)
                 await asyncio.sleep(2 * (attempt + 1))
-        log.warning("telegram send giving up after retries: %s", last_exc)
+        log.warning("telegram send giving up after retries")
 
     @staticmethod
     def _to_tg_entities(items) -> list[TGMessageEntity]:

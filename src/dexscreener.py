@@ -90,7 +90,9 @@ class DexScreenerClient:
 
         txns = pair.get("txns") or {}
         m5 = txns.get("m5") or {}
+        base = pair.get("baseToken") or {}
         return {
+            "symbol": base.get("symbol"),
             "liq": _f(liq),
             "mcap": _f(pair.get("marketCap") or pair.get("fdv")),
             "price_usd": _f(pair.get("priceUsd")),
