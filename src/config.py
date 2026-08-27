@@ -75,6 +75,9 @@ class Settings:
     tp1_mult: float = 1.50             # bank 50% at this multiple (was 2.0)
     open_min_wallets: int = 2           # consensus gate for OPENS (design: >=2)
     open_min_liq_usd: float = 5000.0    # skip illiquid tokens (exit slippage)
+    be_buffer_pct: float = 0.0          # after 1st TP, raise stop to entry+this (breakeven lock)
+    max_hold_h: float = 72.0            # force-close dead positions after this many hours
+    max_open_positions: int = 10        # hard cap on concurrent shadow positions
     start_balance_sol: float = 2.0
     shadow_state_file: str = "shadow_book.json"
     status_every_min: float = 30.0
@@ -112,6 +115,9 @@ def load_settings(path: str = ".env") -> Settings:
         tp1_mult=get_float(env, "TP1_MULT", 1.50),
         open_min_wallets=get_int(env, "OPEN_MIN_WALLETS", 2),
         open_min_liq_usd=get_float(env, "OPEN_MIN_LIQ_USD", 5000.0),
+        be_buffer_pct=get_float(env, "BE_BUFFER_PCT", 0.0),
+        max_hold_h=get_float(env, "MAX_HOLD_H", 72.0),
+        max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", 10),
         start_balance_sol=get_float(env, "START_BALANCE_SOL", 2.0),
         shadow_state_file=get(env, "SHADOW_STATE_FILE", "shadow_book.json"),
         status_every_min=get_float(env, "STATUS_EVERY_MIN", 30.0),

@@ -108,7 +108,8 @@ class ShadowBook:
                  retrace_pct: float, hard_stop_pct: float,
                  state_file: Path, start_balance_sol: float,
                  jupiter=None, notifier=None, max_positions: int = 12,
-                 tp1_mult: float = 1.5, trail_start_mult: float = 1.3) -> None:
+                 tp1_mult: float = 1.5, trail_start_mult: float = 1.3,
+                 be_buffer: float = 0.0, max_hold_s: float = 0.0) -> None:
         self.jupiter = jupiter
         self.notifier = notifier
         self.max_positions = int(max_positions)
@@ -118,6 +119,8 @@ class ShadowBook:
         self.hard_stop = float(hard_stop_pct)
         self.tp1_mult = float(tp1_mult)
         self.trail_start_mult = float(trail_start_mult)
+        self.be_buffer = float(be_buffer)
+        self.max_hold_s = float(max_hold_s)
         self.state_file = state_file
         self.start_balance_sol = float(start_balance_sol)
         self.balance_sol = float(start_balance_sol)
@@ -222,7 +225,8 @@ class ShadowBook:
                 "tokens_raw": tokens_raw, "entry_note": entry_note,
                 "size_sol": self.size_sol, "ts": time.time(),
                 "trigger_usd": trigger_usd, "n_wallets": n_wallets,
-                "tp1_done": False, "tp1_banked": False, "tp1_mult": self.tp1_mult,
+                "tp1_banked": False, "be_armed": False,
+                "peak_mult": 1.0, "tp1_mult": self.tp1_mult,
             }
             logs.journal("shadow_entry_px", ca=ca, px=px, note=entry_note)
             logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
@@ -246,35 +250,55 @@ class ShadowBook:
         # middle of a close, or a balance miscount).
         async with self._lock:
             for ca in list(self.open):
-                snap = await self.ds.token_pairs("solana", ca)
-                # token_pairs() returns a normalized single-pair dict or None
-                if not snap:
-                    continue
-                pxs = snap.get("price_usd")
-                if not pxs:
-                    continue
-                px = float(pxs)
                 pos = self.open[ca]
-                pos["last_usd"] = px
-                pos["peak_usd"] = max(pos["peak_usd"], px)
                 entry = pos["entry_usd"]
-                mult = px / entry if entry else 0
-                peak_mult = pos["peak_usd"] / entry if entry else 0
+                # --- current multiple (prefer DexScreener USD; fall back to a
+                # live Jupiter sell-quote so we can still stop out during a
+                # DexScreener outage instead of going blind on an open position)
+                mult = None
+                snap = await self.ds.token_pairs("solana", ca)
+                if snap and snap.get("price_usd"):
+                    px = float(snap["price_usd"])
+                    mult = px / entry if entry else 0
+                    pos["last_usd"] = px
+                    pos["peak_usd"] = max(pos["peak_usd"], px)
+                    pos["peak_mult"] = max(pos.get("peak_mult", 1.0), mult)
+                elif self.jupiter is not None and pos.get("tokens_raw"):
+                    try:
+                        sq = await self.jupiter.quote_sell(ca, pos["tokens_raw"])
+                        if sq is not None and sq.success:
+                            mult = (sq.output_amount / 1e9) / pos["size_sol"]
+                            pos["peak_mult"] = max(pos.get("peak_mult", 1.0), mult)
+                    except Exception:
+                        log.exception("refresh fallback quote failed %s", ca[:10])
+                if mult is None:
+                    continue  # can't price this cycle; leave open (safe)
+                peak_mult = pos.get("peak_mult", mult)
                 exit_reason = None
-                if self.hard_stop > 0 and mult <= (1 - self.hard_stop):
-                    exit_reason = "sl"
-                elif peak_mult >= self.trail_start_mult and \
-                        px <= pos["peak_usd"] * (1 - self.retrace):
-                    # only trail after the position has actually run (avoids
-                    # stopping out on the first tiny dip before any upside)
-                    exit_reason = "trail"
-                elif not pos.get("tp1_done") and peak_mult >= pos.get("tp1_mult", 2.0) \
-                        and not pos.get("tp1_banked"):
-                    # partial TP: bank half at tp1_mult (virtual), runner continues
+                # partial TP: bank half at tp1_mult (virtual), runner continues
+                if not pos.get("tp1_banked") and peak_mult >= pos.get("tp1_mult", 2.0):
                     pos["tp1_banked"] = True
                     pos["banked_pnl"] = pos["size_sol"] * 0.5 * (pos["tp1_mult"] - 1.0)
                     logs.journal("shadow_tp1", ca=ca, symbol=pos["symbol"])
-                if exit_reason and self.jupiter is not None and pos.get("tokens_raw"):
+                # once the first target is banked, lock the stop up to breakeven
+                # (+buffer) so a winner can never become a loser
+                if pos.get("tp1_banked") and not pos.get("be_armed"):
+                    pos["be_armed"] = True
+                    logs.journal("shadow_be", ca=ca, symbol=pos["symbol"])
+                stop_mult = (1 - self.hard_stop)
+                if pos.get("be_armed"):
+                    stop_mult = max(stop_mult, 1.0 + self.be_buffer)
+                if self.hard_stop > 0 and mult <= stop_mult:
+                    exit_reason = "sl"
+                elif peak_mult >= self.trail_start_mult and \
+                        mult <= peak_mult * (1 - self.retrace):
+                    # only trail after the position has actually run (avoids
+                    # stopping out on the first tiny dip before any upside)
+                    exit_reason = "trail"
+                elif self.max_hold_s > 0 and (time.time() - pos["ts"]) > self.max_hold_s:
+                    exit_reason = "timeout"
+                if exit_reason and self.jupiter is not None and pos.get("tokens_raw") \
+                        and exit_reason != "timeout":
                     try:
                         sq = await self.jupiter.quote_sell(ca, pos["tokens_raw"])
                         if sq is not None and sq.success:
@@ -352,14 +376,17 @@ async def _run_watch(s: cfg.Settings) -> int:
         state_file="watcher_state.json",
     )
     jupiter = JupiterSwap(dry_run=True)
-    # Cap positions by available capital so we never deploy more than the
-    # tracked balance (0.5 SOL start / 0.05 size => 10 max, not 12).
-    max_positions = max(1, int(round(s.start_balance_sol / s.size_sol)))
+    # Hard cap on concurrent positions: never more than capital allows, and
+    # never above the configured max_open_positions (avoids a consensus burst
+    # over-leveraging the paper book).
+    max_positions = min(max(1, int(round(s.start_balance_sol / s.size_sol))),
+                        s.max_open_positions)
     book = ShadowBook(ds, s.size_sol, s.trail_retrace_pct, s.hard_stop_pct,
                       Path(s.shadow_state_file), s.start_balance_sol,
                       jupiter=jupiter, notifier=notifier,
                       max_positions=max_positions,
-                      tp1_mult=s.tp1_mult, trail_start_mult=s.trail_start_mult)
+                      tp1_mult=s.tp1_mult, trail_start_mult=s.trail_start_mult,
+                      be_buffer=s.be_buffer_pct, max_hold_s=s.max_hold_h * 3600.0)
 
     # shadow book opens automatically via on_smart_buy callback. During the
     # initial lookback window we only TRACK buys (so consensus alerts still
@@ -402,7 +429,13 @@ async def _run_watch(s: cfg.Settings) -> int:
             except Exception:
                 snap = None
             if not snap:
-                reason = "skip:no_market"
+                # DexScreener blip: don't throw away a genuine consensus signal
+                # on a transient outage — open anyway, flagged as liq-unchecked.
+                last_open["t"] = time.time()
+                logs.journal("open_liq_unchecked", ca=ca, symbol=sym,
+                             note="dexscreener_unavailable")
+                await book.open_position(ca, sym, usd, usd, n)
+                return
             elif (snap.get("liq") or 0) < s.open_min_liq_usd:
                 reason = "skip:low_liq"
             else:
