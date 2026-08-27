@@ -331,6 +331,11 @@ class ShadowBook:
 async def _run_watch(s: cfg.Settings) -> int:
     setup_logging()
     env = cfg.load_env()
+    shyft_key = (cfg.get(env, "SHYFT_API_KEY") or "").strip()
+    if not shyft_key:
+        log.critical("SHYFT_API_KEY missing — watcher cannot poll wallets. "
+                     "Copy the key from .env.bak (or your VPS .env) and retry.")
+        return 2
     notifier = TelegramNotifier()
     ds = DexScreenerClient(base_url=s.dexscreener_base_url,
                            rpm=s.dexscreener_rpm)
@@ -362,9 +367,9 @@ async def _run_watch(s: cfg.Settings) -> int:
     # has already happened — which would systematically buy high.
     backfill_done = asyncio.Event()
     # Space out opens so a backlog (e.g. post-lookback batch) can't dump a
-    # burst of positions at once. 20s gap => at most ~3 opens/min.
+    # burst of positions at once. Configurable via OPEN_GAP_S.
     last_open = {"t": 0.0}
-    open_gap_s = 20.0
+    open_gap_s = s.open_gap_s
 
     _skip_log = {}
 
@@ -507,7 +512,7 @@ def cmd_watch(args) -> int:
     return asyncio.run(_run_watch(cfg.load_settings()))
 
 
-async def _run_discover(s: cfg.Settings) -> int:
+async def _run_discover(s: cfg.Settings, args=None) -> int:
     setup_logging()
     env = cfg.load_env()
     debot_enabled = bool(cfg.get(env, "DEBOT_ENABLED", "1") not in ("0", "false", "no"))
@@ -529,6 +534,10 @@ async def _run_discover(s: cfg.Settings) -> int:
         tx_per_pool=s.discover_tx_per_pool,
         min_buy_usd=s.discover_min_buy_usd,
         out_file=s.discover_out_file,
+        pump_pct=s.discover_pump_pct,
+        enrich=s.discover_enrich,
+        replace=bool(getattr(args, "replace", False)),
+        write_top_n=int(getattr(args, "top", 0) or 0),
     )
     top = await disc.run()
     await disc.close()
@@ -543,8 +552,8 @@ async def _run_discover(s: cfg.Settings) -> int:
     return 0
 
 
-def cmd_discover(_args) -> int:
-    return asyncio.run(_run_discover(cfg.load_settings()))
+def cmd_discover(args) -> int:
+    return asyncio.run(_run_discover(cfg.load_settings(), args))
 
 
 def cmd_tatum_setup(_args) -> int:
@@ -707,6 +716,10 @@ def build_parser() -> argparse.ArgumentParser:
     disc = sub.add_parser(
         "discover",
         help="batch-find smart-money wallets -> smart_money_wallets.json")
+    disc.add_argument("--top", type=int, default=0,
+                      help="only write the top-N scored wallets (0 = all)")
+    disc.add_argument("--replace", action="store_true",
+                      help="overwrite the wallet file instead of merging")
     disc.set_defaults(func=cmd_discover)
     sim = sub.add_parser("sim", help="Jupiter buy+sell round-trip for a CA")
     sim.add_argument("ca")

@@ -83,6 +83,7 @@ class Settings:
     watch_min_buy_usd: float = 50.0
     watch_consensus_wallets: int = 2
     watch_first_lookback_s: float = 90.0
+    open_gap_s: float = 20.0          # min seconds between new positions (anti-flood)
     # discovery (batch wallet finder)
     discover_max_tokens: int = 25
     discover_max_wallets: int = 40
@@ -90,6 +91,8 @@ class Settings:
     discover_tx_per_pool: int = 60
     discover_min_buy_usd: float = 50.0
     discover_out_file: str = "smart_money_wallets.json"
+    discover_pump_pct: float = 100.0  # token counts as "pumped" if 24h chg >= this
+    discover_enrich: bool = True      # fetch token details to mark pumped (no DeBot)
     # dexscreener
     dexscreener_base_url: str = "https://api.dexscreener.com"
     dexscreener_rpm: int = 300
@@ -115,6 +118,7 @@ def load_settings(path: str = ".env") -> Settings:
         watch_min_buy_usd=get_float(env, "WATCH_MIN_BUY_USD", 50.0),
         watch_consensus_wallets=get_int(env, "WATCH_CONSENSUS_WALLETS", 2),
         watch_first_lookback_s=get_float(env, "WATCH_FIRST_LOOKBACK_S", 90.0),
+        open_gap_s=get_float(env, "OPEN_GAP_S", 20.0),
         # discovery (batch wallet finder)
         discover_max_tokens=get_int(env, "DISCOVER_MAX_TOKENS", 25),
         discover_max_wallets=get_int(env, "DISCOVER_MAX_WALLETS", 40),
@@ -122,6 +126,8 @@ def load_settings(path: str = ".env") -> Settings:
         discover_tx_per_pool=get_int(env, "DISCOVER_TX_PER_POOL", 60),
         discover_min_buy_usd=get_float(env, "DISCOVER_MIN_BUY_USD", 50.0),
         discover_out_file=get(env, "DISCOVER_OUT_FILE", "smart_money_wallets.json"),
+        discover_pump_pct=get_float(env, "DISCOVER_PUMP_PCT", 100.0),
+        discover_enrich=get_bool(env, "DISCOVER_ENRICH", True),
         dexscreener_base_url=get(env, "DEXSCREENER_BASE_URL",
                                  "https://api.dexscreener.com"),
         dexscreener_rpm=get_int(env, "DEXSCREENER_RPM", 300),

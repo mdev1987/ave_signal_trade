@@ -90,6 +90,13 @@ class DexPaprikaClient:
             logger.warning("dexpaprika GET %s failed: %s", path, e)
             return None
 
+    async def get_token_details(self, chain: str, mint: str) -> dict | None:
+        # REST: /networks/{chain}/tokens/{mint} -> single token object with
+        # price_change_percentage_24h. Used to mark a candidate as "pumped"
+        # without depending on DeBot (which is often auth-limited).
+        j = await self._get(f"/networks/{chain}/tokens/{mint}")
+        return j if isinstance(j, dict) else None
+
     async def get_top_tokens(self, chain: str = "solana", order_by: str = "volume_usd_24h",
                              limit: int = 20) -> list[dict] | None:
         # REST search endpoint (the MCP getTopTokens proxy): rows under "results".
@@ -104,7 +111,8 @@ class DexPaprikaClient:
         params: dict[str, Any] = {"order_by": "created_at", "sort": "desc",
                                   "limit": limit}
         if created_after_ts is not None:
-            params["created_after"] = created_after_ts
+            # DexPaprika requires an integer epoch (a fractional value 400s).
+            params["created_after"] = int(created_after_ts)
         j = await self._get(f"/networks/{chain}/pools/search", params)
         return j.get("results") if isinstance(j, dict) else None
 
@@ -193,6 +201,10 @@ class WalletDiscovery:
         tx_per_pool: int = 60,
         min_buy_usd: float = 50.0,
         out_file: str = "smart_money_wallets.json",
+        pump_pct: float = 100.0,          # token "pumped" if 24h chg >= this
+        enrich: bool = True,              # fetch token details to set `pumped`
+        replace: bool = False,            # overwrite file instead of merging
+        write_top_n: int = 0,             # if >0, only write top-N (0 = all)
         scorer: Callable[[list[WalletStat]], list[WalletStat]] = default_scorer,
     ) -> None:
         self.debot = debot
@@ -203,6 +215,10 @@ class WalletDiscovery:
         self.tx_per_pool = tx_per_pool
         self.min_buy_usd = min_buy_usd
         self.out_file = Path(out_file)
+        self.pump_pct = pump_pct
+        self.enrich = enrich
+        self.replace = replace
+        self.write_top_n = int(write_top_n)
         self.scorer = scorer
         self.paprika = DexPaprikaClient()
 
@@ -268,10 +284,51 @@ class WalletDiscovery:
         for t in (top or [])[: self.max_tokens]:
             await _add(t, "dexpaprika:top")
 
+        # Outcome-labeled candidates: tokens that ALREADY pumped hard. We want
+        # the wallets that bought these BEFORE the move — i.e. real smart money.
+        # This is the discovery signal that actually correlates with profit
+        # (DeBot's heatmap was meant to supply it, but DeBot is often auth-limited).
+        movers = await self.paprika.get_top_tokens(
+            self.chain, order_by="price_change_percentage_24h", limit=self.max_tokens)
+        for t in (movers or [])[: self.max_tokens]:
+            chg = float(t.get("price_change_percentage_24h") or 0)
+            if chg >= self.pump_pct:
+                await _add(t, "dexpaprika:movers", pumped=True)
+
         cands = list(seen.values())[: self.max_tokens]
+        if self.enrich:
+            await self._enrich_pumped(cands)
         logs.journal("discovery_candidates", n=len(cands),
                      symbols=",".join(c.symbol for c in cands[:12]))
         return cands
+
+    async def _enrich_pumped(self, cands: list["CandidateToken"]) -> None:
+        """Mark candidates as pumped from their 24h price move.
+
+        This gives the scorer a real *outcome* signal (early buyer of things
+        that actually moved) without DeBot. DeBot's heatmap gain is OR-ed in
+        earlier when reachable. The details endpoint exposes 24h high/low
+        (not a direct % change), so we derive the range from those; for tokens
+        that *do* carry ``price_change_percentage_24h`` we use it directly.
+        """
+        for c in cands:
+            if c.pumped:
+                continue
+            try:
+                d = await self.paprika.get_token_details(self.chain, c.mint)
+            except Exception:
+                continue
+            if not d:
+                continue
+            chg = float(d.get("price_change_percentage_24h") or 0)
+            if chg <= 0:
+                ps = d.get("price_stats") or {}
+                hi = float(ps.get("high_24h") or 0)
+                lo = float(ps.get("low_24h") or 0)
+                if hi > 0 and lo > 0:
+                    chg = (hi / lo - 1.0) * 100.0
+            if chg >= self.pump_pct:
+                c.pumped = True
 
     # ---------------------------------------------------------- buyer extraction
     async def extract_buyers(self, tok: CandidateToken) -> list[dict]:
@@ -348,13 +405,17 @@ class WalletDiscovery:
                          buyers=len({r["wallet"] for r in rows}))
         stats = self.scorer(list(agg.values()))
         top = stats[: self.max_wallets]
+        if self.write_top_n > 0:
+            top = top[: self.write_top_n]
         await self._merge_and_write(top)
         return top
 
     async def _merge_and_write(self, top: list[WalletStat]) -> None:
-        """Merge discoveries into the existing wallet file (keep history)."""
+        """Write discoveries. By default merges with the existing wallet file
+        (preserving curated wallets); with ``replace=True`` it overwrites.
+        """
         existing: dict[str, Any] = {}
-        if self.out_file.exists():
+        if not self.replace and self.out_file.exists():
             try:
                 existing = json.loads(self.out_file.read_text())
             except Exception:
