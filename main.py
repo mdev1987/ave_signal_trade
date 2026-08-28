@@ -240,7 +240,8 @@ class ShadowBook:
             }
             logs.journal("shadow_entry_px", ca=ca, px=px, note=entry_note)
             logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
-                         trigger=trigger_usd, n=n_wallets)
+                         trigger=trigger_usd, n=n_wallets,
+                         wallets=list(wallets or []))
             self.save()
         if self.notifier is not None:
             try:
@@ -249,7 +250,7 @@ class ShadowBook:
                     balance_before=bal_before, balance_after=self.balance_sol,
                     open_count=len(self.open), max_positions=self.max_positions,
                     n_wallets=n_wallets, trigger_usd=trigger_usd,
-                    win_rate=self._win_rate()))
+                    win_rate=self._win_rate(), wallets=wallets))
             except Exception:
                 log.exception("send_open failed")
 
@@ -336,8 +337,9 @@ class ShadowBook:
                     # partial was already banked (e.g. Bear: exit 0.70x but net +).
                     trade_mult = (pos["size_sol"] + pnl) / pos["size_sol"]
                     rec = {"ca": ca, "symbol": pos["symbol"], "reason": exit_reason,
-                           "mult": round(trade_mult, 3), "pnl_sol": round(pnl, 5),
-                           "hold_min": int((time.time() - pos["ts"]) / 60)}
+                            "mult": round(trade_mult, 3), "pnl_sol": round(pnl, 5),
+                            "hold_min": int((time.time() - pos["ts"]) / 60),
+                            "wallets": pos.get("wallets", [])}
                     self.closed.append(rec)
                     bal_before = self.balance_sol
                     self.balance_sol += self.size_sol + pnl
@@ -359,9 +361,10 @@ class ShadowBook:
                                     size_sol=pos["size_sol"],
                                     balance_before=bal_before,
                                     balance_after=self.balance_sol,
-                                    open_count=len(self.open),
-                                    max_positions=self.max_positions,
-                                    win_rate=self._win_rate()))
+                                     open_count=len(self.open),
+                                     max_positions=self.max_positions,
+                                     win_rate=self._win_rate(),
+                                     wallets=pos.get("wallets", [])))
                         except Exception:
                             log.exception("send_close failed")
             self.save()
@@ -549,6 +552,15 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     log.info("bot started: %s", build_status(book.snapshot(
         len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True})))
+    if notifier is not None:
+        try:
+            await notifier.send_startup(
+                summary=f"watching {len(w.wallets)} wallets · "
+                        f"balance {s.start_balance_sol:.2f} SOL · "
+                        f"E4 ladder cw={s.watch_consensus_window_s:.0f}s · "
+                        f"min_wallets={s.open_min_wallets}")
+        except Exception:
+            log.exception("send_startup failed")
     w.start()
 
     async def _enable_live_opens() -> None:
@@ -578,6 +590,14 @@ async def _run_watch(s: cfg.Settings) -> int:
             except Exception:
                 log.exception("refresh_prices failed this cycle; continuing")
     finally:
+        try:
+            if notifier is not None:
+                await notifier.send_stopped(book.snapshot(
+                    len(w.wallets), alerts["n"], w.consensus_fired,
+                    time.time() - started,
+                    {"tatum": w.tatum_push, "dexscreener": True}))
+        except Exception:
+            log.exception("send_stopped failed")
         status_task.cancel()
         await w.stop()
         await runner.cleanup()

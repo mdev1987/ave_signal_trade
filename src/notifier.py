@@ -218,6 +218,7 @@ class TelegramNotifier:
         win_rate: float | None = None,
         dex: str | None = None,
         source: str | None = None,
+        wallets: list[str] | None = None,
     ) -> None:
         """Position opened card (full detail)."""
         lines = [f"{ICONS['open']} **OPENED** `{name}`", f"📍 `{ca}`"]
@@ -235,6 +236,10 @@ class TelegramNotifier:
             extra.append(f"🔥 Trigger `${trigger_usd:,.0f}`")
         if extra:
             lines.append("  ".join(extra))
+        if wallets:
+            lines.append("🐳 **KOL Wallets**")
+            for w in wallets:
+                lines.append(f"`{w}`")
         if open_count is not None and max_positions is not None:
             lines.append(f"📊 Positions `{open_count}/{max_positions}`")
         if balance_before is not None and balance_after is not None:
@@ -265,6 +270,7 @@ class TelegramNotifier:
         win_rate: float | None = None,
         dex: str | None = None,
         source: str | None = None,
+        wallets: list[str] | None = None,
     ) -> None:
         """Position closed card (tp / sl / trail / timeout / liq_collapse)."""
         label, r_icon = {
@@ -295,6 +301,10 @@ class TelegramNotifier:
         if size_sol is not None:
             pnl += f"  💰 Size `{size_sol:g}` SOL"
         lines.append(pnl)
+        if wallets:
+            lines.append("🐳 **KOL Wallets**")
+            for w in wallets:
+                lines.append(f"`{w}`")
         if hold_s is not None:
             lines.append(f"⏱️ Duration `{self._fmt_dur(hold_s)}`")
         if open_count is not None and max_positions is not None:
