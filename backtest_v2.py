@@ -13,7 +13,7 @@ Exit ladder model (scale-out):
 PnL per trade (SOL) = banked + remaining*size*(exit_mult-1).
 """
 from __future__ import annotations
-import argparse, glob, json, time, sys
+import argparse, glob, json, time, sys, re
 from collections import defaultdict
 from pathlib import Path
 import pyarrow.parquet as pq
@@ -86,7 +86,7 @@ def ideal_wallets(ev, topk=30, pump_mult=1.5):
     return set(scored[:topk])
 
 
-def run_combo(ev, exit_cfg, consensus, wallet_mode, chosen, cap):
+def run_combo(ev, exit_cfg, consensus, wallet_mode, chosen, cap, cw=CONSENSUS_WINDOW_S):
     buyers = defaultdict(dict); first_buy = {}
     open_pos = {}; trades = []; pos_cap = 0; low_liq = 0
     tps = exit_cfg["tps"]; trail_start = exit_cfg["trail_start"]
@@ -104,10 +104,10 @@ def run_combo(ev, exit_cfg, consensus, wallet_mode, chosen, cap):
             else:
                 if wallet_mode == "any":
                     distinct = [x for x, bt in buyers[m].items()
-                                if ts - bt <= CONSENSUS_WINDOW_S]
+                                if ts - bt <= cw]
                 else:
                     distinct = [x for x, bt in buyers[m].items()
-                                if x in chosen and ts - bt <= CONSENSUS_WINDOW_S]
+                                if x in chosen and ts - bt <= cw]
                 if len(distinct) >= consensus:
                     if liq < MIN_LIQ_USD:
                         low_liq += 1
@@ -151,31 +151,57 @@ def run_combo(ev, exit_cfg, consensus, wallet_mode, chosen, cap):
                 avg=round(sum(trades) / e, 5), pos_cap=pos_cap, low_liq=low_liq)
 
 
+def load_kol(path):
+    addrs = set()
+    txt = open(path).read()
+    try:
+        d = json.loads(txt)
+        if isinstance(d, dict):
+            addrs = set(d.keys())
+        elif isinstance(d, list):
+            addrs = set(d)
+    except Exception:
+        for ln in txt.splitlines():
+            s = ln.strip()
+            if not s or s.startswith("#"):
+                continue
+            m = re.match(r"^\d+\.\s*([1-9A-HJ-NP-Za-z]{32,44})$", s)
+            if m:
+                addrs.add(m.group(1))
+    return addrs
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
     ap.add_argument("--cap", type=int, default=10)
     ap.add_argument("--topk", type=int, default=30)
     ap.add_argument("--only", default="", help="wm:C:exit,wm:C:exit to restrict")
+    ap.add_argument("--wallets-file", default="", help="KOL wallet list (md/json)")
+    ap.add_argument("--cw", type=float, default=CONSENSUS_WINDOW_S,
+                    help="consensus window seconds")
     args = ap.parse_args()
     files = sorted(glob.glob(str(Path(args.data) / "*.parquet")))
     ev = load_events(files)
-    chosen = ideal_wallets(ev, args.topk) if any(
-        wm.startswith("ideal") for wm in WALLET_MODES) else set()
+    kol = load_kol(args.wallets_file) if args.wallets_file else set()
+    modes = list(WALLET_MODES)
+    if kol:
+        modes.append("kol")
+    chosen = ideal_wallets(ev, args.topk) if "ideal30" in modes else set()
     only = set()
     for piece in args.only.split(","):
         if piece:
             only.add(tuple(piece.split(":")))
     print(f"events={len(ev):,} cap={args.cap} chosen={len(chosen)} "
-          f"files={len(files)}")
+          f"kol={len(kol)} cw={args.cw:.0f} files={len(files)}")
     rows = []
-    for wm in WALLET_MODES:
-        ch = chosen if wm != "any" else set()
+    for wm in modes:
+        ch = set() if wm == "any" else (kol if wm == "kol" else chosen)
         for c in CONSENSUS_LEVELS:
             for name, ec in EXITS.items():
                 if only and (wm, str(c), name) not in only:
                     continue
-                r = run_combo(ev, ec, c, wm, ch, args.cap)
+                r = run_combo(ev, ec, c, wm, ch, args.cap, cw=args.cw)
                 rows.append((wm, c, name, r))
     # sort by pnl desc for cap-constrained 'any' (deployment-realistic)
     print(f"{'wallet':9} {'C':>2} {'exit':16} {'ent':>5} {'win%':>5} "

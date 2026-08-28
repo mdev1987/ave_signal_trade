@@ -75,7 +75,7 @@ def parse_ladder(env, key: str, default: str) -> list[tuple[float, float]]:
         if not piece or ":" not in piece:
             continue
         try:
-            m, f = piece.split(":")
+            m, f = piece.strip('"').strip("'").split(":")
             out.append((float(m), float(f)))
         except ValueError:
             continue
@@ -111,6 +111,7 @@ class Settings:
     watch_poll_s: float = 45.0
     watch_min_buy_usd: float = 50.0
     watch_consensus_wallets: int = 2
+    watch_consensus_window_s: float = 600.0
     watch_first_lookback_s: float = 90.0
     open_gap_s: float = 20.0          # min seconds between new positions (anti-flood)
     # discovery (batch wallet finder)
@@ -135,23 +136,24 @@ def load_settings(path: str = ".env") -> Settings:
         bot_token=get(env, "BOT_TOKEN", ""),
         chat_id=get(env, "CHAT_ID", ""),
         size_sol=get_float(env, "SIZE_SOL", 0.05),
-        tp_ladder=parse_ladder(env, "TP_LADDER", "1.3:1.0"),
-        trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", 0.35),
+        tp_ladder=parse_ladder(env, "TP_LADDER", "1.3:0.4,1.8:0.3,3.0:0.3"),
+        trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", 0.25),
         hard_stop_pct=get_float(env, "HARD_STOP_PCT", 0.35),
-        trail_enabled=get_bool(env, "TRAIL_ENABLED", False),
-        trail_start_mult=get_float(env, "TRAIL_START_MULT", 1.30),
+        trail_enabled=get_bool(env, "TRAIL_ENABLED", True),
+        trail_start_mult=get_float(env, "TRAIL_START_MULT", 1.4),
         tp1_mult=get_float(env, "TP1_MULT", 1.30),
         open_min_wallets=get_int(env, "OPEN_MIN_WALLETS", 2),
         open_min_liq_usd=get_float(env, "OPEN_MIN_LIQ_USD", 5000.0),
         be_buffer_pct=get_float(env, "BE_BUFFER_PCT", 0.0),
         max_hold_h=get_float(env, "MAX_HOLD_H", 72.0),
         max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", 20),
-        start_balance_sol=get_float(env, "START_BALANCE_SOL", 2.0),
+        start_balance_sol=get_float(env, "START_BALANCE_SOL", 4.0),
         shadow_state_file=get(env, "SHADOW_STATE_FILE", "shadow_book.json"),
         status_every_min=get_float(env, "STATUS_EVERY_MIN", 30.0),
         watch_poll_s=get_float(env, "WATCH_POLL_S", 45.0),
         watch_min_buy_usd=get_float(env, "WATCH_MIN_BUY_USD", 50.0),
         watch_consensus_wallets=get_int(env, "WATCH_CONSENSUS_WALLETS", 2),
+        watch_consensus_window_s=get_float(env, "WATCH_CONSENSUS_WINDOW_S", 600.0),
         watch_first_lookback_s=get_float(env, "WATCH_FIRST_LOOKBACK_S", 90.0),
         open_gap_s=get_float(env, "OPEN_GAP_S", 20.0),
         # discovery (batch wallet finder)

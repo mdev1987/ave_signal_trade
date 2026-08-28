@@ -397,6 +397,7 @@ async def _run_watch(s: cfg.Settings) -> int:
         poll_s=s.watch_poll_s,
         min_buy_usd=s.watch_min_buy_usd,
         consensus_wallets=s.watch_consensus_wallets,
+        consensus_window_s=s.watch_consensus_window_s,
         first_lookback_s=s.watch_first_lookback_s,
         state_file="watcher_state.json",
     )
