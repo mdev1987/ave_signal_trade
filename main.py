@@ -36,6 +36,7 @@ from jupiter_swap import JupiterSwap
 from solders.keypair import Keypair
 from logs import setup_logging
 from notifier import TelegramNotifier
+from pump_stream import PumpApiStream
 from tatum_notify import TatumNotifications
 from watcher import SmartWalletWatcher
 from wallet_discovery import WalletDiscovery
@@ -405,6 +406,17 @@ async def _run_watch(s: cfg.Settings) -> int:
         state_file="watcher_state.json",
     )
     jupiter = JupiterSwap(dry_run=True)
+    # Live KOL-buy stream (pumpapi.io): accurate USD pricing for fresh pumps,
+    # feeding the same consensus/open pipeline as the Shyft polling fallback.
+    async def _on_pump_buy(wallet, ca, sym, usd, amount):
+        await w._process_buy(wallet, {
+            "ca": ca, "amount": amount, "usd": usd,
+            "symbol": sym, "ts": time.time(),
+        })
+    pump_stream = PumpApiStream(
+        wallets=w.wallets, on_buy=_on_pump_buy, http=w._http)
+    pump_task = asyncio.create_task(pump_stream.run())
+    pump_task.add_done_callback(_log_task_result)
     # Hard cap on concurrent positions: never more than capital allows, and
     # never above the configured max_open_positions (avoids a consensus burst
     # over-leveraging the paper book).
@@ -599,6 +611,8 @@ async def _run_watch(s: cfg.Settings) -> int:
         except Exception:
             log.exception("send_stopped failed")
         status_task.cancel()
+        pump_stream.stop()
+        pump_task.cancel()
         await w.stop()
         await runner.cleanup()
         await ds.close()

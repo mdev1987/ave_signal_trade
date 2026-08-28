@@ -317,22 +317,47 @@ class TelegramNotifier:
             lines.append(f"🏆 WinRate `{win_rate:.1f}%`")
         await self._send("\n".join(lines))
 
+    def _summary_stats(self, summary: dict[str, Any]):
+        """Derive (open_n, closed_n, win_rate, pnl_sol) from a ShadowBook snapshot.
+
+        ``snapshot`` returns ``open``/``closed`` as lists; some callers may pass
+        pre-computed counts instead. Be tolerant either way.
+        """
+        open_pos = summary.get("open") or []
+        closed = summary.get("closed") or []
+        if isinstance(open_pos, int):
+            open_n = open_pos
+        else:
+            open_n = len(open_pos)
+        if isinstance(closed, int):
+            closed_n = closed
+            wr = float(summary.get("win_rate", 0.0) or 0.0)
+            pnl = float(summary.get("pnl_sol", 0.0) or 0.0)
+        else:
+            closed_n = len(closed)
+            wins = sum(1 for c in closed if c.get("pnl_sol", 0.0) >= 0.0)
+            wr = (wins / closed_n * 100.0) if closed_n else 0.0
+            pnl = sum(c.get("pnl_sol", 0.0) for c in closed)
+        return open_n, closed_n, wr, pnl
+
     async def send_summary(self, summary: dict[str, Any]) -> None:
         """Periodic paper-trading summary."""
+        open_n, closed_n, wr, pnl = self._summary_stats(summary)
         await self._send(
             f"{ICONS['close']} **Summary**\n"
-            f"{SEP} Open `{summary['open']}` {SEP} Closed `{summary['closed']}`\n"
-            f"{SEP} WinRate `{summary['win_rate']:.1f}%`\n"
-            f"{SEP} PnL `{summary['pnl_sol']:+.4f}` SOL"
+            f"{SEP} Open `{open_n}` {SEP} Closed `{closed_n}`\n"
+            f"{SEP} WinRate `{wr:.1f}%`\n"
+            f"{SEP} PnL `{pnl:+.4f}` SOL"
         )
 
     async def send_stopped(self, summary: dict[str, Any]) -> None:
         """Shutdown card confirming the bot stopped cleanly."""
+        open_n, closed_n, wr, pnl = self._summary_stats(summary)
         await self._send(
             f"{ICONS['stop']} **Bot Stopped**\n"
-            f"{SEP} Open `{summary['open']}` {SEP} Closed `{summary['closed']}`\n"
-            f"{SEP} WinRate `{summary['win_rate']:.1f}%`\n"
-            f"{SEP} PnL `{summary['pnl_sol']:+.4f}` SOL"
+            f"{SEP} Open `{open_n}` {SEP} Closed `{closed_n}`\n"
+            f"{SEP} WinRate `{wr:.1f}%`\n"
+            f"{SEP} PnL `{pnl:+.4f}` SOL"
         )
 
     # ------------------------------------------------------------- commands

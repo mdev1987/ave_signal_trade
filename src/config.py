@@ -99,7 +99,7 @@ class Settings:
     trail_enabled: bool = False         # trailing stop OFF by default (full-spike exit wins)
     trail_start_mult: float = 1.30     # only trail after a peak >= this
     hard_stop_pct: float = 0.35        # hard stop (was 0.40)
-    open_min_wallets: int = 2           # consensus gate for OPENS (design: >=2)
+    open_min_wallets: int = 1           # consensus gate for OPENS (1 = any KOL wallet)
     open_min_liq_usd: float = 5000.0    # skip illiquid tokens (exit slippage)
     be_buffer_pct: float = 0.0          # after 1st TP, raise stop to entry+this (breakeven lock)
     max_hold_h: float = 72.0            # force-close dead positions after this many hours
@@ -110,7 +110,7 @@ class Settings:
     # watcher
     watch_poll_s: float = 45.0
     watch_min_buy_usd: float = 50.0
-    watch_consensus_wallets: int = 2
+    watch_consensus_wallets: int = 1
     watch_consensus_window_s: float = 600.0
     watch_first_lookback_s: float = 90.0
     open_gap_s: float = 20.0          # min seconds between new positions (anti-flood)
