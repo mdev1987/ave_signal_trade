@@ -146,29 +146,30 @@ class WalletStat:
 
 
 def default_scorer(stats: list[WalletStat]) -> list[WalletStat]:
-    """Composite: rewards early, consistent, winning entries.
+    """Composite scored by OUTCOME first — pump-hit-rate is what actually
+    correlates with profit (backtest: median consensus trade is break-even, so
+    breadth/timing alone are noise; only "did their picks run?" matters).
 
-    Weights (sum ~1.0):
-      * 0.35 distinct_tokens       — breadth: betting on many independent winners
-      * 0.30 early_buys            — timing: getting in at/near launch
-      * 0.25 pumped_hits           — outcome: those picks actually pumped
-      * 0.10 log(total_usd)        — conviction: size of deployment (minorized)
-    Each component is normalized by the max observed value so the score stays
-    in a stable 0..~1 range as the wallet universe grows.
+    Weights:
+      * 0.55 pump_hit_rate  = pumped_hits / distinct_tokens  — the real edge
+      * 0.20 early_buys     — timing: in at/near launch
+      * 0.15 distinct_tokens — breadth: many independent winners, not one fluke
+      * 0.10 log(total_usd) — conviction (minorized)
+    Each component normalized by the max observed so the score stays 0..~1.
     """
     if not stats:
         return stats
     max_tokens = max((s.distinct_tokens for s in stats), default=1) or 1
     max_early = max((s.early_buys for s in stats), default=1) or 1
-    max_hits = max((s.pumped_hits for s in stats), default=1) or 1
     max_usd = max((s.total_usd for s in stats), default=1.0) or 1.0
 
     for s in stats:
+        pump_rate = (s.pumped_hits / s.distinct_tokens) if s.distinct_tokens else 0.0
         norm_usd = (s.total_usd / max_usd) ** 0.25  # compress large sizes
         s.score = round(
-            0.35 * (s.distinct_tokens / max_tokens)
-            + 0.30 * (s.early_buys / max_early)
-            + 0.25 * (s.pumped_hits / max_hits)
+            0.55 * pump_rate
+            + 0.20 * (s.early_buys / max_early)
+            + 0.15 * (s.distinct_tokens / max_tokens)
             + 0.10 * norm_usd,
             4,
         )

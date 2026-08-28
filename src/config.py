@@ -62,6 +62,26 @@ def get_csv_ints(env, key, default="") -> list[int]:
     return out
 
 
+def parse_ladder(env, key: str, default: str) -> list[tuple[float, float]]:
+    """Parse a take-profit ladder from env: "1.3:1.0,1.6:0.3,2.5:0.2".
+
+    Each pair is (price_multiple, fraction_of_remaining_size_to_sell). Fractions
+    across levels should sum to ~1.0 (a level may sell the whole remainder).
+    """
+    raw = get(env, key, default) or default
+    out: list[tuple[float, float]] = []
+    for piece in str(raw).split(","):
+        piece = piece.strip()
+        if not piece or ":" not in piece:
+            continue
+        try:
+            m, f = piece.split(":")
+            out.append((float(m), float(f)))
+        except ValueError:
+            continue
+    return out or [(1.3, 1.0)]
+
+
 @dataclass(frozen=True)
 class Settings:
     # telegram notify
@@ -69,16 +89,22 @@ class Settings:
     chat_id: str = ""
     # strategy
     size_sol: float = 0.05
+    # Take-profit ladder (backtest-validated). Each (mult, frac) sells `frac`
+    # of the REMAINING size when the peak hits `mult`. Backtest showed a
+    # full-exit-at-first-spike ladder is positive across all wallet regimes,
+    # so the default is a single level that exits 100% at +30%.
+    tp_ladder: list = None             # filled by load_settings -> [(1.3, 1.0)]
+    tp1_mult: float = 1.30             # legacy single-TP fallback (bank 50%)
     trail_retrace_pct: float = 0.35
-    hard_stop_pct: float = 0.40
+    trail_enabled: bool = False         # trailing stop OFF by default (full-spike exit wins)
     trail_start_mult: float = 1.30     # only trail after a peak >= this
-    tp1_mult: float = 1.50             # bank 50% at this multiple (was 2.0)
+    hard_stop_pct: float = 0.35        # hard stop (was 0.40)
     open_min_wallets: int = 2           # consensus gate for OPENS (design: >=2)
     open_min_liq_usd: float = 5000.0    # skip illiquid tokens (exit slippage)
     be_buffer_pct: float = 0.0          # after 1st TP, raise stop to entry+this (breakeven lock)
     max_hold_h: float = 72.0            # force-close dead positions after this many hours
-    max_open_positions: int = 10        # hard cap on concurrent shadow positions
-    start_balance_sol: float = 2.0
+    max_open_positions: int = 20        # hard cap on concurrent shadow positions (raised)
+    start_balance_sol: float = 4.0      # larger paper book so the cap is capital-bound
     shadow_state_file: str = "shadow_book.json"
     status_every_min: float = 30.0
     # watcher
@@ -109,15 +135,17 @@ def load_settings(path: str = ".env") -> Settings:
         bot_token=get(env, "BOT_TOKEN", ""),
         chat_id=get(env, "CHAT_ID", ""),
         size_sol=get_float(env, "SIZE_SOL", 0.05),
+        tp_ladder=parse_ladder(env, "TP_LADDER", "1.3:1.0"),
         trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", 0.35),
-        hard_stop_pct=get_float(env, "HARD_STOP_PCT", 0.40),
+        hard_stop_pct=get_float(env, "HARD_STOP_PCT", 0.35),
+        trail_enabled=get_bool(env, "TRAIL_ENABLED", False),
         trail_start_mult=get_float(env, "TRAIL_START_MULT", 1.30),
-        tp1_mult=get_float(env, "TP1_MULT", 1.50),
+        tp1_mult=get_float(env, "TP1_MULT", 1.30),
         open_min_wallets=get_int(env, "OPEN_MIN_WALLETS", 2),
         open_min_liq_usd=get_float(env, "OPEN_MIN_LIQ_USD", 5000.0),
         be_buffer_pct=get_float(env, "BE_BUFFER_PCT", 0.0),
         max_hold_h=get_float(env, "MAX_HOLD_H", 72.0),
-        max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", 10),
+        max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", 20),
         start_balance_sol=get_float(env, "START_BALANCE_SOL", 2.0),
         shadow_state_file=get(env, "SHADOW_STATE_FILE", "shadow_book.json"),
         status_every_min=get_float(env, "STATUS_EVERY_MIN", 30.0),

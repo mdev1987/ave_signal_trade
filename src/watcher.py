@@ -128,6 +128,7 @@ class SmartWalletWatcher:
         self.token_hits: dict[str, dict] = {}
         self.consensus_fired = 0
         self._consensus_sent: set[str] = set()
+        self.wallet_perf: dict[str, dict] = {}   # addr -> {picks, hits} (live learning)
         self.on_smart_buy = on_smart_buy
         self.tatum_push = False
         self._stop = asyncio.Event()
@@ -152,6 +153,7 @@ class SmartWalletWatcher:
                     self.state[f"ts:{w}"] = cutoff
             self.known_cas = set(st.get("known_cas", []))
             self.token_hits = st.get("token_hits", {})
+            self.wallet_perf = st.get("wallet_perf", {})
         except Exception:
             logger.exception("watcher state load failed")
 
@@ -162,6 +164,7 @@ class SmartWalletWatcher:
                 **self.state,
                 "known_cas": sorted(self.known_cas),
                 "token_hits": self.token_hits,
+                "wallet_perf": self.wallet_perf,
             }, indent=1))
         except Exception:
             logger.exception("watcher state save failed")
@@ -314,7 +317,8 @@ class SmartWalletWatcher:
                     b.get("symbol","?"), ca[:10], syms)
         if self.on_smart_buy:
             try:
-                await self.on_smart_buy(ca, hit.get("symbol",""), usd, n)
+                await self.on_smart_buy(ca, hit.get("symbol", ""), usd, n,
+                                        [x["w"] for x in hit["wallets"]])
             except Exception:
                 logger.exception("on_smart_buy callback failed")
 

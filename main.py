@@ -109,7 +109,10 @@ class ShadowBook:
                  state_file: Path, start_balance_sol: float,
                  jupiter=None, notifier=None, max_positions: int = 12,
                  tp1_mult: float = 1.5, trail_start_mult: float = 1.3,
-                 be_buffer: float = 0.0, max_hold_s: float = 0.0) -> None:
+                 be_buffer: float = 0.0, max_hold_s: float = 0.0,
+                 tp_ladder: list | None = None,
+                 trail_enabled: bool = False,
+                 on_trade_close=None) -> None:
         self.jupiter = jupiter
         self.notifier = notifier
         self.max_positions = int(max_positions)
@@ -121,6 +124,11 @@ class ShadowBook:
         self.trail_start_mult = float(trail_start_mult)
         self.be_buffer = float(be_buffer)
         self.max_hold_s = float(max_hold_s)
+        # Take-profit ladder: list of (price_multiple, frac_of_remaining). If
+        # None, fall back to the legacy single-TP behaviour (tp1_mult bank 50%).
+        self.tp_ladder = tp_ladder or [(tp1_mult, 0.5)]
+        self.trail_enabled = bool(trail_enabled)
+        self.on_trade_close = on_trade_close  # async/normal fn(wallets, win: bool)
         self.state_file = state_file
         self.start_balance_sol = float(start_balance_sol)
         self.balance_sol = float(start_balance_sol)
@@ -164,7 +172,8 @@ class ShadowBook:
             return 0.0
 
     async def open_position(self, ca: str, symbol: str, usd_entry: float,
-                            trigger_usd: float, n_wallets: int) -> None:
+                            trigger_usd: float, n_wallets: int,
+                            wallets: list[str] | None = None) -> None:
         # Entry price MUST be in the same unit as refresh_prices' DexScreener
         # price_usd (USD per token). We use DexScreener as the canonical source
         # so TP1 / trail / hard-stop thresholds compare like-for-like. (An
@@ -225,8 +234,9 @@ class ShadowBook:
                 "tokens_raw": tokens_raw, "entry_note": entry_note,
                 "size_sol": self.size_sol, "ts": time.time(),
                 "trigger_usd": trigger_usd, "n_wallets": n_wallets,
-                "tp1_banked": False, "be_armed": False,
-                "peak_mult": 1.0, "tp1_mult": self.tp1_mult,
+                "wallets": list(wallets or []),
+                "tp_taken": [], "remaining": 1.0, "banked_pnl": 0.0,
+                "be_armed": False, "peak_mult": 1.0,
             }
             logs.journal("shadow_entry_px", ca=ca, px=px, note=entry_note)
             logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
@@ -275,28 +285,38 @@ class ShadowBook:
                     continue  # can't price this cycle; leave open (safe)
                 peak_mult = pos.get("peak_mult", mult)
                 exit_reason = None
-                # partial TP: bank half at tp1_mult (virtual), runner continues
-                if not pos.get("tp1_banked") and peak_mult >= pos.get("tp1_mult", 2.0):
-                    pos["tp1_banked"] = True
-                    pos["banked_pnl"] = pos["size_sol"] * 0.5 * (pos["tp1_mult"] - 1.0)
-                    logs.journal("shadow_tp1", ca=ca, symbol=pos["symbol"])
-                # once the first target is banked, lock the stop up to breakeven
-                # (+buffer) so a winner can never become a loser
-                if pos.get("tp1_banked") and not pos.get("be_armed"):
+                # ---- take-profit ladder (scale-out): when the peak reaches a
+                # level, sell that fraction of the REMAINING size at the level's
+                # multiple (virtual, paper). Once anything is banked, the stop
+                # locks up to breakeven so a winner can never become a loser.
+                for lvl, frac in self.tp_ladder:
+                    if lvl in pos["tp_taken"]:
+                        continue
+                    if peak_mult >= lvl:
+                        pos["tp_taken"].append(lvl)
+                        pos["banked_pnl"] += frac * pos["size_sol"] * (lvl - 1.0)
+                        pos["remaining"] = max(0.0, pos["remaining"] - frac)
+                        logs.journal("shadow_tp", ca=ca, symbol=pos["symbol"],
+                                     lvl=lvl, frac=frac)
+                        if pos["remaining"] <= 1e-9:
+                            pos["remaining"] = 0.0
+                if pos["tp_taken"] and not pos["be_armed"]:
                     pos["be_armed"] = True
                     logs.journal("shadow_be", ca=ca, symbol=pos["symbol"])
-                stop_mult = (1 - self.hard_stop)
-                if pos.get("be_armed"):
-                    stop_mult = max(stop_mult, 1.0 + self.be_buffer)
-                if self.hard_stop > 0 and mult <= stop_mult:
-                    exit_reason = "sl"
-                elif peak_mult >= self.trail_start_mult and \
-                        mult <= peak_mult * (1 - self.retrace):
-                    # only trail after the position has actually run (avoids
-                    # stopping out on the first tiny dip before any upside)
-                    exit_reason = "trail"
-                elif self.max_hold_s > 0 and (time.time() - pos["ts"]) > self.max_hold_s:
-                    exit_reason = "timeout"
+                if pos["remaining"] <= 0:
+                    exit_reason = "tp"   # fully scaled out at the spike
+                else:
+                    stop_mult = (1 - self.hard_stop)
+                    if pos["be_armed"]:
+                        stop_mult = max(stop_mult, 1.0 + self.be_buffer)
+                    if self.hard_stop > 0 and mult <= stop_mult:
+                        exit_reason = "sl"
+                    elif self.trail_enabled and peak_mult >= self.trail_start_mult and \
+                            mult <= peak_mult * (1 - self.retrace):
+                        # only trail after the position has actually run
+                        exit_reason = "trail"
+                    elif self.max_hold_s > 0 and (time.time() - pos["ts"]) > self.max_hold_s:
+                        exit_reason = "timeout"
                 if exit_reason and self.jupiter is not None and pos.get("tokens_raw") \
                         and exit_reason != "timeout":
                     try:
@@ -310,8 +330,8 @@ class ShadowBook:
                                       ca[:10])
                 if exit_reason:
                     pnl = pos.get("banked_pnl", 0.0) + \
-                        pos["size_sol"] * (mult - 1.0)
-                    # Trade-level multiple (incl. any banked TP1) for honest
+                        pos["remaining"] * pos["size_sol"] * (mult - 1.0)
+                    # Trade-level multiple (incl. any banked TP) for honest
                     # reporting — the exit-leg `mult` alone misleads when a
                     # partial was already banked (e.g. Bear: exit 0.70x but net +).
                     trade_mult = (pos["size_sol"] + pnl) / pos["size_sol"]
@@ -323,6 +343,11 @@ class ShadowBook:
                     self.balance_sol += self.size_sol + pnl
                     del self.open[ca]
                     logs.journal("shadow_close", **rec)
+                    if self.on_trade_close is not None:
+                        try:
+                            self.on_trade_close(pos.get("wallets", []), pnl >= 0)
+                        except Exception:
+                            log.exception("on_trade_close failed")
                     if self.notifier is not None:
                         try:
                             asyncio.get_running_loop().create_task(
@@ -381,12 +406,26 @@ async def _run_watch(s: cfg.Settings) -> int:
     # over-leveraging the paper book).
     max_positions = min(max(1, int(round(s.start_balance_sol / s.size_sol))),
                         s.max_open_positions)
+    # Live learning loop: every shadow close updates each triggering wallet's
+    # hit-rate (picks vs winners). Over time this makes discovery's pump-hit-rate
+    # scorer self-correcting — bad wallets stop driving consensus opens.
+    def _record_trade(wallets, win):
+        for addr in (wallets or []):
+            perf = w.wallet_perf.setdefault(addr, {"picks": 0, "hits": 0})
+            perf["picks"] = perf.get("picks", 0) + 1
+            if win:
+                perf["hits"] = perf.get("hits", 0) + 1
+        logs.journal("wallet_perf_update", picks=sum(
+            v.get("picks", 0) for v in w.wallet_perf.values()))
+
     book = ShadowBook(ds, s.size_sol, s.trail_retrace_pct, s.hard_stop_pct,
                       Path(s.shadow_state_file), s.start_balance_sol,
                       jupiter=jupiter, notifier=notifier,
                       max_positions=max_positions,
                       tp1_mult=s.tp1_mult, trail_start_mult=s.trail_start_mult,
-                      be_buffer=s.be_buffer_pct, max_hold_s=s.max_hold_h * 3600.0)
+                      be_buffer=s.be_buffer_pct, max_hold_s=s.max_hold_h * 3600.0,
+                      tp_ladder=s.tp_ladder, trail_enabled=s.trail_enabled,
+                      on_trade_close=_record_trade)
 
     # shadow book opens automatically via on_smart_buy callback. During the
     # initial lookback window we only TRACK buys (so consensus alerts still
@@ -400,7 +439,7 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     _skip_log = {}
 
-    async def _on_smart_buy(ca, sym, usd, n):
+    async def _on_smart_buy(ca, sym, usd, n, wallets=None):
         if not backfill_done.is_set():
             reason = "deferred:lookback"
         elif n < s.open_min_wallets:
@@ -434,13 +473,13 @@ async def _run_watch(s: cfg.Settings) -> int:
                 last_open["t"] = time.time()
                 logs.journal("open_liq_unchecked", ca=ca, symbol=sym,
                              note="dexscreener_unavailable")
-                await book.open_position(ca, sym, usd, usd, n)
+                await book.open_position(ca, sym, usd, usd, n, wallets=wallets)
                 return
             elif (snap.get("liq") or 0) < s.open_min_liq_usd:
                 reason = "skip:low_liq"
             else:
                 last_open["t"] = time.time()
-                await book.open_position(ca, sym, usd, usd, n)
+                await book.open_position(ca, sym, usd, usd, n, wallets=wallets)
                 return
         now = time.time()
         if _skip_log.get(ca, 0) < now - 300:
@@ -531,7 +570,12 @@ async def _run_watch(s: cfg.Settings) -> int:
     try:
         while not stop.is_set():
             await asyncio.sleep(manage_s)
-            await book.refresh_prices()
+            # Never let a transient pricing/quote error kill the whole bot; a
+            # single bad token must not take down the live book.
+            try:
+                await book.refresh_prices()
+            except Exception:
+                log.exception("refresh_prices failed this cycle; continuing")
     finally:
         status_task.cancel()
         await w.stop()

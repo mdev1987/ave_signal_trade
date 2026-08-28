@@ -29,6 +29,13 @@ dist/
 wheels/
 *.egg-info
 
+# ---- logs (may leak API keys in URLs) ----
+*.log
+bot_supervisor.log
+
+# ---- stray discovery output ----
+discovered_wallets.json
+
 # ---- editors / misc ----
 .vscode/
 .opencode/

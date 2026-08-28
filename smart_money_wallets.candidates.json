@@ -1,0 +1,362 @@
+{
+ "511P3VC95kNY1P5stEDe7rUwh72BX7HYDL6W8ZfDTFG2": {
+  "score": 1.0,
+  "distinct_tokens": 31,
+  "pumped_hits": 31,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "9kSsPcBfywB5UWEZn4NiFW2jKqWsRsrzCJQKfxsrGmwe": {
+  "score": 1.0,
+  "distinct_tokens": 30,
+  "pumped_hits": 30,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "6rH3c2DLQvd8CSNVF4geb6GLWYPBSeTqepALSfKbtry1": {
+  "score": 1.0,
+  "distinct_tokens": 30,
+  "pumped_hits": 30,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "8ki679dZgE8ozmGVKBzBbBqqby5CToRfqzAoKYx49aNX": {
+  "score": 1.0,
+  "distinct_tokens": 29,
+  "pumped_hits": 29,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "95SYyvJqGksJcnPn9Do4wADRU6XnAx6jhyLFx2r5rWsk": {
+  "score": 1.0,
+  "distinct_tokens": 26,
+  "pumped_hits": 26,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "BAaGApT6KUQazuJupyHPYNgDXUGqYzTEayRgBFvkpM7r": {
+  "score": 1.0,
+  "distinct_tokens": 26,
+  "pumped_hits": 26,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "8ru4jNn5Ke77uxpKBnfMWSA88fysH7JC3ACHX1oLz5aH": {
+  "score": 1.0,
+  "distinct_tokens": 25,
+  "pumped_hits": 25,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "BYFWQUgpvrFCZgQLb1EPPMdom7xn5D5PkMwa3mc4CLQQ": {
+  "score": 1.0,
+  "distinct_tokens": 25,
+  "pumped_hits": 25,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "3EFLkMBvsZDEGK3jrtGxKhz3SqmMbYNdsaMhSAqdhoCb": {
+  "score": 1.0,
+  "distinct_tokens": 24,
+  "pumped_hits": 24,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "GjP2f5MM2sRKTvu8CpNxbgNWuKfS88xdevKRz32nne5s": {
+  "score": 1.0,
+  "distinct_tokens": 24,
+  "pumped_hits": 24,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "DE995a62SsTVSiJU18d6eopyFGKsj7SHcHVZsZCCY1CN": {
+  "score": 1.0,
+  "distinct_tokens": 23,
+  "pumped_hits": 23,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "8mJJxuZ2UYD5gPFZS8qgCrdFmfWknn1Jh7LZ1JGKPK7P": {
+  "score": 1.0,
+  "distinct_tokens": 23,
+  "pumped_hits": 23,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "2WpevKDieGDw6fFq9UVktvU3pRSnWYS9GdofEq58p93t": {
+  "score": 1.0,
+  "distinct_tokens": 23,
+  "pumped_hits": 23,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "GAYeu4sM42VJANeJBJ4ckKyGD2gBcmrjMEtwwCe1yGBh": {
+  "score": 1.0,
+  "distinct_tokens": 23,
+  "pumped_hits": 23,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "2M3YTovSLfV7LAkRJhbs1pagmRZSoinfaHQoarbjBqaP": {
+  "score": 1.0,
+  "distinct_tokens": 22,
+  "pumped_hits": 22,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "4Yp2jZAwMBF9aqvqKErBCbFUps9UXRtrBXW3ZjFRK6N1": {
+  "score": 1.0,
+  "distinct_tokens": 22,
+  "pumped_hits": 22,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "GVgnRcg2dsL2Fr4HtJk9GBfdyAVEeaXfhY7ZHEQgmgHt": {
+  "score": 1.0,
+  "distinct_tokens": 22,
+  "pumped_hits": 22,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "V4YrSYhGcFWTwH4PMxrJo1UsW7QfbajRrf6L13PPHgc": {
+  "score": 1.0,
+  "distinct_tokens": 21,
+  "pumped_hits": 21,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "7gAeHpUbv2AsFweVHbXpEJ6ftrDxcK2HFDNnymgWZBHo": {
+  "score": 1.0,
+  "distinct_tokens": 21,
+  "pumped_hits": 21,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "3MCwScLaaMU3SvpoppP2tCSFf2RnZi48PTPdpA5c4zbL": {
+  "score": 1.0,
+  "distinct_tokens": 21,
+  "pumped_hits": 21,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "AYwgUkGbawBYd5EoA94zkui5TtrXBZ6rLpKj9WtTKs5T": {
+  "score": 1.0,
+  "distinct_tokens": 21,
+  "pumped_hits": 21,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "CFt926D6bJSFKFt34VJDTAqrPRMLQJVLA5vP1oeL3GTt": {
+  "score": 1.0,
+  "distinct_tokens": 20,
+  "pumped_hits": 20,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "J13Pn6Sq4JCpYYP9e3fTNuhMH7fsMSnh8ZcDsvUP4SC6": {
+  "score": 1.0,
+  "distinct_tokens": 20,
+  "pumped_hits": 20,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "9eV3B3KTWWC1FcM2ygo3er7dZUh9oxjQs44NuvG3537E": {
+  "score": 1.0,
+  "distinct_tokens": 20,
+  "pumped_hits": 20,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "FB7uZh7qw1mgKFoKPUpUzDttuxodtVNhkutKXxXMQvSp": {
+  "score": 1.0,
+  "distinct_tokens": 20,
+  "pumped_hits": 20,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "9dVLmzRAuzR3z2hovjxmJRUsFYs1GrSs27u9cG92rEhA": {
+  "score": 1.0,
+  "distinct_tokens": 20,
+  "pumped_hits": 20,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "A729a8K8mSxtnfQykwVyXhc4AJw3drZaTeYtAGVHNGgg": {
+  "score": 0.9775,
+  "distinct_tokens": 19,
+  "pumped_hits": 19,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "HvoW4VBzcUjizeCXcp2vSKt2YW3U8fGBspxMdVfnMdiF": {
+  "score": 0.9775,
+  "distinct_tokens": 19,
+  "pumped_hits": 19,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "GghAqyu92ojVAGLFQGaBUXvGtjwp3C7B189ZLE8D14vi": {
+  "score": 0.9775,
+  "distinct_tokens": 19,
+  "pumped_hits": 19,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "HNFjT6CDeTUyEXu3BwHL5GnzFbaqkFoTRzKHoGqPY7qa": {
+  "score": 0.9775,
+  "distinct_tokens": 19,
+  "pumped_hits": 19,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "7p1R5ZmtNK6wKHbGuUjYWojimkAbZF6FQE9Qq338G3va": {
+  "score": 0.9775,
+  "distinct_tokens": 19,
+  "pumped_hits": 19,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "PMJA8UQDyWTFw2Smhyp9jGA6aTaP7jKHR7BPudrgyYN": {
+  "score": 0.9775,
+  "distinct_tokens": 19,
+  "pumped_hits": 19,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "J2L495ZPcJ6Btuyd4YqXz5uw7hpKiQXGcLvALwumabED": {
+  "score": 0.9775,
+  "distinct_tokens": 19,
+  "pumped_hits": 19,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "DGLDRWX18FnfqHbmUWsA6uBmXV2eNKqSUAnwcJ8iPa68": {
+  "score": 0.9775,
+  "distinct_tokens": 19,
+  "pumped_hits": 19,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "2w3vN2ZwVw4EGTzpTzEcAmkq68QYd7gH98DccBAAS5HQ": {
+  "score": 0.955,
+  "distinct_tokens": 18,
+  "pumped_hits": 18,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "EXGDW2ZGhkTNxXk7cVW58Det6yYbFekTodDS6WMNFDz7": {
+  "score": 0.955,
+  "distinct_tokens": 18,
+  "pumped_hits": 18,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "BynVmwhZo5x4Yn8J2DqBTxomVftU71kWssai4um3sm78": {
+  "score": 0.955,
+  "distinct_tokens": 18,
+  "pumped_hits": 18,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "EM1ZyNA3g4rr9MBzSEA36QqWd7t7cp54zDidm3YskyeU": {
+  "score": 0.955,
+  "distinct_tokens": 18,
+  "pumped_hits": 18,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "84UBp52FJZ5xwD5sGUqddzujNUUUAjNzNtLBfVeLXW84": {
+  "score": 0.955,
+  "distinct_tokens": 18,
+  "pumped_hits": 18,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ },
+ "5HQbGCvonjo8FmbdEvTqVgDJx5jbFbJX3VtdPsv172Bp": {
+  "score": 0.9325,
+  "distinct_tokens": 17,
+  "pumped_hits": 17,
+  "pump_hit_rate": 1.0,
+  "source": "replay_pump_hit_rate",
+  "added_ts": 1787876435.9344406,
+  "updated_ts": 1787876435.9344406
+ }
+}
