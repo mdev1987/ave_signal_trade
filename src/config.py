@@ -99,8 +99,23 @@ class Settings:
     trail_enabled: bool = False         # trailing stop OFF by default (full-spike exit wins)
     trail_start_mult: float = 1.30     # only trail after a peak >= this
     hard_stop_pct: float = 0.35        # hard stop (was 0.40)
-    open_min_wallets: int = 2           # consensus gate for OPENS (2 = validated via backtest + live journal)
+    open_min_wallets: int = 2           # legacy distinct-wallet floor (kept for compat; weighted score is the real gate)
     open_min_liq_usd: float = 5000.0    # skip illiquid tokens (exit slippage)
+    # --- data-driven wallet-quality weighting (consensus = weighted score) ---
+    # Each KOL contributes a weight from its real win rate + PnL (see
+    # wallet_weights.build_weights); a token "fires" when the summed weight of
+    # distinct buying wallets reaches CONSENSUS_WEIGHT_THRESHOLD. This stops
+    # low-win-rate noise wallets from manufacturing fake consensus.
+    wallet_perf_path: str = "wallet_performance.json"
+    wallet_weight_floor_win: float = 0.40   # win rate below this -> weight 0 (noise)
+    wallet_weight_full_win: float = 0.60    # win rate at/above this -> base 1.0
+    wallet_pnl_tier1: float = 1_000_000.0   # >=$1M PnL -> 1.25x weight
+    wallet_pnl_tier2: float = 5_000_000.0   # >=$5M PnL -> 1.5x weight
+    wallet_weight_tier1_mult: float = 1.25
+    wallet_weight_tier2_mult: float = 1.5
+    wallet_default_weight: float = 0.5      # weight when perf data is missing
+    wallet_weight_max: float = 2.0
+    consensus_weight_threshold: float = 1.0  # ~2 avg KOLs OR 1 strong (60%+/big)
     be_buffer_pct: float = 0.0          # after 1st TP, raise stop to entry+this (breakeven lock)
     max_hold_h: float = 72.0            # force-close dead positions after this many hours
     max_open_positions: int = 20        # hard cap on concurrent shadow positions (raised)
@@ -144,6 +159,16 @@ def load_settings(path: str = ".env") -> Settings:
         tp1_mult=get_float(env, "TP1_MULT", 1.30),
         open_min_wallets=get_int(env, "OPEN_MIN_WALLETS", 2),
         open_min_liq_usd=get_float(env, "OPEN_MIN_LIQ_USD", 5000.0),
+        wallet_perf_path=get(env, "WALLET_PERF_PATH", "wallet_performance.json"),
+        wallet_weight_floor_win=get_float(env, "WALLET_WEIGHT_FLOOR_WIN", 0.40),
+        wallet_weight_full_win=get_float(env, "WALLET_WEIGHT_FULL_WIN", 0.60),
+        wallet_pnl_tier1=get_float(env, "WALLET_PNL_TIER1", 1_000_000.0),
+        wallet_pnl_tier2=get_float(env, "WALLET_PNL_TIER2", 5_000_000.0),
+        wallet_weight_tier1_mult=get_float(env, "WALLET_WEIGHT_TIER1_MULT", 1.25),
+        wallet_weight_tier2_mult=get_float(env, "WALLET_WEIGHT_TIER2_MULT", 1.5),
+        wallet_default_weight=get_float(env, "WALLET_DEFAULT_WEIGHT", 0.5),
+        wallet_weight_max=get_float(env, "WALLET_WEIGHT_MAX", 2.0),
+        consensus_weight_threshold=get_float(env, "CONSENSUS_WEIGHT_THRESHOLD", 1.0),
         be_buffer_pct=get_float(env, "BE_BUFFER_PCT", 0.0),
         max_hold_h=get_float(env, "MAX_HOLD_H", 72.0),
         max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", 20),

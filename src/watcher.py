@@ -103,9 +103,12 @@ class SmartWalletWatcher:
         min_buy_usd: float = 100.0,
         consensus_wallets: int = 2,
         consensus_window_s: float = 7200.0,
-        on_smart_buy=None,  # async fn(ca, symbol, usd, n_wallets)
+        on_smart_buy=None,  # async fn(ca, symbol, usd, score, wallets)
         first_lookback_s: float = 600.0,
         manage_interval_s: float = 1.0,
+        wallet_weights: dict | None = None,
+        wallet_default_weight: float = 0.5,
+        consensus_weight_threshold: float = 1.0,
     ) -> None:
         wf = Path(wallets_file)
         data = json.loads(wf.read_text()) if wf.exists() else {}
@@ -119,6 +122,12 @@ class SmartWalletWatcher:
         self.consensus_wallets = consensus_wallets
         self.consensus_window_s = consensus_window_s
         self.first_lookback_s = first_lookback_s
+        # Data-driven quality weights: address -> weight (0..max). Wallets absent
+        # from the map (no perf data) fall back to wallet_default_weight so the
+        # bot degrades to the legacy "equal wallets" behaviour instead of breaking.
+        self.weights = dict(wallet_weights) if wallet_weights else {}
+        self.default_weight = wallet_default_weight
+        self.consensus_weight_threshold = consensus_weight_threshold
         self.state_file = Path(state_file)
         self.tokens_file = Path(tokens_file)
         self._http = httpx.AsyncClient(timeout=25)
@@ -287,37 +296,43 @@ class SmartWalletWatcher:
         # buy meets WATCH_MIN_BUY_USD. This makes the threshold meaningful
         # (otherwise tiny buys still pile into consensus, causing bursts).
         qualifies = usd >= self.min_buy_usd
+        # Quality weight: proven winners move the score; noise wallets (~0) can't
+        # manufacture consensus on their own. Sub-threshold buys contribute 0.
+        wt = self.weights.get(wallet, self.default_weight) if qualifies else 0.0
         if qualifies:
             hit["usd"] += usd
             if not already:
-                hit["wallets"].append({"w": wallet, "usd": usd, "ts": now})
+                hit["wallets"].append({"w": wallet, "usd": usd, "ts": now, "wt": wt})
         fresh = ca not in self.known_cas
         if not already:
             logs.journal("smart_buy_seen", ca=ca, wallet=wallet[:10],
-                         usd=round(usd, 2), n_smart=len(hit["wallets"]),
-                         fresh=fresh)
-        if len(hit["wallets"]) < self.consensus_wallets and usd < self.min_buy_usd:
+                         usd=round(usd, 2), wt=wt, fresh=fresh)
+        # Skip re-evaluation entirely for a sub-threshold buy on an already-known
+        # token (we only re-score when a NEW qualifying wallet arrives, or it's
+        # the first sighting).
+        if not fresh and not qualifies:
             return
         if fresh:
             self.known_cas.add(ca)
-        n = len(hit["wallets"])
-        if not fresh and n < self.consensus_wallets:
+        # Weighted consensus score: sum of distinct buying wallets' quality
+        # weights. Replaces the old "count >= N equal wallets" rule.
+        score = round(sum(x.get("wt", 0.0) for x in hit["wallets"]), 3)
+        if not fresh and score < self.consensus_weight_threshold:
             return
-        consensus = n >= self.consensus_wallets and ca not in self._consensus_sent
+        consensus = score >= self.consensus_weight_threshold and ca not in self._consensus_sent
         if consensus:
             self.consensus_fired += 1
             self._consensus_sent.add(ca)
-        icon = "🔥" if consensus else "🕵️"
         title = "CONSENSUS BUY" if consensus else "Smart wallet buy"
-        syms = ",".join(x["w"][:5] + "…($" + format(x["usd"], ".0f") + ")"
+        syms = ",".join(x["w"][:5] + "…(w" + format(x.get("wt", 0), ".2f") + ")"
                         for x in hit["wallets"][-4:])
         # All buy signals go to journal/log only; the Telegram feed is reserved
         # for the shadow book's OPEN / CLOSE position cards (see ShadowBook).
-        logger.info("%s %s %s (%s) — journal only", title,
-                    b.get("symbol","?"), ca[:10], syms)
+        logger.info("%s %s %s (%s) score=%.2f — journal only", title,
+                    hit.get("symbol", "?"), ca[:10], syms, score)
         if self.on_smart_buy:
             try:
-                await self.on_smart_buy(ca, hit.get("symbol", ""), usd, n,
+                await self.on_smart_buy(ca, hit.get("symbol", ""), usd, score,
                                         [x["w"] for x in hit["wallets"]])
             except Exception:
                 logger.exception("on_smart_buy callback failed")

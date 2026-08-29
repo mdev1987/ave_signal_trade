@@ -40,6 +40,7 @@ from pump_stream import PumpApiStream
 from tatum_notify import TatumNotifications
 from watcher import SmartWalletWatcher
 from wallet_discovery import WalletDiscovery
+from wallet_weights import build_weights
 
 log = logging.getLogger("main")
 
@@ -393,6 +394,23 @@ async def _run_watch(s: cfg.Settings) -> int:
     ds = DexScreenerClient(base_url=s.dexscreener_base_url,
                            rpm=s.dexscreener_rpm)
 
+    # Data-driven wallet quality: weight each KOL by real win rate + PnL so the
+    # consensus score reflects conviction, not just head-count.
+    weights, default_weight = build_weights(
+        s.wallet_perf_path,
+        floor_win=s.wallet_weight_floor_win,
+        full_win=s.wallet_weight_full_win,
+        pnl_tier1=s.wallet_pnl_tier1, pnl_tier2=s.wallet_pnl_tier2,
+        tier1_mult=s.wallet_weight_tier1_mult,
+        tier2_mult=s.wallet_weight_tier2_mult,
+        default_weight=s.wallet_default_weight,
+        max_weight=s.wallet_weight_max,
+    )
+    log.info("wallet weights: %d scored, %d at 0 (noise), default=%.2f",
+             sum(1 for v in weights.values() if v > 0),
+             sum(1 for v in weights.values() if v == 0),
+             default_weight)
+
     w = SmartWalletWatcher(
         shyft_key=(cfg.get(env, "SHYFT_API_KEY") or "").strip(),
         shyft_rpc=cfg.get(env, "SHYFT_RPC_URL", "https://rpc.shyft.to"),
@@ -404,6 +422,9 @@ async def _run_watch(s: cfg.Settings) -> int:
         consensus_window_s=s.watch_consensus_window_s,
         first_lookback_s=s.watch_first_lookback_s,
         state_file="watcher_state.json",
+        wallet_weights=weights,
+        wallet_default_weight=default_weight,
+        consensus_weight_threshold=s.consensus_weight_threshold,
     )
     jupiter = JupiterSwap(dry_run=True)
     # Live KOL-buy stream (pumpapi.io): accurate USD pricing for fresh pumps,
@@ -455,14 +476,16 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     _skip_log = {}
 
-    async def _on_smart_buy(ca, sym, usd, n, wallets=None):
+    async def _on_smart_buy(ca, sym, usd, score, wallets=None):
+        n = len(wallets or [])
         if not backfill_done.is_set():
             reason = "deferred:lookback"
-        elif n < s.open_min_wallets:
-            # Design rule: open only on consensus (>=OPEN_MIN_WALLETS
-            # wallets into the same token). Single-wallet buys are mostly
-            # noise and were the dominant leak in the losing sessions.
-            reason = f"skip:consensus<{s.open_min_wallets}"
+        elif score < s.consensus_weight_threshold:
+            # Weighted consensus gate: the summed quality score of distinct
+            # buying wallets must clear the threshold. A single proven winner
+            # (weight >= 1) is enough; two mid winners sum to ~1; noise wallets
+            # (weight ~0) can never manufacture a signal on their own.
+            reason = f"skip:score<{s.consensus_weight_threshold}"
         elif usd < s.watch_min_buy_usd:
             reason = "skip:below_min_buy"
         elif ca in book.open:
@@ -569,8 +592,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             await notifier.send_startup(
                 summary=f"watching {len(w.wallets)} wallets · "
                         f"balance {s.start_balance_sol:.2f} SOL · "
-                        f"E4 ladder cw={s.watch_consensus_window_s:.0f}s · "
-                        f"min_wallets={s.open_min_wallets}")
+                    f"E4 ladder cw={s.watch_consensus_window_s:.0f}s · "
+                    f"weight_thr={s.consensus_weight_threshold}")
         except Exception:
             log.exception("send_startup failed")
     w.start()

@@ -1,0 +1,1888 @@
+[
+  {
+    "address": "BCagckXeMChUKrHEd6fKFA1uiWDtcmCXMsqaheLiUPJd",
+    "ok": true,
+    "name": "dv",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "bloom"
+    ],
+    "pnl_total": 4345519.73,
+    "pnl_realized": 4326153.16,
+    "pnl_unrealized": 19366.56,
+    "roi": 12.75,
+    "trades": 392253,
+    "win_rate": 48.6,
+    "avg_hold_secs": 72924
+  },
+  {
+    "address": "8oQoMhfBQnRspn7QtNAq2aPThRE4q94kLSTwaaFQvRgs",
+    "ok": true,
+    "name": "big bags bobby",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "photon",
+      "bloom",
+      "sns"
+    ],
+    "pnl_total": 951739.87,
+    "pnl_realized": 1012133.64,
+    "pnl_unrealized": -60393.77,
+    "roi": 23.09,
+    "trades": 24145,
+    "win_rate": 55.95,
+    "avg_hold_secs": 338408
+  },
+  {
+    "address": "DYAn4XpAkN5mhiXkRB7dGq4Jadnx6XYgu8L5b3WGhbrt",
+    "ok": true,
+    "name": "The Doc",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "pumpfun-app",
+      "sns"
+    ],
+    "pnl_total": 1425126.07,
+    "pnl_realized": 1428482.06,
+    "pnl_unrealized": -3355.99,
+    "roi": 35.48,
+    "trades": 37759,
+    "win_rate": 61.02,
+    "avg_hold_secs": 90144
+  },
+  {
+    "address": "B32QbbdDAyhvUQzjcaM5j6ZVKwjCxAwGH5Xgvb9SJqnC",
+    "ok": true,
+    "name": "Kadenox",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 1379296.01,
+    "pnl_realized": 1373240.8,
+    "pnl_unrealized": 6055.2,
+    "roi": 24.12,
+    "trades": 58955,
+    "win_rate": 53.06,
+    "avg_hold_secs": 116928
+  },
+  {
+    "address": "An68XCxJvfXc9NRWjNXGSFY55dyFVKjfgtpt8AKGJ2dE",
+    "ok": true,
+    "name": "bihoz",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 84421.93,
+    "pnl_realized": 84253.95,
+    "pnl_unrealized": 167.97,
+    "roi": 14.22,
+    "trades": 6331,
+    "win_rate": 38.39,
+    "avg_hold_secs": 138171
+  },
+  {
+    "address": "2G6CNJqfvGP3KWZXtV8rQHra3kxGK28nvzT6TjyWNtiJ",
+    "ok": true,
+    "name": "arnz",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "bloom"
+    ],
+    "pnl_total": 55277.19,
+    "pnl_realized": 55455.51,
+    "pnl_unrealized": -178.32,
+    "roi": 10.94,
+    "trades": 22633,
+    "win_rate": 44.43,
+    "avg_hold_secs": 77006
+  },
+  {
+    "address": "F8WtsrLzexRkjv11b1sgA3Qj7E889RGYa1jFLGoPwKTB",
+    "ok": true,
+    "name": null,
+    "type": "terminal",
+    "tags": [
+      "terminal",
+      "axiom"
+    ],
+    "pnl_total": 997697.44,
+    "pnl_realized": 998691.75,
+    "pnl_unrealized": -994.31,
+    "roi": 4.08,
+    "trades": 79560,
+    "win_rate": 59.95,
+    "avg_hold_secs": 65737
+  },
+  {
+    "address": "5ZuV8eqkvzYFVEKbLvGBdexL2tFv7E5BCd2HZpjqbdg",
+    "ok": true,
+    "name": null,
+    "type": "axiom",
+    "tags": [
+      "axiom",
+      "pumpfun-app"
+    ],
+    "pnl_total": 1025767.74,
+    "pnl_realized": 1037716.35,
+    "pnl_unrealized": -11948.6,
+    "roi": 31.36,
+    "trades": 42172,
+    "win_rate": 46.16,
+    "avg_hold_secs": 65710
+  },
+  {
+    "address": "BtMBMPkoNbnLF9Xn552guQq528KKXcsNBNNBre3oaQtr",
+    "ok": true,
+    "name": "Letterbomb",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "gmgn",
+      "axiom",
+      "photon",
+      "bloom"
+    ],
+    "pnl_total": 2107814.41,
+    "pnl_realized": 2109148.14,
+    "pnl_unrealized": -1333.72,
+    "roi": 6.05,
+    "trades": 192656,
+    "win_rate": 44.09,
+    "avg_hold_secs": 24670
+  },
+  {
+    "address": "3j5c4aD1aznxQXJ3DWw1b7UD8kKuaqXVbpaVeWPR83TG",
+    "ok": true,
+    "name": null,
+    "type": "pumpfun-app",
+    "tags": [
+      "pumpfun-app"
+    ],
+    "pnl_total": 35893.68,
+    "pnl_realized": 20773.61,
+    "pnl_unrealized": 15120.07,
+    "roi": 16.61,
+    "trades": 2749,
+    "win_rate": 38.67,
+    "avg_hold_secs": 41537
+  },
+  {
+    "address": "JDd3hy3gQn2V982mi1zqhNqUw1GfV2UL6g76STojCJPN",
+    "ok": true,
+    "name": "West",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "bloom"
+    ],
+    "pnl_total": 9842809.59,
+    "pnl_realized": 9838941.55,
+    "pnl_unrealized": 3868.04,
+    "roi": 26.04,
+    "trades": 261857,
+    "win_rate": 55.61,
+    "avg_hold_secs": 61843
+  },
+  {
+    "address": "GfXQesPe3Zuwg8JhAt6Cg8euJDTVx751enp9EQQmhzPH",
+    "ok": true,
+    "name": "Spuno",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "photon",
+      "pumpfun-app",
+      "sns"
+    ],
+    "pnl_total": 1270893.2,
+    "pnl_realized": 1276441.29,
+    "pnl_unrealized": -5548.08,
+    "roi": 20.6,
+    "trades": 35461,
+    "win_rate": 57.52,
+    "avg_hold_secs": 29395
+  },
+  {
+    "address": "GXq4SYucQxA3XMX7Bb4QsShcEABToWNWTM2AxMJvvwmj",
+    "ok": true,
+    "name": null,
+    "type": null,
+    "tags": [],
+    "pnl_total": 1035.23,
+    "pnl_realized": 1142.43,
+    "pnl_unrealized": -107.2,
+    "roi": 7.96,
+    "trades": 589,
+    "win_rate": 47.17,
+    "avg_hold_secs": 1166610
+  },
+  {
+    "address": "GHEB5bedbquU4KLo74w5Ymc43x9Ggrp2ggvmJSzdhfjP",
+    "ok": true,
+    "name": null,
+    "type": null,
+    "tags": [],
+    "pnl_total": 27200.45,
+    "pnl_realized": 3664.45,
+    "pnl_unrealized": 23536,
+    "roi": 93.39,
+    "trades": 691,
+    "win_rate": 50,
+    "avg_hold_secs": 1575524
+  },
+  {
+    "address": "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51",
+    "ok": true,
+    "name": null,
+    "type": "potential_bot",
+    "tags": [
+      "potential_bot"
+    ],
+    "pnl_total": 4048687.54,
+    "pnl_realized": 14750259.3,
+    "pnl_unrealized": -10701571.75,
+    "roi": 382.41,
+    "trades": 762962,
+    "win_rate": 92.71,
+    "avg_hold_secs": 410194
+  },
+  {
+    "address": "2fg5QD1eD7rzNNCsvnhmXFm5hqNgwTTG8p7kQ6f3rx6f",
+    "ok": true,
+    "name": "Cupsey",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 5721298.47,
+    "pnl_realized": 5684064.9,
+    "pnl_unrealized": 37233.57,
+    "roi": 30.61,
+    "trades": 349323,
+    "win_rate": 54.96,
+    "avg_hold_secs": 28355
+  },
+  {
+    "address": "2T5NgDDidkvhJQg8AHDi74uCFwgp25pYFMRZXBaCUNBH",
+    "ok": true,
+    "name": "Idontpaytaxes",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "photon",
+      "pumpfun-app"
+    ],
+    "pnl_total": 333511.81,
+    "pnl_realized": 331621.46,
+    "pnl_unrealized": 1890.35,
+    "roi": 33.95,
+    "trades": 17794,
+    "win_rate": 79.49,
+    "avg_hold_secs": 145600
+  },
+  {
+    "address": "9FEHWFjgbYnFCRRHkesJNq6znHjc5Aaq7TiKi1rCVSnH",
+    "ok": true,
+    "name": "fomo \ud83e\udde0",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "pumpfun-app"
+    ],
+    "pnl_total": 678270.69,
+    "pnl_realized": 679044.29,
+    "pnl_unrealized": -773.6,
+    "roi": 10.21,
+    "trades": 7780,
+    "win_rate": 41.84,
+    "avg_hold_secs": 327127
+  },
+  {
+    "address": "CAPn1yH4oSywsxGU456jfgTrSSUidf9jgeAnHceNUJdw",
+    "ok": true,
+    "name": "cap",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "pumpfun-app"
+    ],
+    "pnl_total": 830659.45,
+    "pnl_realized": 821421.28,
+    "pnl_unrealized": 9238.17,
+    "roi": 9.58,
+    "trades": 111429,
+    "win_rate": 41.67,
+    "avg_hold_secs": 109940
+  },
+  {
+    "address": "9iaawVBEsFG35PSwd4PahwT8fYNQe9XYuRdWm872dUqY",
+    "ok": true,
+    "name": "Meechie",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "pumpfun-app",
+      "sns"
+    ],
+    "pnl_total": 449605.95,
+    "pnl_realized": 449963.65,
+    "pnl_unrealized": -357.7,
+    "roi": 34.79,
+    "trades": 14717,
+    "win_rate": 55.96,
+    "avg_hold_secs": 122572
+  },
+  {
+    "address": "4EsY8HQB4Ak65diFrSHjwWhKSGC8sKmnzyusM993gk2w",
+    "ok": true,
+    "name": "Prosciutto",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "pumpfun-app"
+    ],
+    "pnl_total": 749355.91,
+    "pnl_realized": 750210.3,
+    "pnl_unrealized": -854.38,
+    "roi": 7.25,
+    "trades": 12157,
+    "win_rate": 47.9,
+    "avg_hold_secs": 167050
+  },
+  {
+    "address": "7cQjAvzJsmdePPMk8TiW8hYHHhCfdNtEaaNK3o46YP12",
+    "ok": true,
+    "name": "ParsiiX",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "bloom"
+    ],
+    "pnl_total": 504080.35,
+    "pnl_realized": 508865.83,
+    "pnl_unrealized": -4785.48,
+    "roi": 3.24,
+    "trades": 127400,
+    "win_rate": 38.07,
+    "avg_hold_secs": 18550
+  },
+  {
+    "address": "AstaWuJuQiAS3AfqmM3xZxrJhkkZNXtW4VyaGQfqV6JL",
+    "ok": true,
+    "name": "asta",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "sns"
+    ],
+    "pnl_total": 663138.52,
+    "pnl_realized": 771255.59,
+    "pnl_unrealized": -108117.07,
+    "roi": 12.1,
+    "trades": 8423,
+    "win_rate": 51.94,
+    "avg_hold_secs": 1037654
+  },
+  {
+    "address": "9tY7u1HgEt2RDcxym3RJ9sfvT3aZStiiUwXd44X9RUr8",
+    "ok": true,
+    "name": "Solana degen",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 339127.95,
+    "pnl_realized": 341205.35,
+    "pnl_unrealized": -2077.4,
+    "roi": 10.44,
+    "trades": 142674,
+    "win_rate": 33.21,
+    "avg_hold_secs": 90138
+  },
+  {
+    "address": "A4KxLRntS2V6giboMyfDtwoysmsKPaz8Juw6CwHYxVXn",
+    "ok": true,
+    "name": null,
+    "type": "terminal",
+    "tags": [
+      "terminal",
+      "axiom",
+      "bloom"
+    ],
+    "pnl_total": 131863.45,
+    "pnl_realized": 131702.67,
+    "pnl_unrealized": 160.78,
+    "roi": 23.92,
+    "trades": 17074,
+    "win_rate": 43.66,
+    "avg_hold_secs": 108721
+  },
+  {
+    "address": "GBERKNpahPnBGmeUGWQVjGBDBj6CcJKpGz34FqegmTgu",
+    "ok": true,
+    "name": "Scrim",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "pumpfun-app"
+    ],
+    "pnl_total": 60297.11,
+    "pnl_realized": 61600.94,
+    "pnl_unrealized": -1303.83,
+    "roi": 4.98,
+    "trades": 17182,
+    "win_rate": 45.54,
+    "avg_hold_secs": 75069
+  },
+  {
+    "address": "BAr5csYtpWoNpwhUjixX7ZPHXkUciFZzjBp9uNxZXJPh",
+    "ok": true,
+    "name": "Jack Duval\ud83c\udf0a",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "pumpfun-app"
+    ],
+    "pnl_total": 266883.96,
+    "pnl_realized": 271003.9,
+    "pnl_unrealized": -4119.94,
+    "roi": 3.75,
+    "trades": 76605,
+    "win_rate": 53.73,
+    "avg_hold_secs": 91563
+  },
+  {
+    "address": "7zTnUTHMd5qFUpZrrbXazpvGwC1Hvb3g5rFjnFAygLSo",
+    "ok": true,
+    "name": null,
+    "type": "axiom",
+    "tags": [
+      "axiom"
+    ],
+    "pnl_total": 10588.62,
+    "pnl_realized": 9948.11,
+    "pnl_unrealized": 640.51,
+    "roi": 1.97,
+    "trades": 8140,
+    "win_rate": 32.1,
+    "avg_hold_secs": 110882
+  },
+  {
+    "address": "FUZZUhT5qKncddMxLnkeiN7Dh1CmSpWPScp55iexZ85t",
+    "ok": true,
+    "name": "Fuzz",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "pumpfun-app",
+      "sns"
+    ],
+    "pnl_total": 29879.19,
+    "pnl_realized": 30477.65,
+    "pnl_unrealized": -598.46,
+    "roi": 5.05,
+    "trades": 2886,
+    "win_rate": 60.57,
+    "avg_hold_secs": 58528
+  },
+  {
+    "address": "87rRdssFiTJKY4MGARa4G5vQ31hmR7MxSmhzeaJ5AAxJ",
+    "ok": true,
+    "name": "Dior",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "pumpfun-app"
+    ],
+    "pnl_total": 925469.74,
+    "pnl_realized": 837273.84,
+    "pnl_unrealized": 88195.9,
+    "roi": 19.42,
+    "trades": 17968,
+    "win_rate": 53.94,
+    "avg_hold_secs": 883296
+  },
+  {
+    "address": "86AEJExyjeNNgcp7GrAvCXTDicf5aGWgoERbXFiG1EdD",
+    "ok": true,
+    "name": "Publix",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "bloom",
+      "sns"
+    ],
+    "pnl_total": 4757458.9,
+    "pnl_realized": 4767011.99,
+    "pnl_unrealized": -9553.1,
+    "roi": 16.59,
+    "trades": 120167,
+    "win_rate": 46.58,
+    "avg_hold_secs": 48104
+  },
+  {
+    "address": "23Ltopfensg1rSsCdoc1M8rcp5cB5bkqbmogMGmH63yW",
+    "ok": true,
+    "name": null,
+    "type": "terminal",
+    "tags": [
+      "terminal"
+    ],
+    "pnl_total": 103098.35,
+    "pnl_realized": 89833.82,
+    "pnl_unrealized": 13264.53,
+    "roi": 16.76,
+    "trades": 9389,
+    "win_rate": 41.25,
+    "avg_hold_secs": 100218
+  },
+  {
+    "address": "CgaA9a1JwAXJyfHuvZ7VW8YfTVRkdiT5mjBBSKcg7Rz5",
+    "ok": true,
+    "name": "Art",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 87514.71,
+    "pnl_realized": 94349.3,
+    "pnl_unrealized": -6834.59,
+    "roi": 2.87,
+    "trades": 64623,
+    "win_rate": 38.78,
+    "avg_hold_secs": 107127
+  },
+  {
+    "address": "Hw5UKBU5k3YudnGwaykj5E8cYUidNMPuEewRRar5Xoc7",
+    "ok": true,
+    "name": "Trenchman",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom"
+    ],
+    "pnl_total": 348854.75,
+    "pnl_realized": 354237.06,
+    "pnl_unrealized": -5382.3,
+    "roi": 11.43,
+    "trades": 29602,
+    "win_rate": 40.16,
+    "avg_hold_secs": 90936
+  },
+  {
+    "address": "DAEdBmTPEKM6xkwfzC3d411QUe6coKpkND6UURa4CvHC",
+    "ok": true,
+    "name": null,
+    "type": "pumpfun-app",
+    "tags": [
+      "pumpfun-app"
+    ],
+    "pnl_total": 295068.37,
+    "pnl_realized": 202855.22,
+    "pnl_unrealized": 92213.15,
+    "roi": 44.54,
+    "trades": 4358,
+    "win_rate": 43.47,
+    "avg_hold_secs": 328007
+  },
+  {
+    "address": "J9TYAsWWidbrcZybmLSfrLzryANf4CgJBLdvwdGuC8MB",
+    "ok": true,
+    "name": "Johnson",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "pumpfun-app"
+    ],
+    "pnl_total": 476192.71,
+    "pnl_realized": 495806.12,
+    "pnl_unrealized": -19613.4,
+    "roi": 31.87,
+    "trades": 32890,
+    "win_rate": 56.05,
+    "avg_hold_secs": 387416
+  },
+  {
+    "address": "2X4H5Y9C4Fy6Pf3wpq8Q4gMvLcWvfrrwDv2bdR8AAwQv",
+    "ok": true,
+    "name": "Orange",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "pumpfun-app"
+    ],
+    "pnl_total": 393857.11,
+    "pnl_realized": 379364.89,
+    "pnl_unrealized": 14492.22,
+    "roi": 16.15,
+    "trades": 16983,
+    "win_rate": 43.6,
+    "avg_hold_secs": 84204
+  },
+  {
+    "address": "B9K2wTQcRDLRLhMKFyRh2hPqHrr6VKiCC9yNGpkMUXrh",
+    "ok": true,
+    "name": "Xanse.",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 84641.57,
+    "pnl_realized": 94061.86,
+    "pnl_unrealized": -9420.29,
+    "roi": 3.76,
+    "trades": 42972,
+    "win_rate": 35.77,
+    "avg_hold_secs": 121859
+  },
+  {
+    "address": "8nqtxpFpuXwfXG4pBLsDkkuMMPK9FjSkBMCn542HiM3v",
+    "ok": true,
+    "name": "dov 7",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom"
+    ],
+    "pnl_total": 631667.33,
+    "pnl_realized": 621131.96,
+    "pnl_unrealized": 10535.37,
+    "roi": 36.2,
+    "trades": 27350,
+    "win_rate": 54.07,
+    "avg_hold_secs": 139435
+  },
+  {
+    "address": "BJXjRq566xt66pcxCmCMLPSuNxyUpPNBdJGP56S7fMda",
+    "ok": true,
+    "name": "h14",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "sns"
+    ],
+    "pnl_total": 963159.42,
+    "pnl_realized": 952182.67,
+    "pnl_unrealized": 10976.75,
+    "roi": 12.94,
+    "trades": 63687,
+    "win_rate": 38.25,
+    "avg_hold_secs": 23547
+  },
+  {
+    "address": "2e1w3Xo441Ytvwn54wCn8itAXwCKbiizc9ynGEv14Vis",
+    "ok": true,
+    "name": "prettyover",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "sns"
+    ],
+    "pnl_total": 687492.06,
+    "pnl_realized": 689842.56,
+    "pnl_unrealized": -2350.5,
+    "roi": 16,
+    "trades": 24191,
+    "win_rate": 38.94,
+    "avg_hold_secs": 56288
+  },
+  {
+    "address": "CvNiezB8hofusHCKqu8irJ6t2FKY7VjzpSckofMzk5mB",
+    "ok": true,
+    "name": "Dali",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 605233.71,
+    "pnl_realized": 604389.46,
+    "pnl_unrealized": 844.26,
+    "roi": 11.7,
+    "trades": 61109,
+    "win_rate": 44.41,
+    "avg_hold_secs": 60925
+  },
+  {
+    "address": "DYmsQudNqJyyDvq86XmzAvrU9T7xwfQEwh6gPQw9TPNF",
+    "ok": true,
+    "name": "unprofitable",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 446734.94,
+    "pnl_realized": 448023.62,
+    "pnl_unrealized": -1288.68,
+    "roi": 5.47,
+    "trades": 114542,
+    "win_rate": 33.57,
+    "avg_hold_secs": 54388
+  },
+  {
+    "address": "FqojC24nUn3x6oMQC2ypBHmtH7rFAnKS6DvwsJoCMaiv",
+    "ok": true,
+    "name": "CoCo",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "pumpfun-app",
+      "sns"
+    ],
+    "pnl_total": 320501.17,
+    "pnl_realized": 321528.24,
+    "pnl_unrealized": -1027.07,
+    "roi": 16.24,
+    "trades": 14028,
+    "win_rate": 46.48,
+    "avg_hold_secs": 66178
+  },
+  {
+    "address": "5hAgYC8TJCcEZV7LTXAzkTrm7YL29YXyQQJPCNrG84zM",
+    "ok": true,
+    "name": null,
+    "type": "terminal",
+    "tags": [
+      "terminal",
+      "pumpfun-app"
+    ],
+    "pnl_total": 308067.34,
+    "pnl_realized": 311308.99,
+    "pnl_unrealized": -3241.65,
+    "roi": 14.57,
+    "trades": 14614,
+    "win_rate": 45.37,
+    "avg_hold_secs": 267462
+  },
+  {
+    "address": "J6TDXvarvpBdPXTaTU8eJbtso1PUCYKGkVtMKUUY8iEa",
+    "ok": true,
+    "name": "Pain",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "sns"
+    ],
+    "pnl_total": 793772.88,
+    "pnl_realized": 750173.85,
+    "pnl_unrealized": 43599.04,
+    "roi": 8.1,
+    "trades": 24976,
+    "win_rate": 42.6,
+    "avg_hold_secs": 239693
+  },
+  {
+    "address": "5T229oePmJGE5Cefys8jE9Jq8C7qfGNNWy3RVA7SmwEP",
+    "ok": true,
+    "name": "Tuults",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "gmgn",
+      "axiom",
+      "sns"
+    ],
+    "pnl_total": 549183.7,
+    "pnl_realized": 552410.97,
+    "pnl_unrealized": -3227.27,
+    "roi": 6.35,
+    "trades": 68704,
+    "win_rate": 44.54,
+    "avg_hold_secs": 67340
+  },
+  {
+    "address": "4nwfXw7n98jEQn93VWY7Cuf1jnn1scHXuXCPGVYS9k6T",
+    "ok": true,
+    "name": "Frost",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "bloom"
+    ],
+    "pnl_total": 2971162.74,
+    "pnl_realized": 2972724.04,
+    "pnl_unrealized": -1561.29,
+    "roi": 35.68,
+    "trades": 44330,
+    "win_rate": 52.25,
+    "avg_hold_secs": 24928
+  },
+  {
+    "address": "CyaE1VxvBrahnPWkqm5VsdCvyS2QmNht2UFrKJHga54o",
+    "ok": true,
+    "name": "Cented",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "bloom",
+      "sns"
+    ],
+    "pnl_total": 13212806.91,
+    "pnl_realized": 13104178.4,
+    "pnl_unrealized": 108628.51,
+    "roi": 21.44,
+    "trades": 495167,
+    "win_rate": 60.65,
+    "avg_hold_secs": 87085
+  },
+  {
+    "address": "FAicXNV5FVqtfbpn4Zccs71XcfGeyxBSGbqLDyDJZjke",
+    "ok": true,
+    "name": "radiance",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "bloom"
+    ],
+    "pnl_total": 1425853.48,
+    "pnl_realized": 1422012.92,
+    "pnl_unrealized": 3840.56,
+    "roi": 23.33,
+    "trades": 52500,
+    "win_rate": 49.84,
+    "avg_hold_secs": 114220
+  },
+  {
+    "address": "EDXHdSFdadFbYFFjxPXBqMe1kCEDFqpPu552uvp48HR8",
+    "ok": true,
+    "name": "Clown",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "gmgn",
+      "terminal",
+      "axiom"
+    ],
+    "pnl_total": 346245.2,
+    "pnl_realized": 345898.07,
+    "pnl_unrealized": 347.13,
+    "roi": 4.65,
+    "trades": 87758,
+    "win_rate": 34.4,
+    "avg_hold_secs": 14550
+  },
+  {
+    "address": "EA4MXkyF8C2NzY8fw2acJPuarmoU271KRCCAYpLzMBJr",
+    "ok": true,
+    "name": "Grimace",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 330192.37,
+    "pnl_realized": 330755.57,
+    "pnl_unrealized": -563.2,
+    "roi": 6.46,
+    "trades": 65499,
+    "win_rate": 43.08,
+    "avg_hold_secs": 14169
+  },
+  {
+    "address": "BY58Z7N5Adarkx5ed78AzKvR7Kxrq795aa1boZsYyVBT",
+    "ok": true,
+    "name": null,
+    "type": "terminal",
+    "tags": [
+      "terminal",
+      "axiom",
+      "pumpfun-app"
+    ],
+    "pnl_total": 109554.44,
+    "pnl_realized": 105525.92,
+    "pnl_unrealized": 4028.52,
+    "roi": 21.39,
+    "trades": 7072,
+    "win_rate": 49.01,
+    "avg_hold_secs": 108438
+  },
+  {
+    "address": "GvTXquDAJbfrFrEGTPRPUj3WM5Bzub5yeTFzkLVHpjfD",
+    "ok": true,
+    "name": "brunowsky.sol",
+    "type": "axiom",
+    "tags": [
+      "axiom",
+      "sns"
+    ],
+    "pnl_total": 35439.93,
+    "pnl_realized": 32234.52,
+    "pnl_unrealized": 3205.41,
+    "roi": 4.67,
+    "trades": 11733,
+    "win_rate": 32.4,
+    "avg_hold_secs": 114331
+  },
+  {
+    "address": "H1TLERBQyQzSd5gbvbWwP97GjeL9txzWoN5BK4UG7xYm",
+    "ok": true,
+    "name": "\u0441\u0443\u0432\u0430\u0436\u0435\u043d\u0438\u0435\u043c.sol",
+    "type": "axiom",
+    "tags": [
+      "axiom",
+      "pumpfun-app",
+      "sns"
+    ],
+    "pnl_total": 109439.27,
+    "pnl_realized": 110323.51,
+    "pnl_unrealized": -884.24,
+    "roi": 6.79,
+    "trades": 21203,
+    "win_rate": 48.76,
+    "avg_hold_secs": 20272
+  },
+  {
+    "address": "6nhskL8RVpXzWXC7mcC1UXpe3ze2p6P6og1jXVGUW88s",
+    "ok": true,
+    "name": "PattyIce",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "photon"
+    ],
+    "pnl_total": 778685.21,
+    "pnl_realized": 781417.9,
+    "pnl_unrealized": -2732.69,
+    "roi": 45.7,
+    "trades": 9989,
+    "win_rate": 76.72,
+    "avg_hold_secs": 527441
+  },
+  {
+    "address": "DZAa55HwXgv5hStwaTEJGXZz1DhHejvpb7Yr762urXam",
+    "ok": true,
+    "name": "ozark",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "bloom",
+      "sns"
+    ],
+    "pnl_total": 1263885.85,
+    "pnl_realized": 1267290.06,
+    "pnl_unrealized": -3404.21,
+    "roi": 13.81,
+    "trades": 86676,
+    "win_rate": 44.11,
+    "avg_hold_secs": 145262
+  },
+  {
+    "address": "4sAUSQFdvWRBxR8UoLBYbw8CcXuwXWxnN8pXa4mtm5nU",
+    "ok": true,
+    "name": "Scharo",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "gmgn",
+      "axiom"
+    ],
+    "pnl_total": 799554.74,
+    "pnl_realized": 800479.11,
+    "pnl_unrealized": -924.37,
+    "roi": 8.02,
+    "trades": 116727,
+    "win_rate": 49.85,
+    "avg_hold_secs": 112543
+  },
+  {
+    "address": "EqiFgyNw6kgrmYstWyrP8VjKhka7XEmKTZzHSmwpr1Zb",
+    "ok": true,
+    "name": null,
+    "type": "terminal",
+    "tags": [
+      "terminal"
+    ],
+    "pnl_total": 599747.23,
+    "pnl_realized": 619993.45,
+    "pnl_unrealized": -20246.22,
+    "roi": 12.56,
+    "trades": 195235,
+    "win_rate": 38.79,
+    "avg_hold_secs": 140438
+  },
+  {
+    "address": "4cXnf2z85UiZ5cyKsPMEULq1yufAtpkatmX4j4DBZqj2",
+    "ok": true,
+    "name": "WaiterG",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "bloom"
+    ],
+    "pnl_total": 707361.94,
+    "pnl_realized": 750871.27,
+    "pnl_unrealized": -43509.33,
+    "roi": 5.98,
+    "trades": 51313,
+    "win_rate": 41.57,
+    "avg_hold_secs": 41976
+  },
+  {
+    "address": "F5jWYuiDLTiaLYa54D88YbpXgEsA6NKHzWy4SN4bMYjt",
+    "ok": true,
+    "name": "mercy",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "sns"
+    ],
+    "pnl_total": 3665319.72,
+    "pnl_realized": 3665275.61,
+    "pnl_unrealized": 44.11,
+    "roi": 15.98,
+    "trades": 59027,
+    "win_rate": 41.4,
+    "avg_hold_secs": 71031
+  },
+  {
+    "address": "5fM9cY5GMo8QtTmxuvNx7bWFUoNhdQ1H5w8bMdXGVtaH",
+    "ok": true,
+    "name": null,
+    "type": "terminal",
+    "tags": [
+      "terminal",
+      "axiom"
+    ],
+    "pnl_total": 21440.33,
+    "pnl_realized": 15983.59,
+    "pnl_unrealized": 5456.74,
+    "roi": 3.35,
+    "trades": 14165,
+    "win_rate": 34.15,
+    "avg_hold_secs": 296410
+  },
+  {
+    "address": "2iPgNgss7ow3v5YFkTpzABStfjFSyG3BGvP5sZqADtFM",
+    "ok": true,
+    "name": null,
+    "type": "terminal",
+    "tags": [
+      "terminal"
+    ],
+    "pnl_total": 33397.59,
+    "pnl_realized": 26190.53,
+    "pnl_unrealized": 7207.06,
+    "roi": 7.14,
+    "trades": 16584,
+    "win_rate": 42.25,
+    "avg_hold_secs": 142480
+  },
+  {
+    "address": "HrCPnDvDgbpbFxKxer6Pw3qEcfAQQNNjb6aJNFWgTEng",
+    "ok": true,
+    "name": "0xWinged",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "pumpfun-app"
+    ],
+    "pnl_total": 107500.32,
+    "pnl_realized": 139060.39,
+    "pnl_unrealized": -31560.07,
+    "roi": 9.92,
+    "trades": 7159,
+    "win_rate": 56.21,
+    "avg_hold_secs": 13855742
+  },
+  {
+    "address": "BTf4A2exGK9BCVDNzy65b9dUzXgMqB4weVkvTMFQsadd",
+    "ok": true,
+    "name": "Kev",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "photon"
+    ],
+    "pnl_total": 4162126.48,
+    "pnl_realized": 4157336.7,
+    "pnl_unrealized": 4789.78,
+    "roi": 12,
+    "trades": 224670,
+    "win_rate": 49.09,
+    "avg_hold_secs": 327127
+  },
+  {
+    "address": "3BLjRcxWGtR7WRshJ3hL25U3RjWr5Ud98wMcczQqk4Ei",
+    "ok": true,
+    "name": "Sebastian",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "pumpfun-app"
+    ],
+    "pnl_total": 1393382.89,
+    "pnl_realized": 1395299.55,
+    "pnl_unrealized": -1916.66,
+    "roi": 13.46,
+    "trades": 73770,
+    "win_rate": 41.78,
+    "avg_hold_secs": 42127
+  },
+  {
+    "address": "gangJEP5geDHjPVRhDS5dTF5e6GtRvtNogMEEVs91RV",
+    "ok": true,
+    "name": "Qavec",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 508493.85,
+    "pnl_realized": 496269.19,
+    "pnl_unrealized": 12224.66,
+    "roi": 13.76,
+    "trades": 103054,
+    "win_rate": 49.98,
+    "avg_hold_secs": 198189
+  },
+  {
+    "address": "HYSq1KBAvqWpEv1pCbV31muKM1za5A1WSHGdiVLUoNhb",
+    "ok": true,
+    "name": null,
+    "type": "axiom",
+    "tags": [
+      "axiom"
+    ],
+    "pnl_total": 290943.25,
+    "pnl_realized": 292283.58,
+    "pnl_unrealized": -1340.33,
+    "roi": 5.18,
+    "trades": 30799,
+    "win_rate": 37.65,
+    "avg_hold_secs": 76001
+  },
+  {
+    "address": "EQaxqKT3N981QBmdSUGNzAGK5S26zUwAdRHhBCgn87zD",
+    "ok": true,
+    "name": "jamessmith",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 679466.75,
+    "pnl_realized": 679458.35,
+    "pnl_unrealized": 8.4,
+    "roi": 14.65,
+    "trades": 104759,
+    "win_rate": 49.86,
+    "avg_hold_secs": 14733
+  },
+  {
+    "address": "62N1K57D37AUDGp68tnDYKPjGDsaAAtmo357nBtEtuR",
+    "ok": true,
+    "name": "set",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "pumpfun-app",
+      "bloom"
+    ],
+    "pnl_total": 81650.57,
+    "pnl_realized": 81394.53,
+    "pnl_unrealized": 256.04,
+    "roi": 7.18,
+    "trades": 29415,
+    "win_rate": 52.79,
+    "avg_hold_secs": 34855
+  },
+  {
+    "address": "EaVboaPxFCYanjoNWdkxTbPvt57nhXGu5i6m9m6ZS2kK",
+    "ok": true,
+    "name": "Danny",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "sns"
+    ],
+    "pnl_total": 2143380.62,
+    "pnl_realized": 2137190.72,
+    "pnl_unrealized": 6189.9,
+    "roi": 13.03,
+    "trades": 80530,
+    "win_rate": 43.7,
+    "avg_hold_secs": 223081
+  },
+  {
+    "address": "CXVJewdc79TYR55sz4SGLSWUPz3r4LBJ9Mn93bZ8ZyAz",
+    "ok": true,
+    "name": null,
+    "type": "axiom",
+    "tags": [
+      "axiom",
+      "bloom"
+    ],
+    "pnl_total": 221260.27,
+    "pnl_realized": 215773.31,
+    "pnl_unrealized": 5486.97,
+    "roi": 4.02,
+    "trades": 104543,
+    "win_rate": 43.31,
+    "avg_hold_secs": 91211
+  },
+  {
+    "address": "J23qr98GjGJJqKq9CBEnyRhHbmkaVxtTJNNxKu597wsA",
+    "ok": true,
+    "name": "gr3g",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "pumpfun-app",
+      "sns"
+    ],
+    "pnl_total": 2529896.47,
+    "pnl_realized": 2547404.09,
+    "pnl_unrealized": -17507.63,
+    "roi": 43.94,
+    "trades": 14612,
+    "win_rate": 52.31,
+    "avg_hold_secs": 249596
+  },
+  {
+    "address": "6S8GezkxYUfZy9JPtYnanbcZTMB87Wjt1qx3c6ELajKC",
+    "ok": true,
+    "name": "Nyhrox",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "photon"
+    ],
+    "pnl_total": 3460754.27,
+    "pnl_realized": 3458609.77,
+    "pnl_unrealized": 2144.5,
+    "roi": 20.4,
+    "trades": 58609,
+    "win_rate": 50.75,
+    "avg_hold_secs": 92851
+  },
+  {
+    "address": "ardinRsN1mNYVeoJWTBsWeYeXvuR9UUDGMsCDKpb6AT",
+    "ok": true,
+    "name": "trunoest",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 383090.34,
+    "pnl_realized": 383135.64,
+    "pnl_unrealized": -45.3,
+    "roi": 13.52,
+    "trades": 55605,
+    "win_rate": 43.66,
+    "avg_hold_secs": 12641
+  },
+  {
+    "address": "37Y6bz7AXpHHRzMHGMqGRxv8JMuHQCS2FFHrPZkUeRt2",
+    "ok": true,
+    "name": "Laanie",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal"
+    ],
+    "pnl_total": 47865.09,
+    "pnl_realized": 47910.92,
+    "pnl_unrealized": -45.83,
+    "roi": 12,
+    "trades": 6866,
+    "win_rate": 54.19,
+    "avg_hold_secs": 246494
+  },
+  {
+    "address": "PMJA8UQDyWTFw2Smhyp9jGA6aTaP7jKHR7BPudrgyYN",
+    "ok": true,
+    "name": "chester",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 1601100.06,
+    "pnl_realized": 1606585.67,
+    "pnl_unrealized": -5485.62,
+    "roi": 8.51,
+    "trades": 221469,
+    "win_rate": 41.07,
+    "avg_hold_secs": 17138
+  },
+  {
+    "address": "BQVz7fQ1WsQmSTMY3umdPEPPTm1sdcBcX9sP7o6kPRmB",
+    "ok": true,
+    "name": "Limfork.eth",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "pumpfun-app"
+    ],
+    "pnl_total": 723270.84,
+    "pnl_realized": 739627.28,
+    "pnl_unrealized": -16356.44,
+    "roi": 9.35,
+    "trades": 113321,
+    "win_rate": 42.36,
+    "avg_hold_secs": 69618
+  },
+  {
+    "address": "3h65MmPZksoKKyEpEjnWU2Yk2iYT5oZDNitGy5cTaxoE",
+    "ok": true,
+    "name": "Jidn",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "photon"
+    ],
+    "pnl_total": 3345433.44,
+    "pnl_realized": 3352549.82,
+    "pnl_unrealized": -7116.38,
+    "roi": 8.32,
+    "trades": 246278,
+    "win_rate": 44.66,
+    "avg_hold_secs": 43655
+  },
+  {
+    "address": "215nhcAHjQQGgwpQSJQ7zR26etbjjtVdW74NLzwEgQjP",
+    "ok": true,
+    "name": "OGAntD",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "photon",
+      "pumpfun-app",
+      "sns"
+    ],
+    "pnl_total": 1947591.3,
+    "pnl_realized": 2136612.09,
+    "pnl_unrealized": -189020.79,
+    "roi": 4.93,
+    "trades": 35013,
+    "win_rate": 41.94,
+    "avg_hold_secs": 1206481
+  },
+  {
+    "address": "DKgvpfttzmJqZXdavDwTxwSVkajibjzJnN2FA99dyciK",
+    "ok": true,
+    "name": "R\ud83d\udcabWDY",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "photon",
+      "sns"
+    ],
+    "pnl_total": 3667738.62,
+    "pnl_realized": 3881189.41,
+    "pnl_unrealized": -213450.79,
+    "roi": 11.13,
+    "trades": 11502,
+    "win_rate": 32.9,
+    "avg_hold_secs": 1641846
+  },
+  {
+    "address": "7SDs3PjT2mswKQ7Zo4FTucn9gJdtuW4jaacPA65BseHS",
+    "ok": true,
+    "name": "Insentos",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "bloom"
+    ],
+    "pnl_total": 6766403.07,
+    "pnl_realized": 6766565.58,
+    "pnl_unrealized": -162.51,
+    "roi": 56.96,
+    "trades": 18428,
+    "win_rate": 67.74,
+    "avg_hold_secs": 38871
+  },
+  {
+    "address": "GJA1HEbxGnqBhBifH9uQauzXSB53to5rhDrzmKxhSU65",
+    "ok": true,
+    "name": "Latuche",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "photon",
+      "pumpfun-app"
+    ],
+    "pnl_total": 3013159.01,
+    "pnl_realized": 3018009.42,
+    "pnl_unrealized": -4850.41,
+    "roi": 15.49,
+    "trades": 66191,
+    "win_rate": 49.74,
+    "avg_hold_secs": 96695
+  },
+  {
+    "address": "EeSx4wehRQhEbmbyFvfqA633v2P4C558bHh2ed7zgZh",
+    "ok": true,
+    "name": "Dolo \ud83e\udd77",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon"
+    ],
+    "pnl_total": 349859.53,
+    "pnl_realized": 350477.79,
+    "pnl_unrealized": -618.26,
+    "roi": 19.03,
+    "trades": 10090,
+    "win_rate": 42.09,
+    "avg_hold_secs": 889316
+  },
+  {
+    "address": "A8i6J8B1DgVdQaoeyrCmc18473EzYocEtZGavHT4sXzw",
+    "ok": true,
+    "name": "Mike",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "sns"
+    ],
+    "pnl_total": 130125.69,
+    "pnl_realized": 128684.87,
+    "pnl_unrealized": 1440.82,
+    "roi": 10.21,
+    "trades": 15031,
+    "win_rate": 54.1,
+    "avg_hold_secs": 40994
+  },
+  {
+    "address": "C4Svaa7djC8d3CVxaohrsedccaKqimNoJrWe9iNPdix5",
+    "ok": true,
+    "name": null,
+    "type": "terminal",
+    "tags": [
+      "terminal",
+      "pumpfun-app"
+    ],
+    "pnl_total": 45825.9,
+    "pnl_realized": 47137.75,
+    "pnl_unrealized": -1311.85,
+    "roi": 7.22,
+    "trades": 13188,
+    "win_rate": 45.17,
+    "avg_hold_secs": 65088
+  },
+  {
+    "address": "CXnf4Tt7qFz3KZNwn3Yve5MKaRyxGoAy2eDX3QT8e99m",
+    "ok": true,
+    "name": "trav \ud83c\udf92",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom"
+    ],
+    "pnl_total": 21469.7,
+    "pnl_realized": 21544.32,
+    "pnl_unrealized": -74.62,
+    "roi": 1.93,
+    "trades": 14807,
+    "win_rate": 33.09,
+    "avg_hold_secs": 55647
+  },
+  {
+    "address": "5vg7he5HibvsAW86wfiuP6jw7VwKmUAnP6P93mVCdpJu",
+    "ok": true,
+    "name": "blixze \u2671",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "sns"
+    ],
+    "pnl_total": 1061814.81,
+    "pnl_realized": 1032720.37,
+    "pnl_unrealized": 29094.44,
+    "roi": 21.17,
+    "trades": 32306,
+    "win_rate": 46.25,
+    "avg_hold_secs": 92750
+  },
+  {
+    "address": "9FNz4MjPUmnJqTf6yEDbL1D4SsHVh7uA8zRHhR5K138r",
+    "ok": true,
+    "name": "Danny",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon"
+    ],
+    "pnl_total": 5542830.05,
+    "pnl_realized": 5677268.8,
+    "pnl_unrealized": -134438.75,
+    "roi": 32.69,
+    "trades": 64473,
+    "win_rate": 47.41,
+    "avg_hold_secs": 184976
+  },
+  {
+    "address": "Be24Gbf5KisDk1LcWWZsBn8dvB816By7YzYF5zWZnRR6",
+    "ok": true,
+    "name": "Chairman \u00b2",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "pumpfun-app"
+    ],
+    "pnl_total": 232381.72,
+    "pnl_realized": 147673.17,
+    "pnl_unrealized": 84708.55,
+    "roi": 6.36,
+    "trades": 6320,
+    "win_rate": 43.1,
+    "avg_hold_secs": 1246252
+  },
+  {
+    "address": "5YRgrP3mjGzrzirYYN5HAQH19cTYREYwGxW6XRJQUzij",
+    "ok": true,
+    "name": "itakeinitials.sol",
+    "type": "potential_bot",
+    "tags": [
+      "potential_bot",
+      "pumpfun-app",
+      "sns"
+    ],
+    "pnl_total": 175095.98,
+    "pnl_realized": 132476.87,
+    "pnl_unrealized": 42619.11,
+    "roi": 17.86,
+    "trades": 11918,
+    "win_rate": 89.41,
+    "avg_hold_secs": 355686
+  },
+  {
+    "address": "3H9LVHarjBoZ2YPEsgFbVD1zuERCGwfp4AeyHoHsFSEC",
+    "ok": true,
+    "name": "JADAWGS",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "photon"
+    ],
+    "pnl_total": 630144.67,
+    "pnl_realized": 647935.85,
+    "pnl_unrealized": -17791.18,
+    "roi": 7.93,
+    "trades": 7197,
+    "win_rate": 36.12,
+    "avg_hold_secs": 373758
+  },
+  {
+    "address": "8rvAsDKeAcEjEkiZMug9k8v1y8mW6gQQiMobd89Uy7qR",
+    "ok": true,
+    "name": "Casino",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "bloom",
+      "sns"
+    ],
+    "pnl_total": 3710036.12,
+    "pnl_realized": 3727987.41,
+    "pnl_unrealized": -17951.3,
+    "roi": 6.7,
+    "trades": 185089,
+    "win_rate": 44.64,
+    "avg_hold_secs": 70465
+  },
+  {
+    "address": "ECa6q9uC9LaYYBekJ7ApD2EoKy3VKy7WZv863cg5pqM8",
+    "ok": true,
+    "name": null,
+    "type": "axiom",
+    "tags": [
+      "axiom"
+    ],
+    "pnl_total": 124901.46,
+    "pnl_realized": 125715.16,
+    "pnl_unrealized": -813.7,
+    "roi": 3.85,
+    "trades": 82932,
+    "win_rate": 35.89,
+    "avg_hold_secs": 343620
+  },
+  {
+    "address": "H31vEBxSJk1nQdUN11qZgZyhScyShhscKhvhZZU3dQoU",
+    "ok": true,
+    "name": "Megga",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "photon",
+      "bloom"
+    ],
+    "pnl_total": 604237.47,
+    "pnl_realized": 606878.11,
+    "pnl_unrealized": -2640.65,
+    "roi": 11.41,
+    "trades": 54072,
+    "win_rate": 41.82,
+    "avg_hold_secs": 48657
+  },
+  {
+    "address": "4NtyFqqRzvHWsTmJZoT26H9xtL7asWGTxpcpCxiKax9a",
+    "ok": true,
+    "name": "Inside Calls",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "bloom",
+      "sns"
+    ],
+    "pnl_total": 699838.84,
+    "pnl_realized": 699955.03,
+    "pnl_unrealized": -116.19,
+    "roi": 9.78,
+    "trades": 21018,
+    "win_rate": 41.81,
+    "avg_hold_secs": 343748
+  },
+  {
+    "address": "Enjoy9BmQgAUD9AKC4HpUbHByVdzwp7jQppKukEvdyWm",
+    "ok": true,
+    "name": "Enjooyer",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom",
+      "pumpfun-app",
+      "sns"
+    ],
+    "pnl_total": 12004.91,
+    "pnl_realized": 12877.38,
+    "pnl_unrealized": -872.47,
+    "roi": 5.55,
+    "trades": 5192,
+    "win_rate": 36.35,
+    "avg_hold_secs": 139310
+  },
+  {
+    "address": "G6fUXjMKPJzCY1rveAE6Qm7wy5U3vZgKDJmN1VPAdiZC",
+    "ok": true,
+    "name": "clukz",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "bloom",
+      "sns"
+    ],
+    "pnl_total": 2451749.04,
+    "pnl_realized": 2450997.81,
+    "pnl_unrealized": 751.22,
+    "roi": 23.98,
+    "trades": 42544,
+    "win_rate": 56.44,
+    "avg_hold_secs": 460578
+  },
+  {
+    "address": "EgjCS3ULUCU5JN83XumirPr6171zvN5i6wc12SDiVGX3",
+    "ok": true,
+    "name": "Legend",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "axiom"
+    ],
+    "pnl_total": 49238.67,
+    "pnl_realized": 49364.16,
+    "pnl_unrealized": -125.48,
+    "roi": 8.39,
+    "trades": 3971,
+    "win_rate": 41.39,
+    "avg_hold_secs": 178772
+  },
+  {
+    "address": "AuPp4YTMTyqxYXQnHc5KUc6pUuCSsHQpBJhgnD45yqrf",
+    "ok": true,
+    "name": "daniwrldwide.sol",
+    "type": "gmgn",
+    "tags": [
+      "gmgn",
+      "axiom",
+      "bloom",
+      "sns"
+    ],
+    "pnl_total": 1115776.58,
+    "pnl_realized": 1158275.31,
+    "pnl_unrealized": -42498.72,
+    "roi": 18.49,
+    "trades": 46571,
+    "win_rate": 46.99,
+    "avg_hold_secs": 101786
+  },
+  {
+    "address": "8fsKLLtvKNanL4ginCaiRS6UfeemY11rSf8U8fN1dJw4",
+    "ok": true,
+    "name": "Stigman",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "bloom",
+      "sns"
+    ],
+    "pnl_total": 838458.27,
+    "pnl_realized": 831035,
+    "pnl_unrealized": 7423.27,
+    "roi": 8.65,
+    "trades": 67856,
+    "win_rate": 40.74,
+    "avg_hold_secs": 408217
+  },
+  {
+    "address": "7j7AA3HZR2zEjwAQEKPFh2qucLY4fqZpB9iodf39w8xW",
+    "ok": true,
+    "name": "Maze",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "pumpfun-app"
+    ],
+    "pnl_total": 512719.62,
+    "pnl_realized": 509886.53,
+    "pnl_unrealized": 2833.08,
+    "roi": 20.88,
+    "trades": 64249,
+    "win_rate": 39.08,
+    "avg_hold_secs": 5397
+  },
+  {
+    "address": "8MaVa9kdt3NW4Q5HyNAm1X5LbR8PQRVDc1W8NMVK88D5",
+    "ok": true,
+    "name": "Daumen",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "axiom",
+      "photon",
+      "pumpfun-app",
+      "sns"
+    ],
+    "pnl_total": 1950992.98,
+    "pnl_realized": 1945446.55,
+    "pnl_unrealized": 5546.43,
+    "roi": 20.07,
+    "trades": 54751,
+    "win_rate": 66.92,
+    "avg_hold_secs": 84696
+  },
+  {
+    "address": "4s2WzRLa35FB58bZY1i4CN3WoywJeuYrGYHnTKFsT23z",
+    "ok": true,
+    "name": "jester",
+    "type": "kol",
+    "tags": [
+      "kol",
+      "terminal",
+      "sns"
+    ],
+    "pnl_total": 133428.25,
+    "pnl_realized": 157798.87,
+    "pnl_unrealized": -24370.62,
+    "roi": 14.6,
+    "trades": 7148,
+    "win_rate": 65.06,
+    "avg_hold_secs": 918380
+  },
+  {
+    "address": "5qpfP5GQR4HnrB2gSqCcagEjkH71bQaSRWdHrLLBDiWE",
+    "ok": true,
+    "name": null,
+    "type": null,
+    "tags": [],
+    "pnl_total": 232519.01,
+    "pnl_realized": 255447.48,
+    "pnl_unrealized": -22928.47,
+    "roi": 56.37,
+    "trades": 4410,
+    "win_rate": 43.75,
+    "avg_hold_secs": 11570216
+  }
+]

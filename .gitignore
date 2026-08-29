@@ -44,3 +44,5 @@ docs/
 # ---- retired stack configs ----
 runwisp.toml
 paper_positions.json
+.playwright-mcp
+dexscreener_top_gainer.md
