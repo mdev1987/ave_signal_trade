@@ -485,6 +485,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             # (weight >= 1) is enough; two mid winners sum to ~1; noise wallets
             # (weight ~0) can never manufacture a signal on their own.
             reason = f"skip:score<{s.consensus_weight_threshold}"
+        elif n < s.open_min_wallets:
+            reason = f"skip:min_wallets<{s.open_min_wallets}"
         elif usd < s.watch_min_buy_usd:
             reason = "skip:below_min_buy"
         elif ca in book.open:

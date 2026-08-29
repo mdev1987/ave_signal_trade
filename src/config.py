@@ -98,7 +98,7 @@ class Settings:
     trail_retrace_pct: float = 0.35
     trail_enabled: bool = False         # trailing stop OFF by default (full-spike exit wins)
     trail_start_mult: float = 1.30     # only trail after a peak >= this
-    hard_stop_pct: float = 0.35        # hard stop (was 0.40)
+    hard_stop_pct: float = 0.30        # hard stop (tightened from 0.35 to cut losers)
     open_min_wallets: int = 2           # legacy distinct-wallet floor (kept for compat; weighted score is the real gate)
     open_min_liq_usd: float = 5000.0    # skip illiquid tokens (exit slippage)
     # --- data-driven wallet-quality weighting (consensus = weighted score) ---
@@ -115,10 +115,15 @@ class Settings:
     wallet_weight_tier2_mult: float = 1.5
     wallet_default_weight: float = 0.5      # weight when perf data is missing
     wallet_weight_max: float = 2.0
-    consensus_weight_threshold: float = 1.0  # ~2 avg KOLs OR 1 strong (60%+/big)
+    # Consensus fires only when the summed weight of distinct buying wallets
+    # clears this. 2.0 ~= two 60%+/multi-$M winners, or one >$5M tier-2 + a
+    # moderate wallet. A single wallet (max 1.5) can NEVER open alone, which
+    # kills the single-KOL noise buys that were the biggest losers.
+    consensus_weight_threshold: float = 2.0
+    open_min_wallets: int = 2          # minimum distinct qualified wallets to open
     be_buffer_pct: float = 0.0          # after 1st TP, raise stop to entry+this (breakeven lock)
     max_hold_h: float = 72.0            # force-close dead positions after this many hours
-    max_open_positions: int = 20        # hard cap on concurrent shadow positions (raised)
+    max_open_positions: int = 12        # hard cap on concurrent shadow positions
     start_balance_sol: float = 4.0      # larger paper book so the cap is capital-bound
     shadow_state_file: str = "shadow_book.json"
     status_every_min: float = 30.0
@@ -153,7 +158,7 @@ def load_settings(path: str = ".env") -> Settings:
         size_sol=get_float(env, "SIZE_SOL", 0.05),
         tp_ladder=parse_ladder(env, "TP_LADDER", "1.3:0.4,1.8:0.3,3.0:0.3"),
         trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", 0.25),
-        hard_stop_pct=get_float(env, "HARD_STOP_PCT", 0.35),
+        hard_stop_pct=get_float(env, "HARD_STOP_PCT", 0.30),
         trail_enabled=get_bool(env, "TRAIL_ENABLED", True),
         trail_start_mult=get_float(env, "TRAIL_START_MULT", 1.4),
         tp1_mult=get_float(env, "TP1_MULT", 1.30),

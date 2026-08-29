@@ -314,30 +314,27 @@ class SmartWalletWatcher:
             return
         if fresh:
             self.known_cas.add(ca)
-        new_qual = (not already) and qualifies
-        # Weighted consensus score: sum of distinct buying wallets' quality
-        # weights. Replaces the old "count >= N equal wallets" rule.
+        # Weighted consensus score: sum of distinct buying wallets' quality weights.
         score = round(sum(x.get("wt", 0.0) for x in hit["wallets"]), 3)
-        if not fresh and score < self.consensus_weight_threshold and not new_qual:
-            return
+        # Only a genuine consensus (score >= threshold, not yet fired) is surfaced.
+        # Sub-threshold / single-wallet activity is still recorded in the journal
+        # but does NOT log or trigger opens — this removes the noisy low-conviction
+        # signals that were flooding the log and opening bad positions.
         consensus = score >= self.consensus_weight_threshold and ca not in self._consensus_sent
-        if consensus:
-            self.consensus_fired += 1
-            self._consensus_sent.add(ca)
-        title = "CONSENSUS BUY" if consensus else "Smart wallet buy"
-        # Only emit on a NEW qualifying wallet or a fresh consensus, so re-swept
-        # buys (lookback/live overlap) don't produce duplicate log lines/callbacks.
-        if new_qual or consensus:
-            syms = ",".join(x["w"][:5] + "…(w" + format(x.get("wt", 0), ".2f") + ")"
-                            for x in hit["wallets"][-4:])
-            logger.info("%s %s %s (%s) score=%.2f — journal only", title,
-                        hit.get("symbol", "?"), ca[:10], syms, score)
-            if self.on_smart_buy:
-                try:
-                    await self.on_smart_buy(ca, hit.get("symbol", ""), usd, score,
-                                            [x["w"] for x in hit["wallets"]])
-                except Exception:
-                    logger.exception("on_smart_buy callback failed")
+        if not consensus:
+            return
+        self.consensus_fired += 1
+        self._consensus_sent.add(ca)
+        syms = ",".join(x["w"][:5] + "…(w" + format(x.get("wt", 0), ".2f") + ")"
+                        for x in hit["wallets"][-4:])
+        logger.info("CONSENSUS BUY %s %s (%s) score=%.2f — journal only",
+                    hit.get("symbol", "?"), ca[:10], syms, score)
+        if self.on_smart_buy:
+            try:
+                await self.on_smart_buy(ca, hit.get("symbol", ""), usd, score,
+                                        [x["w"] for x in hit["wallets"]])
+            except Exception:
+                logger.exception("on_smart_buy callback failed")
 
     async def run(self) -> None:
         logger.info("watcher started: %d wallets, poll %.0fs (shyft)",
