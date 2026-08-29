@@ -189,31 +189,46 @@ class ShadowBook:
             q = await self.jupiter.quote(ca, int(self.size_sol * 1e9),
                                          force=True)
             if q is None or not q.success:
-                reason = q.reason if q else "quote_exception"
-                logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                             reason=f"untradable:{reason}")
-                log.info("shadow skip %s (%s): %s", ca[:10], symbol, reason)
-                return
-            tokens_raw = q.output_amount
-            entry_note = f"jup impact={q.price_impact_pct:.2f}%"
-            # Simulate the SELL side too: a token may be buyable yet have no
-            # TOKEN->SOL route (CATE/ELON/Google-AI all passed buy but failed
-            # sell). Opening such a position would error on live close, so we
-            # gate it here in paper exactly as live would.
-            sq = await self.jupiter.quote_sell(ca, tokens_raw)
-            if sq is None or not sq.success:
-                reason = sq.reason if sq else "quote_exception"
-                logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                             reason=f"unsellable:{reason}")
-                log.info("shadow skip %s (%s): unsellable %s", ca[:10], symbol, reason)
-                return
-            # Fallback if DexScreener had no usable price: derive USD/token from
-            # the Jupiter fill (size_sol SOL spent -> tokens received) and SOL USD.
-            if px <= 0:
-                dec = await self.jupiter.token_decimals(ca) or 6
-                sol_usd = await self._sol_usd()
-                if sol_usd and tokens_raw:
-                    px = (self.size_sol * sol_usd) / (tokens_raw / (10 ** dec))
+                # Paper/simulation fallback: thin or brand-new pairs often have
+                # no Jupiter route yet, but the smart wallets demonstrably trade
+                # them. If DexScreener has a mark price, open using it (flagged)
+                # instead of discarding a genuine consensus signal.
+                if px > 0:
+                    logs.journal("shadow_open_nojup", ca=ca, symbol=symbol,
+                                 reason=(q.reason if q else "quote_exception"))
+                    entry_note = "dexscreener(jupiter_unavailable)"
+                else:
+                    reason = q.reason if q else "quote_exception"
+                    logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                 reason=f"untradable:{reason}")
+                    log.info("shadow skip %s (%s): %s", ca[:10], symbol, reason)
+                    return
+            else:
+                tokens_raw = q.output_amount
+                entry_note = f"jup impact={q.price_impact_pct:.2f}%"
+                # Simulate the SELL side too: a token may be buyable yet have no
+                # TOKEN->SOL route. On a live book that would error on close, but
+                # in paper we fall back to the DexScreener mark so the position
+                # can still be tracked (flagged) instead of being dropped.
+                sq = await self.jupiter.quote_sell(ca, tokens_raw)
+                if sq is None or not sq.success:
+                    if px > 0:
+                        logs.journal("shadow_open_nojup", ca=ca, symbol=symbol,
+                                     reason=(sq.reason if sq else "quote_exception"))
+                        entry_note = "dexscreener(jupiter_unsellable)"
+                    else:
+                        reason = sq.reason if sq else "quote_exception"
+                        logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                     reason=f"unsellable:{reason}")
+                        log.info("shadow skip %s (%s): unsellable %s", ca[:10], symbol, reason)
+                        return
+                # Fallback if DexScreener had no usable price: derive USD/token from
+                # the Jupiter fill (size_sol SOL spent -> tokens received) and SOL USD.
+                if px <= 0:
+                    dec = await self.jupiter.token_decimals(ca) or 6
+                    sol_usd = await self._sol_usd()
+                    if sol_usd and tokens_raw:
+                        px = (self.size_sol * sol_usd) / (tokens_raw / (10 ** dec))
         if px <= 0:
             logs.journal("shadow_skip", ca=ca, symbol=symbol, reason="no_price")
             log.info("shadow skip %s (%s): no price", ca[:10], symbol)
@@ -424,6 +439,7 @@ async def _run_watch(s: cfg.Settings) -> int:
         wallet_weights=weights,
         wallet_default_weight=default_weight,
         consensus_weight_threshold=s.consensus_weight_threshold,
+        require_strong_wallet=s.require_strong_wallet,
     )
     jupiter = JupiterSwap(dry_run=True)
     # Live KOL-buy stream (pumpapi.io): accurate USD pricing for fresh pumps,

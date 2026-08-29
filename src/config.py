@@ -100,7 +100,7 @@ class Settings:
     trail_start_mult: float = 1.30     # only trail after a peak >= this
     hard_stop_pct: float = 0.30        # hard stop (tightened from 0.35 to cut losers)
     open_min_wallets: int = 2           # legacy distinct-wallet floor (kept for compat; weighted score is the real gate)
-    open_min_liq_usd: float = 5000.0    # skip illiquid tokens (exit slippage)
+    open_min_liq_usd: float = 1500.0    # skip only the thinnest tokens; smart wallets buy fresh <$5k pumps
     # --- data-driven wallet-quality weighting (consensus = weighted score) ---
     # Each KOL contributes a weight from its real win rate + PnL (see
     # wallet_weights.build_weights); a token "fires" when the summed weight of
@@ -116,10 +116,12 @@ class Settings:
     wallet_default_weight: float = 0.5      # weight when perf data is missing
     wallet_weight_max: float = 2.0
     # Consensus fires only when the summed weight of distinct buying wallets
-    # clears this. 2.0 ~= two 60%+/multi-$M winners, or one >$5M tier-2 + a
-    # moderate wallet. A single wallet (max 1.5) can NEVER open alone, which
-    # kills the single-KOL noise buys that were the biggest losers.
-    consensus_weight_threshold: float = 2.0
+    # clears this. 1.5 is a tradable middle ground: a strong wallet (>=1.0,
+    # i.e. >=60% win) plus any second tracked wallet (e.g. 1.25+0.5) clears it,
+    # so consensus forms far more often than the old 2.0 bar while still
+    # requiring a proven winner in the mix (see require_strong_wallet).
+    consensus_weight_threshold: float = 1.5
+    require_strong_wallet: bool = True  # consensus must include >=1 wallet with wt >= 1.0
     open_min_wallets: int = 2          # minimum distinct qualified wallets to open
     be_buffer_pct: float = 0.0          # after 1st TP, raise stop to entry+this (breakeven lock)
     max_hold_h: float = 72.0            # force-close dead positions after this many hours
@@ -163,7 +165,7 @@ def load_settings(path: str = ".env") -> Settings:
         trail_start_mult=get_float(env, "TRAIL_START_MULT", 1.4),
         tp1_mult=get_float(env, "TP1_MULT", 1.30),
         open_min_wallets=get_int(env, "OPEN_MIN_WALLETS", 2),
-        open_min_liq_usd=get_float(env, "OPEN_MIN_LIQ_USD", 5000.0),
+        open_min_liq_usd=get_float(env, "OPEN_MIN_LIQ_USD", 1500.0),
         wallet_perf_path=get(env, "WALLET_PERF_PATH", "wallet_performance.json"),
         wallet_weight_floor_win=get_float(env, "WALLET_WEIGHT_FLOOR_WIN", 0.40),
         wallet_weight_full_win=get_float(env, "WALLET_WEIGHT_FULL_WIN", 0.60),
@@ -173,7 +175,8 @@ def load_settings(path: str = ".env") -> Settings:
         wallet_weight_tier2_mult=get_float(env, "WALLET_WEIGHT_TIER2_MULT", 1.5),
         wallet_default_weight=get_float(env, "WALLET_DEFAULT_WEIGHT", 0.5),
         wallet_weight_max=get_float(env, "WALLET_WEIGHT_MAX", 2.0),
-        consensus_weight_threshold=get_float(env, "CONSENSUS_WEIGHT_THRESHOLD", 1.0),
+        consensus_weight_threshold=get_float(env, "CONSENSUS_WEIGHT_THRESHOLD", 1.5),
+        require_strong_wallet=get_bool(env, "REQUIRE_STRONG_WALLET", True),
         be_buffer_pct=get_float(env, "BE_BUFFER_PCT", 0.0),
         max_hold_h=get_float(env, "MAX_HOLD_H", 72.0),
         max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", 20),

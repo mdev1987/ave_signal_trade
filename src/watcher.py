@@ -108,7 +108,8 @@ class SmartWalletWatcher:
         manage_interval_s: float = 1.0,
         wallet_weights: dict | None = None,
         wallet_default_weight: float = 0.5,
-        consensus_weight_threshold: float = 1.0,
+        consensus_weight_threshold: float = 1.5,
+        require_strong_wallet: bool = True,
     ) -> None:
         wf = Path(wallets_file)
         data = json.loads(wf.read_text()) if wf.exists() else {}
@@ -128,6 +129,7 @@ class SmartWalletWatcher:
         self.weights = dict(wallet_weights) if wallet_weights else {}
         self.default_weight = wallet_default_weight
         self.consensus_weight_threshold = consensus_weight_threshold
+        self.require_strong_wallet = require_strong_wallet
         self.state_file = Path(state_file)
         self.tokens_file = Path(tokens_file)
         self._http = httpx.AsyncClient(timeout=25)
@@ -320,7 +322,12 @@ class SmartWalletWatcher:
         # Sub-threshold / single-wallet activity is still recorded in the journal
         # but does NOT log or trigger opens — this removes the noisy low-conviction
         # signals that were flooding the log and opening bad positions.
-        consensus = score >= self.consensus_weight_threshold and ca not in self._consensus_sent
+        # require_strong_wallet: at least one contributing wallet must carry a real
+        # edge (wt >= 1.0, i.e. >=60% win) so consensus is never manufactured by two
+        # mediocre wallets alone.
+        n_strong = sum(1 for x in hit["wallets"] if x.get("wt", 0.0) >= 1.0)
+        strong_ok = (not self.require_strong_wallet) or n_strong >= 1
+        consensus = score >= self.consensus_weight_threshold and strong_ok and ca not in self._consensus_sent
         if not consensus:
             return
         self.consensus_fired += 1
