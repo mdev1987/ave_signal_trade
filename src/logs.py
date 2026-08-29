@@ -78,8 +78,16 @@ def setup_logging(level: int = logging.INFO, log_file: str | None = None) -> Non
     Args:
         level: Minimum log level (default INFO).
     """
+    # Quiet chatty library loggers that otherwise flood INFO with every request.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     root = logging.getLogger()
+    # Idempotent: setup_logging is invoked from both __main__ and each command
+    # entry point; only configure handlers once to avoid duplicate log lines.
+    if root.handlers:
+        return
     root.setLevel(level)
 
     try:

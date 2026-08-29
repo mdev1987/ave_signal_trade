@@ -48,3 +48,4 @@ paper_positions.json
 dexscreener_top_gainer.md
 *.bak
 gainers.log
+bot_run*.log

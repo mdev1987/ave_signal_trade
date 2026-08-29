@@ -42,9 +42,9 @@ def pass1_score(files):
     for f in files:
         pf = pq.ParquetFile(f)
         for rb in pf.iter_batches(batch_size=500_000, columns=COLS):
-            d = rb.to_pydict(); n = len(d["action"])
+            d = rb.to_pydict(); n = len(d["action"])  # noqa: E702
             for i in range(n):
-                a = d["action"][i]; m = d["mint"][i]; ts = (d["timestamp"][i] or 0) / 1000.0
+                a = d["action"][i]; m = d["mint"][i]; ts = (d["timestamp"][i] or 0) / 1000.0  # noqa: E702
                 px = d["price"][i] or 0.0
                 if a == "create":
                     continue
@@ -59,7 +59,7 @@ def pass1_score(files):
                         mint_signers[m].add(s)
                 else:  # sell still updates peak (price field is the trade price)
                     mint_peak[m] = max(mint_peak.get(m, 0.0), px)
-    wins = defaultdict(int); totals = defaultdict(int)
+    wins = defaultdict(int); totals = defaultdict(int)  # noqa: E702
     for m, sigs in mint_signers.items():
         fp = mint_first.get(m, (0.0, 0.0))[0]
         peak = mint_peak.get(m, 0.0)
@@ -77,19 +77,19 @@ def backtest(files, chosen, max_pos, min_consensus):
     buyers = defaultdict(dict)
     first_buy = {}
     open_pos = {}
-    trades = []; reasons = defaultdict(int); stats = defaultdict(int)
+    trades = []; reasons = defaultdict(int); stats = defaultdict(int)  # noqa: E702
 
     def close(m, reason, px, ts):
-        p = open_pos.pop(m); mult = px / p["entry_px"]
+        p = open_pos.pop(m); mult = px / p["entry_px"]  # noqa: E702
         pnl = p["banked"] + SIZE_SOL * (mult - 1.0)
-        trades.append({"pnl": pnl}); reasons[reason] += 1
+        trades.append({"pnl": pnl}); reasons[reason] += 1  # noqa: E702
         stats["wins" if pnl >= 0 else "losses"] += 1
     for f in files:
         pf = pq.ParquetFile(f)
         for rb in pf.iter_batches(batch_size=500_000, columns=COLS):
-            d = rb.to_pydict(); n = len(d["action"])
+            d = rb.to_pydict(); n = len(d["action"])  # noqa: E702
             for i in range(n):
-                a = d["action"][i]; m = d["mint"][i]
+                a = d["action"][i]; m = d["mint"][i]  # noqa: E702
                 ts = (d["timestamp"][i] or 0) / 1000.0
                 if m is None or a not in ("buy", "sell"):
                     continue
@@ -103,20 +103,20 @@ def backtest(files, chosen, max_pos, min_consensus):
                         buyers[m][s] = ts
                 if a == "buy" and m not in open_pos:
                     if len(open_pos) >= max_pos:
-                        stats["pos_cap"] += 1; continue
+                        stats["pos_cap"] += 1; continue  # noqa: E702
                     distinct = [x for x, bt in buyers[m].items() if ts - bt <= CONSENSUS_WINDOW_S]
                     if len(distinct) < min_consensus:
                         continue
                     if liq < MIN_LIQ_USD:
-                        stats["low_liq"] += 1; continue
+                        stats["low_liq"] += 1; continue  # noqa: E702
                     open_pos[m] = {"entry_px": px, "entry_ts": ts, "peak": px,
                                    "tp1": False, "be": False, "banked": 0.0}
                     stats["entries"] += 1
                 if m in open_pos and px:
-                    p = open_pos[m]; p["peak"] = max(p["peak"], px)
-                    pm = p["peak"] / p["entry_px"]; mult = px / p["entry_px"]
+                    p = open_pos[m]; p["peak"] = max(p["peak"], px)  # noqa: E702
+                    pm = p["peak"] / p["entry_px"]; mult = px / p["entry_px"]  # noqa: E702
                     if not p["tp1"] and pm >= TP1_MULT:
-                        p["tp1"] = True; p["banked"] = SIZE_SOL * 0.5 * (TP1_MULT - 1.0)
+                        p["tp1"] = True; p["banked"] = SIZE_SOL * 0.5 * (TP1_MULT - 1.0)  # noqa: E702
                     if p["tp1"]:
                         p["be"] = True
                     stop = 1.0 - HARD_STOP
@@ -154,7 +154,7 @@ def main():
         print(f"  {s[:14]} wr={wr:.2f} wins={w} buys={tot}")
     res = backtest(files, chosen, args.max_positions, args.min_consensus)
     res["seconds"] = round(time.time() - t0, 1)
-    res["top_k"] = args.top_k; res["max_positions"] = args.max_positions
+    res["top_k"] = args.top_k; res["max_positions"] = args.max_positions  # noqa: E702
     print(json.dumps(res, indent=2))
     json.dump(res, open(args.out, "w"), indent=2)
 

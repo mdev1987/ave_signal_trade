@@ -20,8 +20,3 @@ dependencies = [
 line-length = 100
 
 [tool.ruff.lint]
-# Baseline ignores: the codebase bootstraps `src/` onto sys.path at import time
-# (E402) and carries a pre-existing one-statement-per-line semicolon style
-# (E701/E702); both are stylistic and would flag hundreds of legacy lines.
-# New code should still avoid them. Correctness checks (F-codes) stay enabled.
-ignore = ["E402", "E701", "E702", "E401"]

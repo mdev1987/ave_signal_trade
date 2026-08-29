@@ -27,20 +27,20 @@ _SOL_MINT = "So11111111111111111111111111111111111111112"  # WSOL
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-import base58
-import os
-import config as cfg
-import logs
-from dexscreener import DexScreenerClient
-from jupiter_swap import JupiterSwap
-from solders.keypair import Keypair
-from logs import setup_logging
-from notifier import TelegramNotifier
-from pump_stream import PumpApiStream
-from tatum_notify import TatumNotifications
-from watcher import SmartWalletWatcher
-from wallet_discovery import WalletDiscovery
-from wallet_weights import build_weights
+import base58  # noqa: E402
+import os  # noqa: E402
+import config as cfg  # noqa: E402
+import logs  # noqa: E402
+from dexscreener import DexScreenerClient  # noqa: E402
+from jupiter_swap import JupiterSwap  # noqa: E402
+from solders.keypair import Keypair  # noqa: E402
+from logs import setup_logging  # noqa: E402
+from notifier import TelegramNotifier  # noqa: E402
+from pump_stream import PumpApiStream  # noqa: E402
+from tatum_notify import TatumNotifications  # noqa: E402
+from watcher import SmartWalletWatcher  # noqa: E402
+from wallet_discovery import WalletDiscovery  # noqa: E402
+from wallet_weights import build_weights  # noqa: E402
 
 log = logging.getLogger("main")
 
@@ -383,7 +383,6 @@ class ShadowBook:
 
 
 async def _run_watch(s: cfg.Settings) -> int:
-    setup_logging()
     env = cfg.load_env()
     shyft_key = (cfg.get(env, "SHYFT_API_KEY") or "").strip()
     if not shyft_key:
@@ -648,7 +647,6 @@ def cmd_watch(args) -> int:
 
 
 async def _run_discover(s: cfg.Settings, args=None) -> int:
-    setup_logging()
     env = cfg.load_env()
     debot_enabled = bool(cfg.get(env, "DEBOT_ENABLED", "1") not in ("0", "false", "no"))
     debot = None
@@ -875,5 +873,6 @@ def build_parser() -> argparse.ArgumentParser:
 if __name__ == "__main__":
     ap_ = build_parser()
     args_ = ap_.parse_args()
-    setup_logging(log_file="watcher.log")
+    log_file = "watcher.log" if args_.func is cmd_watch else None
+    setup_logging(log_file=log_file)
     sys.exit(args_.func(args_) or 0)

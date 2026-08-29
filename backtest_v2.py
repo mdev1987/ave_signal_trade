@@ -51,9 +51,9 @@ def load_events(files):
         for rb in pf.iter_batches(batch_size=500_000,
                                    columns=["action", "mint", "txSigner",
                                             "price", "quoteInPool", "timestamp"]):
-            d = rb.to_pydict(); n = len(d["action"])
+            d = rb.to_pydict(); n = len(d["action"])  # noqa: E702
             for i in range(n):
-                a = d["action"][i]; m = d["mint"][i]
+                a = d["action"][i]; m = d["mint"][i]  # noqa: E702
                 if m is None or a not in ("buy", "sell", "create"):
                     continue
                 ts = (d["timestamp"][i] or 0) / 1000.0
@@ -65,7 +65,7 @@ def load_events(files):
 
 
 def ideal_wallets(ev, topk=30, pump_mult=1.5):
-    first = {}; peak = {}; sigs = defaultdict(set)
+    first = {}; peak = {}; sigs = defaultdict(set)  # noqa: E702
     for ts, m, a, px, liq, s in ev:
         if a == "create":
             continue
@@ -77,7 +77,7 @@ def ideal_wallets(ev, topk=30, pump_mult=1.5):
                 sigs[m].add(s)
         else:
             peak[m] = max(peak.get(m, 0.0), px)
-    wins = defaultdict(int); tot = defaultdict(int)
+    wins = defaultdict(int); tot = defaultdict(int)  # noqa: E702
     for m, ss in sigs.items():
         pumped = first.get(m, 0) > 0 and peak.get(m, 0) / first[m] >= pump_mult
         for s in ss:
@@ -90,10 +90,10 @@ def ideal_wallets(ev, topk=30, pump_mult=1.5):
 
 
 def run_combo(ev, exit_cfg, consensus, wallet_mode, chosen, cap, cw=CONSENSUS_WINDOW_S):
-    buyers = defaultdict(dict); first_buy = {}
-    open_pos = {}; trades = []; pos_cap = 0; low_liq = 0
-    tps = exit_cfg["tps"]; trail_start = exit_cfg["trail_start"]
-    trail_retr = exit_cfg["trail_retr"]; hard = exit_cfg["hard"]; beb = exit_cfg["be_buffer"]
+    buyers = defaultdict(dict); first_buy = {}  # noqa: E702
+    open_pos = {}; trades = []; pos_cap = 0; low_liq = 0  # noqa: E702
+    tps = exit_cfg["tps"]; trail_start = exit_cfg["trail_start"]  # noqa: E702
+    trail_retr = exit_cfg["trail_retr"]; hard = exit_cfg["hard"]; beb = exit_cfg["be_buffer"]  # noqa: E702
     for ts, m, a, px, liq, s in ev:
         if a == "buy" and (wallet_mode == "any" or s in chosen):
             if m not in first_buy:
@@ -120,8 +120,8 @@ def run_combo(ev, exit_cfg, consensus, wallet_mode, chosen, cap, cw=CONSENSUS_WI
                                        "banked": 0.0, "be": False}
         # price update + exit check
         if m in open_pos and px > 0:
-            p = open_pos[m]; p["peak"] = max(p["peak"], px)
-            peak_mult = p["peak"] / p["entry"]; mult = px / p["entry"]
+            p = open_pos[m]; p["peak"] = max(p["peak"], px)  # noqa: E702
+            peak_mult = p["peak"] / p["entry"]; mult = px / p["entry"]  # noqa: E702
             for lvl, frac in tps:
                 if lvl not in p["taken"] and peak_mult >= lvl:
                     p["taken"].add(lvl)

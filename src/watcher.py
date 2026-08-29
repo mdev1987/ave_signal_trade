@@ -314,28 +314,30 @@ class SmartWalletWatcher:
             return
         if fresh:
             self.known_cas.add(ca)
+        new_qual = (not already) and qualifies
         # Weighted consensus score: sum of distinct buying wallets' quality
         # weights. Replaces the old "count >= N equal wallets" rule.
         score = round(sum(x.get("wt", 0.0) for x in hit["wallets"]), 3)
-        if not fresh and score < self.consensus_weight_threshold:
+        if not fresh and score < self.consensus_weight_threshold and not new_qual:
             return
         consensus = score >= self.consensus_weight_threshold and ca not in self._consensus_sent
         if consensus:
             self.consensus_fired += 1
             self._consensus_sent.add(ca)
         title = "CONSENSUS BUY" if consensus else "Smart wallet buy"
-        syms = ",".join(x["w"][:5] + "…(w" + format(x.get("wt", 0), ".2f") + ")"
-                        for x in hit["wallets"][-4:])
-        # All buy signals go to journal/log only; the Telegram feed is reserved
-        # for the shadow book's OPEN / CLOSE position cards (see ShadowBook).
-        logger.info("%s %s %s (%s) score=%.2f — journal only", title,
-                    hit.get("symbol", "?"), ca[:10], syms, score)
-        if self.on_smart_buy:
-            try:
-                await self.on_smart_buy(ca, hit.get("symbol", ""), usd, score,
-                                        [x["w"] for x in hit["wallets"]])
-            except Exception:
-                logger.exception("on_smart_buy callback failed")
+        # Only emit on a NEW qualifying wallet or a fresh consensus, so re-swept
+        # buys (lookback/live overlap) don't produce duplicate log lines/callbacks.
+        if new_qual or consensus:
+            syms = ",".join(x["w"][:5] + "…(w" + format(x.get("wt", 0), ".2f") + ")"
+                            for x in hit["wallets"][-4:])
+            logger.info("%s %s %s (%s) score=%.2f — journal only", title,
+                        hit.get("symbol", "?"), ca[:10], syms, score)
+            if self.on_smart_buy:
+                try:
+                    await self.on_smart_buy(ca, hit.get("symbol", ""), usd, score,
+                                            [x["w"] for x in hit["wallets"]])
+                except Exception:
+                    logger.exception("on_smart_buy callback failed")
 
     async def run(self) -> None:
         logger.info("watcher started: %d wallets, poll %.0fs (shyft)",

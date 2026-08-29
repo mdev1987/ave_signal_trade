@@ -30,16 +30,16 @@ def main():
     ap.add_argument("--out", default="smart_money_wallets.candidates.json")
     args = ap.parse_args()
     files = sorted(glob.glob(str(Path(args.data) / "*.parquet")))
-    first = {}; peak = {}; sigs = defaultdict(set)   # mint -> buyers
+    first = {}; peak = {}; sigs = defaultdict(set)   # mint -> buyers  # noqa: E702
     started = time.time()
     for f in files:
         pf = pq.ParquetFile(f)
         for rb in pf.iter_batches(batch_size=500_000,
                                    columns=["action", "mint", "txSigner",
                                             "price", "quoteInPool", "timestamp"]):
-            d = rb.to_pydict(); n = len(d["action"])
+            d = rb.to_pydict(); n = len(d["action"])  # noqa: E702
             for i in range(n):
-                a = d["action"][i]; m = d["mint"][i]
+                a = d["action"][i]; m = d["mint"][i]  # noqa: E702
                 if m is None or a not in ("buy", "sell"):
                     continue
                 px = d["price"][i] or 0.0
@@ -53,7 +53,7 @@ def main():
                 else:
                     peak[m] = max(peak.get(m, 0.0), px)
     # per-signer stats
-    distinct = defaultdict(set); pumped = defaultdict(int)
+    distinct = defaultdict(set); pumped = defaultdict(int)  # noqa: E702
     for m, ss in sigs.items():
         pumped_m = first.get(m, 0) > 0 and peak.get(m, 0) / first[m] >= PUMP_MULT
         for s in ss:

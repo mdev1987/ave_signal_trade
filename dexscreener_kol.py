@@ -162,7 +162,7 @@ async def scrape_gainers(browser, url: str, limit: int, out: str | None = None
         pg = await _new_page(ctx)
         try:
             d = await scrape_token(pg, tk["url"])
-            d["url"] = tk["url"]; d["symbol"] = d.get("symbol") or tk.get("symbol")
+            d["url"] = tk["url"]; d["symbol"] = d.get("symbol") or tk.get("symbol")  # noqa: E702
             d["rank_on_page"] = i
             results.append(d)
             print(f"  [{i}/{len(tokens)}] {d.get('symbol')} -> "
@@ -317,7 +317,7 @@ async def main() -> None:
                         viewport={"width": 1440, "height": 900}, locale="en-US")
                     page = await _new_page(ctx)
                     d = await scrape_token(page, args.url, dump_html=args.dump_html)
-                    await page.close(); await ctx.close()
+                    await page.close(); await ctx.close()  # noqa: E702
                     holders = (d.get("holders") or [])[:args.holders]
                     kols = (d.get("kol") or [])[:args.kol]
                     print(f"symbol={d.get('symbol')}")
