@@ -98,9 +98,10 @@ class Settings:
     trail_retrace_pct: float = 0.35
     trail_enabled: bool = False         # trailing stop OFF by default (full-spike exit wins)
     trail_start_mult: float = 1.30     # only trail after a peak >= this
-    hard_stop_pct: float = 0.30        # hard stop (tightened from 0.35 to cut losers)
+    hard_stop_pct: float = 0.25        # hard stop (tightened from 0.30; gaps still slip, see review)
     open_min_wallets: int = 2           # legacy distinct-wallet floor (kept for compat; weighted score is the real gate)
     open_min_liq_usd: float = 1500.0    # skip only the thinnest tokens; smart wallets buy fresh <$5k pumps
+    per_wallet_max_positions: int = 3   # cap open positions that share a wallet (kills AgmLJ/kEFiA correlation stack)
     # --- data-driven wallet-quality weighting (consensus = weighted score) ---
     # Each KOL contributes a weight from its real win rate + PnL (see
     # wallet_weights.build_weights); a token "fires" when the summed weight of
@@ -124,8 +125,8 @@ class Settings:
     require_strong_wallet: bool = True  # consensus must include >=1 wallet with wt >= 1.0
     open_min_wallets: int = 2          # minimum distinct qualified wallets to open
     be_buffer_pct: float = 0.0          # after 1st TP, raise stop to entry+this (breakeven lock)
-    max_hold_h: float = 72.0            # force-close dead positions after this many hours
-    max_open_positions: int = 12        # hard cap on concurrent shadow positions
+    max_hold_h: float = 24.0            # force-close dead/lingering positions after 24h (frees slots)
+    max_open_positions: int = 18        # hard cap on concurrent shadow positions (raised: book saturates at 12 in ~30m)
     start_balance_sol: float = 4.0      # larger paper book so the cap is capital-bound
     shadow_state_file: str = "shadow_book.json"
     status_every_min: float = 30.0
@@ -178,8 +179,9 @@ def load_settings(path: str = ".env") -> Settings:
         consensus_weight_threshold=get_float(env, "CONSENSUS_WEIGHT_THRESHOLD", 1.5),
         require_strong_wallet=get_bool(env, "REQUIRE_STRONG_WALLET", True),
         be_buffer_pct=get_float(env, "BE_BUFFER_PCT", 0.0),
-        max_hold_h=get_float(env, "MAX_HOLD_H", 72.0),
-        max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", 20),
+        max_hold_h=get_float(env, "MAX_HOLD_H", 24.0),
+        max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", 18),
+        per_wallet_max_positions=get_int(env, "PER_WALLET_MAX_POSITIONS", 3),
         start_balance_sol=get_float(env, "START_BALANCE_SOL", 4.0),
         shadow_state_file=get(env, "SHADOW_STATE_FILE", "shadow_book.json"),
         status_every_min=get_float(env, "STATUS_EVERY_MIN", 30.0),

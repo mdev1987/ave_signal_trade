@@ -493,6 +493,15 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     async def _on_smart_buy(ca, sym, usd, score, wallets=None):
         n = len(wallets or [])
+        # Concentration guard: the journal showed ~19/23 opens came from a single
+        # wallet pair (AgmLJ+kEFiA). Cap how many open positions may share any one
+        # triggering wallet so we don't stack correlated bets and so slots stay
+        # free for genuinely different signals.
+        overlap = 0
+        for w in (wallets or []):
+            c = sum(1 for p in book.open.values()
+                    if w in (p.get("wallets") or []))
+            overlap = max(overlap, c)
         if not backfill_done.is_set():
             reason = "deferred:lookback"
         elif score < s.consensus_weight_threshold:
@@ -503,6 +512,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             reason = f"skip:score<{s.consensus_weight_threshold}"
         elif n < s.open_min_wallets:
             reason = f"skip:min_wallets<{s.open_min_wallets}"
+        elif overlap >= s.per_wallet_max_positions:
+            reason = f"skip:per_wallet_cap>={s.per_wallet_max_positions}"
         elif usd < s.watch_min_buy_usd:
             reason = "skip:below_min_buy"
         elif ca in book.open:
