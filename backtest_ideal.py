@@ -12,7 +12,10 @@ with a realistic position cap.
 This tells us the ceiling a good discovery scorer must reach.
 """
 from __future__ import annotations
-import argparse, glob, json, time
+import argparse
+import glob
+import json
+import time
 from collections import defaultdict
 from pathlib import Path
 import pyarrow.parquet as pq

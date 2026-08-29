@@ -164,7 +164,7 @@ def main() -> None:
         if args.max_trades and stats["entries"] >= args.max_trades:
             break
 
-    wins = stats["wins"]; losses = stats["losses"]
+    wins = stats["wins"]; stats["losses"]
     entries = stats["entries"]
     pnl = sum(t["pnl_sol"] for t in trades)
     am = sorted(all_mult)

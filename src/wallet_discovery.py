@@ -451,7 +451,7 @@ def _to_ts(v: Any) -> float | None:
         return float(v)
     s = str(v).replace("Z", "+00:00")
     try:
-        from datetime import datetime, timezone
+        from datetime import datetime
         return datetime.fromisoformat(s).timestamp()
     except Exception:
         return None
