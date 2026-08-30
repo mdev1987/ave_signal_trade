@@ -36,11 +36,15 @@ def pair_key(wallets: Iterable[str]) -> str:
 
 def update(perf: dict, wallets: Iterable[str], pnl_sol: float) -> str:
     key = pair_key(wallets)
-    d = perf.get(key, {"trades": 0, "wins": 0, "pnl": 0.0})
+    d = perf.get(key, {"trades": 0, "wins": 0, "pnl": 0.0, "history": []})
     d["trades"] = d.get("trades", 0) + 1
     if pnl_sol > 0:
         d["wins"] = d.get("wins", 0) + 1
     d["pnl"] = round(d.get("pnl", 0.0) + pnl_sol, 5)
+    # Rolling history: keep last 10 trades for recent-performance multiplier
+    hist = d.get("history", [])
+    hist.append({"pnl": round(pnl_sol, 5), "ts": __import__("time").time()})
+    d["history"] = hist[-10:]
     perf[key] = d
     return key
 
@@ -63,24 +67,42 @@ def pair_multiplier(perf: dict, wallets: Iterable[str]) -> Tuple[float, str]:
       - normal / currently-profitable pair -> 1.0 (no effect)
       - weak pair (negative expectancy)     -> 0.5 .. 0.7
 
-    A weak pair is therefore down-weighted but may still open when the market
-    aligns (e.g. 4/4 uptrend) — exactly the "conditional gate" the review asked
-    for — so we never hard-block on a small sample (AgmLJ+kEFiA was only 6
-    trades). The multiplier is recomputed from live pair stats every close, so
-    a pair that turns around un-restricts itself automatically.
+    Uses a **rolling window** (last 10 trades) weighted 70% recent + 30%
+    all-time so stale historical data doesn't permanently penalise a pair
+    that has recovered. The multiplier is recomputed from live pair stats
+    every close, so a pair that turns around un-restricts itself automatically.
+
+    Also computes **expectancy per trade** (pnl / trades) as a first-class
+    feature — not just cumulative PnL + win rate — so a pair with 10 trades
+    at -0.001/trade is treated differently from one at -0.05/trade.
     """
     d = perf.get(pair_key(wallets))
     if not d or d.get("trades", 0) < 3:
         return 1.0, ""
     trades = d["trades"]
-    wr = d["wins"] / trades
     pnl = d.get("pnl", 0.0)
-    if pnl >= 0:
+    expectancy = pnl / trades  # pnl per trade (first-class feature)
+    # Rolling window: last 10 trades, weighted 70% recent + 30% all-time
+    hist = d.get("history", [])
+    if len(hist) >= 3:
+        recent_pnl = sum(h.get("pnl", 0.0) for h in hist)
+        recent_wr = sum(1 for h in hist if h.get("pnl", 0.0) > 0) / len(hist)
+        effective_pnl = recent_pnl * 0.7 + pnl * 0.3
+        effective_wr = recent_wr * 0.7 + (d["wins"] / trades) * 0.3
+    else:
+        effective_pnl = pnl
+        effective_wr = d["wins"] / trades
+    # Multiplier tiers: based on effective (rolling) stats, not cumulative
+    if effective_pnl >= 0:
         return 1.0, ""  # pair currently profitable -> no discount
-    if trades >= 6 and wr < 0.45:
-        return 0.5, f"pair_weak(t={trades},wr={wr:.0%},pnl={pnl:+.3f})"
-    if trades >= 5 and wr < 0.40:
-        return 0.6, f"pair_weak(t={trades},wr={wr:.0%},pnl={pnl:+.3f})"
-    if trades >= 3:
-        return 0.7, f"pair_soft(t={trades},wr={wr:.0%},pnl={pnl:+.3f})"
+    # Very weak: 6+ recent trades, low win rate, bad expectancy
+    if len(hist) >= 6 and effective_wr < 0.45:
+        return 0.5, (f"pair_weak(t={trades},rec={len(hist)},wr={effective_wr:.0%},"
+                     f"exp={expectancy:+.4f})")
+    if len(hist) >= 5 and effective_wr < 0.40:
+        return 0.6, (f"pair_weak(t={trades},rec={len(hist)},wr={effective_wr:.0%},"
+                     f"exp={expectancy:+.4f})")
+    if len(hist) >= 3:
+        return 0.7, (f"pair_soft(t={trades},rec={len(hist)},wr={effective_wr:.0%},"
+                     f"exp={expectancy:+.4f})")
     return 1.0, ""

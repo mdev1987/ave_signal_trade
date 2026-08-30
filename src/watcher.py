@@ -146,6 +146,9 @@ class SmartWalletWatcher:
         self._task: asyncio.Task | None = None
         self._price_cache: dict[str, tuple[float, float, str | None]] = {}
         self._last_rpc_ts = 0.0
+        # Wallet churn tracking: detect wallets that spray many tokens in
+        # a short window (noise signal). Maps wallet -> [(ts, ca), ...].
+        self._wallet_buys: dict[str, list[tuple[float, str]]] = {}
         self._load_state()
 
     # ------------------------------------------------------------- state io
@@ -298,9 +301,25 @@ class SmartWalletWatcher:
         # buy meets WATCH_MIN_BUY_USD. This makes the threshold meaningful
         # (otherwise tiny buys still pile into consensus, causing bursts).
         qualifies = usd >= self.min_buy_usd
+        # Wallet churn detection: a wallet spraying 40+ distinct tokens in 5
+        # minutes is almost certainly noise (airdrops, bot activity, or a
+        # non-selective accumulator). Penalise its weight by halving it.
+        churn_ok = True
+        if qualifies:
+            buys = self._wallet_buys.setdefault(wallet, [])
+            buys.append((now, ca))
+            # Prune buys older than 5 minutes
+            cutoff = now - 300
+            self._wallet_buys[wallet] = [(t, c) for t, c in buys if t > cutoff]
+            distinct_tokens = len(set(c for _, c in self._wallet_buys[wallet]))
+            if distinct_tokens >= 40:
+                churn_ok = False
         # Quality weight: proven winners move the score; noise wallets (~0) can't
         # manufacture consensus on their own. Sub-threshold buys contribute 0.
+        # Churning wallets get halved weight (still count, but less).
         wt = self.weights.get(wallet, self.default_weight) if qualifies else 0.0
+        if qualifies and not churn_ok:
+            wt *= 0.5
         if qualifies:
             hit["usd"] += usd
             if not already:

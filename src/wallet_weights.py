@@ -40,8 +40,14 @@ def build_weights(
     tier2_mult: float = 1.5,
     default_weight: float = 0.5,
     max_weight: float = 2.0,
+    confidence_trades: int = 30,
 ) -> tuple[dict[str, float], float]:
-    """Return (address->weight, default_weight) from a wallet_performance.json."""
+    """Return (address->weight, default_weight) from a wallet_performance.json.
+
+    Uses a Bayesian-inspired confidence factor so wallets with few trades
+    don't immediately become "elite" from a tiny sample. A wallet with 60%
+    win rate on 5 trades gets penalised vs 60% on 500 trades.
+    """
     weights: dict[str, float] = {}
     data: list[dict] = []
     p = Path(path)
@@ -59,7 +65,14 @@ def build_weights(
         if wr <= 0 or wr < floor_win:
             weights[addr] = 0.0
             continue
-        base = min(1.0, (wr - floor_win) / denom)
+        # Sample-size confidence: shrink win rate toward 0.5 for small samples
+        trades = rec.get("picks") or 0
+        confidence = min(1.0, trades / confidence_trades)
+        adjusted_wr = 0.5 + confidence * (wr - 0.5)
+        if adjusted_wr < floor_win:
+            weights[addr] = 0.0
+            continue
+        base = min(1.0, (adjusted_wr - floor_win) / denom)
         pnl = rec.get("pnl_total") or 0.0
         tier = tier2_mult if pnl >= pnl_tier2 else tier1_mult if pnl >= pnl_tier1 else 1.0
         weights[addr] = round(min(max_weight, base * tier), 3)

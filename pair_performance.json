@@ -1,8 +1,8 @@
 {
   "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51+kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf": {
-    "trades": 6,
-    "wins": 1,
-    "pnl": -0.05583
+    "trades": 7,
+    "wins": 2,
+    "pnl": -0.04996
   },
   "92XgocXsN2TXkHqnBz9eQrZZcbNAZrBohwEnzssoUnXJ+A91v63oXA4ep2GJccoeYV2ki4vr9748dUfL346Sz4SbJ": {
     "trades": 1,
@@ -108,5 +108,20 @@
     "trades": 1,
     "wins": 1,
     "pnl": 0.048
+  },
+  "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51+H1TLERBQyQzSd5gbvbWwP97GjeL9txzWoN5BK4UG7xYm": {
+    "trades": 1,
+    "wins": 1,
+    "pnl": 0.00622
+  },
+  "AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51": {
+    "trades": 1,
+    "wins": 0,
+    "pnl": -0.04982
+  },
+  "BCagckXeMChUKrHEd6fKFA1uiWDtcmCXMsqaheLiUPJd+BQVz7fQ1WsQmSTMY3umdPEPPTm1sdcBcX9sP7o6kPRmB+kEFiAX3jo5NmemysQov342TZ9mGh6yp92GDRjhA8XDf": {
+    "trades": 1,
+    "wins": 0,
+    "pnl": -0.04201
   }
 }
