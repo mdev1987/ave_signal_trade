@@ -118,9 +118,9 @@ def build_status(st: dict) -> str:
 class ShadowBook:
     """Virtual positions mirroring 'buy what smart money buys'.
 
-    When a ``jupiter`` (paper mode) is provided, entries/exits are priced by
-    real executable quotes — impact & slippage included — instead of raw
-    DexScreener mid-prices.
+    Entries and exits are priced by Jupiter executable quotes (impact +
+    slippage included) when available; DexScreener mid is the fallback.
+    Partial TPs reduce the quoted sell size proportionally.
     """
 
     def __init__(self, ds: DexScreenerClient, size_sol: float,
@@ -331,7 +331,19 @@ class ShadowBook:
         # Serializing them prevents lost updates (e.g. an open landing in the
         # middle of a close, or a balance miscount).
         async with self._lock:
+            # Process fresh positions (< early_filter_window_s) first so the
+            # one-shot filter fires with minimal latency.  Mature positions
+            # follow; their 5s poll cadence is already generous.
+            now = time.time()
+            fresh, mature = [], []
             for ca in list(self.open):
+                pos = self.open[ca]
+                age = now - pos.get("ts", now)
+                if age < self.early_filter_window_s and not pos.get("early_checked", False):
+                    fresh.append(ca)
+                else:
+                    mature.append(ca)
+            for ca in fresh + mature:
                 pos = self.open[ca]
                 entry = pos["entry_usd"]
                 # --- price discovery: prefer Jupiter executable sell quote
@@ -340,13 +352,19 @@ class ShadowBook:
                 jup_mult = None
                 dex_mult = None
                 if self.jupiter is not None and pos.get("tokens_raw"):
-                    try:
-                        sq = await self.jupiter.quote_sell(ca, pos["tokens_raw"])
-                        if sq is not None and sq.success:
-                            jup_mult = (sq.output_amount / 1e9) / pos["size_sol"]
-                            pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
-                    except Exception:
-                        log.exception("refresh jup quote failed %s", ca[:10])
+                    # Quote sell for the REMAINING tokens only (not the full
+                    # position).  After a partial TP, remaining may be <1.0,
+                    # so the sell quote reflects the actual executable size.
+                    remaining_raw = int(pos["tokens_raw"] * pos.get("remaining", 1.0))
+                    if remaining_raw > 0:
+                        try:
+                            sq = await self.jupiter.quote_sell(ca, remaining_raw)
+                            if sq is not None and sq.success:
+                                jup_mult = (sq.output_amount / 1e9) / \
+                                    (pos["size_sol"] * pos.get("remaining", 1.0))
+                                pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
+                        except Exception:
+                            log.exception("refresh jup quote failed %s", ca[:10])
                 snap = await self.ds.token_pairs("solana", ca)
                 if snap and snap.get("price_usd"):
                     px = float(snap["price_usd"])
