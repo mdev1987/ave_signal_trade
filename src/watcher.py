@@ -250,8 +250,8 @@ class SmartWalletWatcher:
             logger.exception("watcher state save failed")
 
     # ---------------------------------------------------------------- shyft
-    async def _throttle(self, min_gap_s: float = 0.15) -> None:
-        """Keep Shyft RPC under the plan's 10 req/sec (burst-safe)."""
+    async def _throttle(self, min_gap_s: float = 0.35) -> None:
+        """Keep Shyft RPC under the plan's rate limit (conservative for 262 wallets)."""
         now = time.monotonic()
         wait = self._last_rpc_ts + min_gap_s - now
         if wait > 0:
@@ -275,7 +275,7 @@ class SmartWalletWatcher:
             }]
             if cursor:
                 params[1]["paginationToken"] = cursor
-            for attempt in range(2):          # one 429-retry
+            for attempt in range(4):          # up to 3 retries on 429
                 await self._throttle()
                 try:
                     r = await self._http.post(url, json={
@@ -286,7 +286,9 @@ class SmartWalletWatcher:
                     logger.warning("shyft %s… error %s", wallet[:10], exc)
                     return txs
                 if r.status_code == 429:
-                    await asyncio.sleep(0.6 * (attempt + 1))
+                    backoff = min(2.0 * (2 ** attempt), 16.0)
+                    logger.info("shyft 429 %s… backoff %.1fs", wallet[:10], backoff)
+                    await asyncio.sleep(backoff)
                     continue
                 break
             if r.status_code != 200:
