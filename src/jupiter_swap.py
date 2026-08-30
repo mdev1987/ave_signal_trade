@@ -614,7 +614,12 @@ class JupiterSwap:
 
     # ----------------------------------------------------------------- execute
     async def execute(self, order: dict) -> SwapResult:
-        """POST the signed transaction to /execute managed landing."""
+        """POST the signed transaction to /execute managed landing.
+
+        On timeout the server may have received and landed the tx before we
+        finished reading.  ``sell()`` uses the returned signature to reconcile
+        via RPC before retrying, preventing double-sells.
+        """
         signed = self._sign(order["transaction"])
         body = {
             "signedTransaction": signed,
@@ -629,12 +634,37 @@ class JupiterSwap:
         try:
             resp = await asyncio.wait_for(_post(), timeout=self._execute_timeout_s)
         except (TimeoutError, httpx.TimeoutException):
+            # The server may have received and landed the tx before we timed
+            # out reading.  Retry once with a short timeout to grab the
+            # response; if that also fails, return with no signature so the
+            # caller can fall back to an RPC check.
+            try:
+                resp = await asyncio.wait_for(_post(), timeout=5.0)
+            except Exception:
+                return SwapResult(
+                    success=False,
+                    signature="",
+                    input_amount=0,
+                    output_amount=0,
+                    error=f"execute timed out after {self._execute_timeout_s:.0f}s"
+                          " (tx may have landed — check manually)",
+                )
+            data = resp.json() if resp.content else {}
+            if resp.status_code == 200 and data.get("status") == "Success":
+                return SwapResult(
+                    success=True,
+                    signature=data.get("signature", ""),
+                    input_amount=int(data.get("totalInputAmount") or 0),
+                    output_amount=int(data.get("totalOutputAmount") or 0),
+                )
+            sig = data.get("signature", "")
             return SwapResult(
                 success=False,
-                signature="",
-                input_amount=0,
-                output_amount=0,
-                error=f"execute timed out after {self._execute_timeout_s:.0f}s",
+                signature=sig,
+                input_amount=int(data.get("totalInputAmount") or 0),
+                output_amount=int(data.get("totalOutputAmount") or 0),
+                error=data.get("error")
+                      or f"execute timeout+retry failed (sig={sig or 'none'})",
             )
         data = resp.json() if resp.content else {}
         if resp.status_code != 200 or data.get("status") != "Success":
@@ -651,6 +681,40 @@ class JupiterSwap:
             input_amount=int(data.get("totalInputAmount") or 0),
             output_amount=int(data.get("totalOutputAmount") or 0),
         )
+
+    async def check_tx_status(self, signature: str) -> str | None:
+        """Check if a transaction landed on Solana via public RPC.
+
+        Returns the confirmation status string ('processed', 'confirmed',
+        'finalized') or 'error' if the tx failed on-chain, or None on
+        network failure.  Used by sell() to reconcile execute-timeout before
+        retrying — prevents double-sells.
+        """
+        if not signature:
+            return None
+        try:
+            resp = await self._client.post(
+                "https://api.mainnet-beta.solana.com",
+                json={
+                    "jsonrpc": "2.0", "id": "tx-check",
+                    "method": "getSignatureStatuses",
+                    "params": [[signature], {"searchTransactionHistory": True}],
+                },
+                timeout=10.0,
+            )
+            data = resp.json()
+            statuses = (data.get("result") or {}).get("value") or []
+            if statuses:
+                s = statuses[0]
+                if s is None:
+                    return None
+                err = s.get("err")
+                if err is not None:
+                    return "error"
+                return s.get("confirmationStatus")
+        except Exception:
+            log.debug("tx status check failed for %s", signature[:12])
+        return None
 
     # ------------------------------------------------------------------- quote
     async def _quote_slot(self, min_spacing: float | None = None) -> None:
@@ -1053,6 +1117,12 @@ class JupiterSwap:
         Args:
             mint: Token contract address to sell.
             amount_raw: Raw token amount (captured from the buy output).
+
+        Reconciliation: after any failed execute, the returned signature is
+        checked on-chain via ``check_tx_status`` before retrying.  If the tx
+        landed (confirmed/finalized) or errored on-chain, we return immediately
+        — preventing the dangerous double-sell that happens when a timeout
+        caused a retry on an already-landed tx.
         """
         if self._keypair is None:
             return SwapResult(False, "", amount_raw, 0, "paper mode: cannot sign")
@@ -1086,6 +1156,39 @@ class JupiterSwap:
                 return result
             last = result
             log.warning("sell execute @%dbps failed: %s", slippage, result.error)
+            # --- Reconcile before retrying ---
+            sig = result.signature
+            if sig:
+                # Give the network a moment to confirm, then check.
+                await asyncio.sleep(3.0)
+                status = await self.check_tx_status(sig)
+                if status in ("confirmed", "finalized"):
+                    log.info("sell tx %s landed (status=%s) — returning as success",
+                             sig[:12], status)
+                    return SwapResult(
+                        True, sig, amount_raw,
+                        int(result.output_amount or 0),
+                        f"reconciled after timeout (status={status})",
+                    )
+                if status == "error":
+                    log.warning("sell tx %s errored on-chain — retrying", sig[:12])
+                    # Fall through to retry at next slippage level
+                elif status == "processed":
+                    # Processed but not confirmed yet — wait longer
+                    await asyncio.sleep(5.0)
+                    status2 = await self.check_tx_status(sig)
+                    if status2 in ("confirmed", "finalized"):
+                        log.info("sell tx %s confirmed after extra wait", sig[:12])
+                        return SwapResult(
+                            True, sig, amount_raw,
+                            int(result.output_amount or 0),
+                            f"reconciled (status={status2})",
+                        )
+                    log.info("sell tx %s still %s — retrying with higher slippage",
+                             sig[:12], status2 or "unknown")
+                else:
+                    log.info("sell tx %s not found on-chain — retrying",
+                             sig[:12])
             if slippage >= 1000:
                 break
         return last or SwapResult(False, "", amount_raw, 0, "sell failed")

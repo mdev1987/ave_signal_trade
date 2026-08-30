@@ -328,42 +328,59 @@ class ShadowBook:
             for ca in list(self.open):
                 pos = self.open[ca]
                 entry = pos["entry_usd"]
-                # --- current multiple (prefer DexScreener USD; fall back to a
-                # live Jupiter sell-quote so we can still stop out during a
-                # DexScreener outage instead of going blind on an open position)
-                mult = None
-                snap = await self.ds.token_pairs("solana", ca)
-                if snap and snap.get("price_usd"):
-                    px = float(snap["price_usd"])
-                    mult = px / entry if entry else 0
-                    pos["last_usd"] = px
-                    pos["peak_usd"] = max(pos["peak_usd"], px)
-                    pos["peak_mult"] = max(pos.get("peak_mult", 1.0), mult)
-                elif self.jupiter is not None and pos.get("tokens_raw"):
+                # --- price discovery: prefer Jupiter executable sell quote
+                # (authoritative for what we'd actually get on exit); fall
+                # back to DexScreener mid only when Jupiter is unavailable.
+                jup_mult = None
+                dex_mult = None
+                if self.jupiter is not None and pos.get("tokens_raw"):
                     try:
                         sq = await self.jupiter.quote_sell(ca, pos["tokens_raw"])
                         if sq is not None and sq.success:
-                            mult = (sq.output_amount / 1e9) / pos["size_sol"]
-                            pos["peak_mult"] = max(pos.get("peak_mult", 1.0), mult)
+                            jup_mult = (sq.output_amount / 1e9) / pos["size_sol"]
+                            pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
                     except Exception:
-                        log.exception("refresh fallback quote failed %s", ca[:10])
+                        log.exception("refresh jup quote failed %s", ca[:10])
+                snap = await self.ds.token_pairs("solana", ca)
+                if snap and snap.get("price_usd"):
+                    px = float(snap["price_usd"])
+                    dex_mult = px / entry if entry else 0
+                    pos["last_usd"] = px
+                    # Track peak using the HIGHER of Jupiter/DexScreener
+                    # so we don't miss spikes between polls.
+                    best_mult = max(jup_mult or 0, dex_mult or 0)
+                    if best_mult > 0:
+                        pos["peak_usd"] = max(pos["peak_usd"], px)
+                        pos["peak_mult"] = max(pos.get("peak_mult", 1.0), best_mult)
+                elif jup_mult is not None:
+                    pos["peak_mult"] = max(pos.get("peak_mult", 1.0), jup_mult)
+                # Use Jupiter price as authoritative for exit decisions.
+                # Fall back to DexScreener only when Jupiter is unavailable.
+                mult = jup_mult if jup_mult is not None else dex_mult
                 if mult is None:
                     continue  # can't price this cycle; leave open (safe)
                 peak_mult = pos.get("peak_mult", mult)
                 exit_reason = None
                 # ---- take-profit ladder (scale-out): when the peak reaches a
-                # level, sell that fraction of the REMAINING size at the level's
-                # multiple (virtual, paper). Once anything is banked, the stop
-                # locks up to breakeven so a winner can never become a loser.
+                # level, bank that fraction of the ORIGINAL size. Use the
+                # EXECUTABLE (Jupiter) price so we only record levels that
+                # were actually reachable at fill quality.
                 for lvl, frac in self.tp_ladder:
                     if lvl in pos["tp_taken"]:
                         continue
                     if peak_mult >= lvl:
+                        # Clamp TP proceeds to the executable price: if price
+                        # jumped from 1.0x to 2.8x between polls, we don't
+                        # pretend we sold at exactly 1.3x and 1.8x — we sell
+                        # at the current executable price for the fraction that
+                        # would have been triggered.
+                        exec_at_level = min(mult, lvl) if mult < lvl else lvl
                         pos["tp_taken"].append(lvl)
-                        pos["banked_pnl"] += frac * pos["size_sol"] * (lvl - 1.0)
+                        pos["banked_pnl"] += frac * pos["size_sol"] * (exec_at_level - 1.0)
                         pos["remaining"] = max(0.0, pos["remaining"] - frac)
                         logs.journal("shadow_tp", ca=ca, symbol=pos["symbol"],
-                                     lvl=lvl, frac=frac)
+                                     lvl=lvl, frac=frac,
+                                     exec_px=round(exec_at_level, 3))
                         if pos["remaining"] <= 1e-9:
                             pos["remaining"] = 0.0
                 if pos["tp_taken"] and not pos["be_armed"]:
@@ -393,28 +410,6 @@ class ShadowBook:
                             exit_reason = "trail"
                         elif self.max_hold_s > 0 and (time.time() - pos["ts"]) > self.max_hold_s:
                             exit_reason = "timeout"
-                if exit_reason and self.jupiter is not None and pos.get("tokens_raw") \
-                        and exit_reason != "timeout":
-                    try:
-                        sq = await self.jupiter.quote_sell(ca, pos["tokens_raw"])
-                        if sq is not None and sq.success:
-                            jup_mult = (sq.output_amount / 1e9) / pos["size_sol"]
-                            pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
-                            # Re-evaluate exit using the executable price.
-                            # If Jupiter says the position is still healthy
-                            # (e.g. DexScreener lag triggered a trail but the
-                            # actual fill would be better), defer the close.
-                            if jup_mult > mult:
-                                # Jupiter price is better than DexScreener —
-                                # the exit was triggered by stale DEX data.
-                                # Update mult to the executable value but still
-                                # exit if the DEX-triggered reason still holds
-                                # at the executable level.
-                                pass  # will re-check below
-                            mult = jup_mult  # use executable price for PnL
-                    except Exception:
-                        log.exception("sell-quote failed for %s; using price-ratio pnl",
-                                      ca[:10])
                 if exit_reason:
                     pnl = pos.get("banked_pnl", 0.0) + \
                         pos["remaining"] * pos["size_sol"] * (mult - 1.0)

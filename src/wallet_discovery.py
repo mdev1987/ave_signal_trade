@@ -139,7 +139,8 @@ class WalletStat:
     address: str
     early_buys: int = 0           # bought within early_window of pool creation
     distinct_tokens: int = 0      # unique candidate tokens bought
-    pumped_hits: int = 0          # of those, how many later pumped
+    pumped_hits: int = 0          # of those, how many later pumped (outcome)
+    community_called_hits: int = 0  # of those, how many were KOL/community called
     total_usd: float = 0.0        # total USD deployed across candidate tokens
     tokens: list[str] = field(default_factory=list)
     score: float = 0.0
@@ -151,10 +152,12 @@ def default_scorer(stats: list[WalletStat]) -> list[WalletStat]:
     breadth/timing alone are noise; only "did their picks run?" matters).
 
     Weights:
-      * 0.55 pump_hit_rate  = pumped_hits / distinct_tokens  — the real edge
-      * 0.20 early_buys     — timing: in at/near launch
-      * 0.15 distinct_tokens — breadth: many independent winners, not one fluke
-      * 0.10 log(total_usd) — conviction (minorized)
+      * 0.50 pump_hit_rate      = pumped_hits / distinct_tokens — the real edge
+      * 0.10 community_call_rate = community_called_hits / distinct_tokens —
+                                  KOL signal quality (separate from outcome)
+      * 0.20 early_buys         — timing: in at/near launch
+      * 0.15 distinct_tokens    — breadth: many independent winners
+      * 0.05 log(total_usd)     — conviction (minorized)
     Each component normalized by the max observed so the score stays 0..~1.
     """
     if not stats:
@@ -165,12 +168,14 @@ def default_scorer(stats: list[WalletStat]) -> list[WalletStat]:
 
     for s in stats:
         pump_rate = (s.pumped_hits / s.distinct_tokens) if s.distinct_tokens else 0.0
+        call_rate = (s.community_called_hits / s.distinct_tokens) if s.distinct_tokens else 0.0
         norm_usd = (s.total_usd / max_usd) ** 0.25  # compress large sizes
         s.score = round(
-            0.55 * pump_rate
+            0.50 * pump_rate
+            + 0.10 * call_rate
             + 0.20 * (s.early_buys / max_early)
             + 0.15 * (s.distinct_tokens / max_tokens)
-            + 0.10 * norm_usd,
+            + 0.05 * norm_usd,
             4,
         )
     stats.sort(key=lambda s: s.score, reverse=True)
@@ -183,10 +188,11 @@ class CandidateToken:
     mint: str
     chain: str = "solana"
     symbol: str = "?"
-    pumped: bool = False          # KOL-called or already big % move
+    pumped: bool = False          # outcome: actually pumped hard (24h % move >= pump_pct)
+    community_called: bool = False  # KOL/community called it (DeBot signal)
     source: str = ""
-    pool_addr: str | None = None  # known pool (fresh-pool source) -> skip re-query
-    pool_born: float | None = None
+    pool_addrs: list[str] = field(default_factory=list)  # top pools (1-3)
+    pool_borns: dict[str, float] = field(default_factory=dict)  # pool_addr -> birth ts
 
 
 class WalletDiscovery:
@@ -250,19 +256,19 @@ class WalletDiscovery:
         fresh = await self.paprika.get_fresh_pools(
             self.chain, created_after_ts=now - 24 * 3600, limit=self.max_tokens)
         for p in (fresh or []):
-            # A fresh pool already gives us the pool address + birth time, so
-            # carry it forward — extract_buyers can skip the re-query and the
-            # early-buy window is measured against the real launch time.
             toks = p.get("tokens") or []
             mint = next((t.get("id") for t in toks
                          if t.get("id") != SOL), None)
             if not mint or mint in seen:
                 continue
             sym = (p.get("token_0_symbol") or p.get("token_1_symbol") or "?")
+            pool_id = p.get("id")
+            born = _to_ts(p.get("created_at"))
             seen[mint] = CandidateToken(
                 mint=mint, chain=self.chain, symbol=sym,
                 pumped=False, source="dexpaprika:fresh",
-                pool_addr=p.get("id"), pool_born=_to_ts(p.get("created_at")))
+                pool_addrs=[pool_id] if pool_id else [],
+                pool_borns={pool_id: born} if pool_id and born else {})
 
         # DeBot: tokens KOL channels are calling now (supplementary)
         if self.debot is not None:
@@ -270,7 +276,15 @@ class WalletDiscovery:
                 rank = await self.debot.activity_rank(chain=self.chain,
                                                       duration="1h", limit=30)
                 for t in (rank or []):
-                    await _add(t, "debot:rank", pumped=True)
+                    mint = t.get("address") or t.get("id")
+                    if not mint or mint in seen:
+                        continue
+                    sym = t.get("symbol") or "?"
+                    chg = float(t.get("price_change_percentage_24h") or 0)
+                    seen[mint] = CandidateToken(
+                        mint=mint, chain=self.chain, symbol=sym,
+                        pumped=(chg >= 100.0), community_called=True,
+                        source="debot:rank")
                 heat = await self.debot.heatmap(chain=self.chain)
                 if heat:
                     for mint, h in heat.items():
@@ -305,13 +319,13 @@ class WalletDiscovery:
         return cands
 
     async def _enrich_pumped(self, cands: list["CandidateToken"]) -> None:
-        """Mark candidates as pumped from their 24h price move.
+        """Mark candidates as pumped from their actual 24h price change.
 
-        This gives the scorer a real *outcome* signal (early buyer of things
-        that actually moved) without DeBot. DeBot's heatmap gain is OR-ed in
-        earlier when reachable. The details endpoint exposes 24h high/low
-        (not a direct % change), so we derive the range from those; for tokens
-        that *do* carry ``price_change_percentage_24h`` we use it directly.
+        The details endpoint exposes ``price_change_percentage_24h`` (a true
+        percentage change) which we use directly.  The old fallback of
+        ``(high_24h / low_24h - 1) * 100`` was wrong — that's a range, not a
+        return; a token that went 0.001 → 0.002 → 0.0015 would show a 100%
+        range but only +50% net return.
         """
         for c in cands:
             if c.pumped:
@@ -323,59 +337,56 @@ class WalletDiscovery:
             if not d:
                 continue
             chg = float(d.get("price_change_percentage_24h") or 0)
-            if chg <= 0:
-                ps = d.get("price_stats") or {}
-                hi = float(ps.get("high_24h") or 0)
-                lo = float(ps.get("low_24h") or 0)
-                if hi > 0 and lo > 0:
-                    chg = (hi / lo - 1.0) * 100.0
             if chg >= self.pump_pct:
                 c.pumped = True
 
     # ---------------------------------------------------------- buyer extraction
     async def extract_buyers(self, tok: CandidateToken) -> list[dict]:
-        """Return raw buyer rows for one token's top pool.
+        """Return raw buyer rows for one token's top 2-3 pools.
 
         A row = {wallet, ts, usd, early} where the swap BOUGHT the target token
         (target received: amount>0 on the token's side). USD is the target
         token's own UI volume x its USD price (consistent across DEXes).
+
+        Examining multiple pools captures buyers across different DEXes
+        (e.g. Raydium + PumpSwap for the same token).
         """
         rows: list[dict] = []
-        if tok.pool_addr:
-            pool_addr = tok.pool_addr
-            pool_born = tok.pool_born
-        else:
-            pools = await self.paprika.get_token_pools(self.chain, tok.mint, limit=1)
-            if not pools:
-                return rows
-            pool = pools[0]
-            pool_addr = pool.get("id")
-            pool_born = _to_ts(pool.get("created_at"))
-        txs = await self.paprika.get_pool_transactions(
-            self.chain, pool_addr, limit=self.tx_per_pool)
-        if not txs:
-            return rows
-        for tx in txs:
-            t0, t1 = tx.get("token_0"), tx.get("token_1")
-            a0, a1 = _num(tx.get("amount_0")), _num(tx.get("amount_1"))
-            # which side is the target token, and was it received (a buy)?
-            # USD value = target token's own UI volume x its USD price. Using
-            # the target's own fields is the only consistent normalization
-            # (DexPaprika's volume_* on the quote side is unreliable per DEX).
-            if t0 == tok.mint and a0 > 0:
-                usd = _num(tx.get("volume_0")) * _num(tx.get("price_0_usd"))
-            elif t1 == tok.mint and a1 > 0:
-                usd = _num(tx.get("volume_1")) * _num(tx.get("price_1_usd"))
-            else:
+        # Resolve pools: use pre-computed list or query top 3
+        pool_addrs = list(tok.pool_addrs) if tok.pool_addrs else []
+        pool_borns = dict(tok.pool_borns) if tok.pool_borns else {}
+        if not pool_addrs:
+            pools = await self.paprika.get_token_pools(self.chain, tok.mint, limit=3)
+            for pool in (pools or []):
+                pid = pool.get("id")
+                if pid:
+                    pool_addrs.append(pid)
+                    born = _to_ts(pool.get("created_at"))
+                    if born:
+                        pool_borns[pid] = born
+        for pool_addr in pool_addrs[:3]:  # cap at 3 pools
+            pool_born = pool_borns.get(pool_addr)
+            txs = await self.paprika.get_pool_transactions(
+                self.chain, pool_addr, limit=self.tx_per_pool)
+            if not txs:
                 continue
-            wallet = tx.get("sender")
-            if not wallet or usd < self.min_buy_usd or usd > self.max_buy_usd:
-                continue
-            ts = _to_ts(tx.get("created_at"))
-            early = pool_born is not None and ts is not None and \
-                (ts - pool_born) <= self.early_window_s
-            rows.append({"wallet": wallet, "ts": ts or 0,
-                         "usd": usd, "early": early})
+            for tx in txs:
+                t0, t1 = tx.get("token_0"), tx.get("token_1")
+                a0, a1 = _num(tx.get("amount_0")), _num(tx.get("amount_1"))
+                if t0 == tok.mint and a0 > 0:
+                    usd = _num(tx.get("volume_0")) * _num(tx.get("price_0_usd"))
+                elif t1 == tok.mint and a1 > 0:
+                    usd = _num(tx.get("volume_1")) * _num(tx.get("price_1_usd"))
+                else:
+                    continue
+                wallet = tx.get("sender")
+                if not wallet or usd < self.min_buy_usd or usd > self.max_buy_usd:
+                    continue
+                ts = _to_ts(tx.get("created_at"))
+                early = pool_born is not None and ts is not None and \
+                    (ts - pool_born) <= self.early_window_s
+                rows.append({"wallet": wallet, "ts": ts or 0,
+                             "usd": usd, "early": early})
         return rows
 
     # --------------------------------------------------------------- pipeline
@@ -400,6 +411,8 @@ class WalletDiscovery:
                     st.tokens.append(tok.mint)
                     if tok.pumped:
                         st.pumped_hits += 1
+                    if tok.community_called:
+                        st.community_called_hits += 1
                 if r["early"]:
                     st.early_buys += 1
                 st.total_usd += r["usd"]
@@ -431,6 +444,7 @@ class WalletDiscovery:
                 "distinct_tokens": st.distinct_tokens,
                 "early_buys": st.early_buys,
                 "pumped_hits": st.pumped_hits,
+                "community_called_hits": getattr(st, "community_called_hits", 0),
                 "total_usd": round(st.total_usd, 2),
                 "tokens": st.tokens,
                 "added_ts": prev.get("added_ts", now),
