@@ -101,9 +101,9 @@ shadow position:
 ### Shadow book exit logic
 
 - **TP ladder** — scale-out at +30% / +80% / +200% (configurable)
-- **Trailing stop** — after peak >= 1.4x, exit on 25% retrace from peak
+- **Trailing stop** — after peak >= 1.3x, exit on 35% retrace from peak
 - **Hard stop** — -25% from entry
-- **Early exit** — fast-rug guard: -30% within first 120s -> immediate close
+- **Early adverse filter** — one-shot at 30s: reject if drawdown >20% AND gain <5%
 - **Timeout** — force-close after 24h
 
 ## Running 24/7 (OxMgr)
@@ -130,7 +130,7 @@ Everything lives in `.env` (template: `.env.example`). Key groups:
   `OPEN_MAX_M5_DUMP_PCT`, `MTF_ALIGN_BONUS`
 - **Pair quality**: `PAIR_PERF_FILE`, `scripts/seed_pair_perf.py`
 - **DBotX safety**: `DBOTX_API_KEY`, `DBOTX_SAFETY`, `DBOTX_TOP10_MAX`
-- **Early exit**: `EARLY_EXIT_WINDOW_S`, `EARLY_EXIT_DROP_PCT`
+- **Early adverse filter**: `EARLY_FILTER_WINDOW_S`, `EARLY_FILTER_DD_PCT`, `EARLY_FILTER_GAIN_PCT`
 
 ## State & logs
 

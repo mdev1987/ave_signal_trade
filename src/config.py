@@ -108,8 +108,9 @@ class Settings:
     open_max_m5_dump_pct: float = -5.0  # skip if 5m price change < this (don't enter a token dumping at the signal)
     mtf_align_bonus: float = 0.3       # multi-timeframe alignment score modifier (per aligned timeframe above the 2/4 midpoint)
     pair_perf_file: str = "pair_performance.json"  # adaptive pair-quality penalty store
-    early_exit_window_s: float = 0.0    # if >0, fast-rug guard: close positions that drop early_exit_drop_pct within this many seconds
-    early_exit_drop_pct: float = 0.30   # fast-rug drop threshold (e.g. -30% in first early_exit_window_s -> early-invalid)
+    early_filter_window_s: float = 30.0   # one-shot early adverse filter: evaluate at this age
+    early_filter_dd_pct: float = 20.0     # reject if drawdown > this % during early window
+    early_filter_gain_pct: float = 5.0    # AND gain < this % during early window
     # --- data-driven wallet-quality weighting (consensus = weighted score) ---
     # Each KOL contributes a weight from its real win rate + PnL (see
     # wallet_weights.build_weights); a token "fires" when the summed weight of
@@ -203,8 +204,9 @@ def load_settings(path: str = ".env") -> Settings:
         open_max_m5_dump_pct=get_float(env, "OPEN_MAX_M5_DUMP_PCT", _d.open_max_m5_dump_pct),
         mtf_align_bonus=get_float(env, "MTF_ALIGN_BONUS", _d.mtf_align_bonus),
         pair_perf_file=get(env, "PAIR_PERF_FILE", _d.pair_perf_file),
-        early_exit_window_s=get_float(env, "EARLY_EXIT_WINDOW_S", _d.early_exit_window_s),
-        early_exit_drop_pct=get_float(env, "EARLY_EXIT_DROP_PCT", _d.early_exit_drop_pct),
+        early_filter_window_s=get_float(env, "EARLY_FILTER_WINDOW_S", _d.early_filter_window_s),
+        early_filter_dd_pct=get_float(env, "EARLY_FILTER_DD_PCT", _d.early_filter_dd_pct),
+        early_filter_gain_pct=get_float(env, "EARLY_FILTER_GAIN_PCT", _d.early_filter_gain_pct),
         start_balance_sol=get_float(env, "START_BALANCE_SOL", _d.start_balance_sol),
         shadow_state_file=get(env, "SHADOW_STATE_FILE", _d.shadow_state_file),
         status_every_min=get_float(env, "STATUS_EVERY_MIN", _d.status_every_min),

@@ -133,8 +133,9 @@ class ShadowBook:
                   trail_enabled: bool = False,
                   on_trade_close=None,
                   open_max_impact_pct: float = 4.0,
-                  early_exit_window_s: float = 0.0,
-                  early_exit_drop_pct: float = 0.30) -> None:
+                 early_filter_window_s: float = 30.0,
+                 early_filter_dd_pct: float = 20.0,
+                 early_filter_gain_pct: float = 5.0) -> None:
         self.jupiter = jupiter
         self.notifier = notifier
         self.max_positions = int(max_positions)
@@ -153,8 +154,9 @@ class ShadowBook:
         self.trail_enabled = bool(trail_enabled)
         self.on_trade_close = on_trade_close  # async/normal fn(wallets, win: bool, pnl: float)
         self.open_max_impact_pct = float(open_max_impact_pct)
-        self.early_exit_window_s = float(early_exit_window_s)
-        self.early_exit_drop_pct = float(early_exit_drop_pct)
+        self.early_filter_window_s = float(early_filter_window_s)
+        self.early_filter_dd = float(early_filter_dd_pct) / 100.0  # store as fraction
+        self.early_filter_gain = float(early_filter_gain_pct) / 100.0  # store as fraction
         self.state_file = state_file
         self.start_balance_sol = float(start_balance_sol)
         self.balance_sol = float(start_balance_sol)
@@ -302,6 +304,10 @@ class ShadowBook:
                 "tp_taken": [], "remaining": 1.0, "banked_pnl": 0.0,
                 "be_armed": False, "peak_mult": 1.0,
                 "entry_mode": entry_mode,
+                # Early adverse filter state (one-shot at early_filter_window_s)
+                "early_min_mult": 1.0,  # worst excursion during early window
+                "early_max_mult": 1.0,  # best excursion during early window
+                "early_checked": False,  # True after filter evaluated
             }
             logs.journal("shadow_entry_px", ca=ca, px=px, note=entry_note)
             logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
@@ -361,6 +367,40 @@ class ShadowBook:
                     continue  # can't price this cycle; leave open (safe)
                 peak_mult = pos.get("peak_mult", mult)
                 exit_reason = None
+                # ---- early adverse filter (one-shot at early_filter_window_s):
+                # Track worst/best excursion during the early window, then
+                # evaluate once.  If the position drew down >early_filter_dd
+                # AND never gained >early_filter_gain, close immediately.
+                # This is the key finding from the 2026-08-13 ablation:
+                # rejecting trades with >20% adverse AND <5% favorable in
+                # first 30s turns gross PnL from -0.447 to +0.335 SOL.
+                age_s = time.time() - pos["ts"]
+                if not pos.get("early_checked", False):
+                    if age_s < self.early_filter_window_s:
+                        # Still in early window: track min/max excursion
+                        pos["early_min_mult"] = min(
+                            pos.get("early_min_mult", mult), mult)
+                        pos["early_max_mult"] = max(
+                            pos.get("early_max_mult", mult), mult)
+                    else:
+                        # Window expired: evaluate (one-shot)
+                        early_dd = 1.0 - pos.get("early_min_mult", mult)
+                        early_gain = pos.get("early_max_mult", mult) - 1.0
+                        pos["early_checked"] = True
+                        if (early_dd > self.early_filter_dd
+                                and early_gain < self.early_filter_gain):
+                            exit_reason = "early_invalid"
+                            logs.journal("shadow_early_filter", ca=ca,
+                                         symbol=pos["symbol"],
+                                         dd_pct=round(early_dd * 100, 2),
+                                         gain_pct=round(early_gain * 100, 2),
+                                         result="rejected")
+                        else:
+                            logs.journal("shadow_early_filter", ca=ca,
+                                         symbol=pos["symbol"],
+                                         dd_pct=round(early_dd * 100, 2),
+                                         gain_pct=round(early_gain * 100, 2),
+                                         result="passed")
                 # ---- take-profit ladder (scale-out): when the peak reaches a
                 # level, bank that fraction of the ORIGINAL size. Use the
                 # EXECUTABLE (Jupiter) price so we only record levels that
@@ -389,27 +429,17 @@ class ShadowBook:
                 if pos["remaining"] <= 0:
                     exit_reason = "tp"   # fully scaled out at the spike
                 else:
-                    # Fast-rug guard: the journal is full of positions that
-                    # collapsed -26%..-48% within the first minute (no chance for
-                    # the -25% hard stop to poll in time). If a fresh position
-                    # drops hard immediately, bail as early-invalid instead of
-                    # riding it to the wider stop.
-                    if (self.early_exit_window_s > 0 and mult is not None
-                            and (time.time() - pos["ts"]) < self.early_exit_window_s
-                            and mult <= 1.0 - self.early_exit_drop_pct):
-                        exit_reason = "early_invalid"
-                    else:
-                        stop_mult = (1 - self.hard_stop)
-                        if pos["be_armed"]:
-                            stop_mult = max(stop_mult, 1.0 + self.be_buffer)
-                        if self.hard_stop > 0 and mult <= stop_mult:
-                            exit_reason = "sl"
-                        elif self.trail_enabled and peak_mult >= self.trail_start_mult and \
-                                mult <= peak_mult * (1 - self.retrace):
-                            # only trail after the position has actually run
-                            exit_reason = "trail"
-                        elif self.max_hold_s > 0 and (time.time() - pos["ts"]) > self.max_hold_s:
-                            exit_reason = "timeout"
+                    stop_mult = (1 - self.hard_stop)
+                    if pos["be_armed"]:
+                        stop_mult = max(stop_mult, 1.0 + self.be_buffer)
+                    if self.hard_stop > 0 and mult <= stop_mult:
+                        exit_reason = "sl"
+                    elif self.trail_enabled and peak_mult >= self.trail_start_mult and \
+                            mult <= peak_mult * (1 - self.retrace):
+                        # only trail after the position has actually run
+                        exit_reason = "trail"
+                    elif self.max_hold_s > 0 and (time.time() - pos["ts"]) > self.max_hold_s:
+                        exit_reason = "timeout"
                 if exit_reason:
                     pnl = pos.get("banked_pnl", 0.0) + \
                         pos["remaining"] * pos["size_sol"] * (mult - 1.0)
@@ -551,8 +581,9 @@ async def _run_watch(s: cfg.Settings) -> int:
                       tp_ladder=s.tp_ladder, trail_enabled=s.trail_enabled,
                       on_trade_close=_record_trade,
                       open_max_impact_pct=s.open_max_impact_pct,
-                      early_exit_window_s=s.early_exit_window_s,
-                      early_exit_drop_pct=s.early_exit_drop_pct)
+                      early_filter_window_s=s.early_filter_window_s,
+                      early_filter_dd_pct=s.early_filter_dd_pct,
+                      early_filter_gain_pct=s.early_filter_gain_pct)
 
     # shadow book opens automatically via on_smart_buy callback. During the
     # initial lookback window we only TRACK buys (so consensus alerts still
@@ -773,9 +804,17 @@ async def _run_watch(s: cfg.Settings) -> int:
     status_task = asyncio.create_task(status_loop())
     status_task.add_done_callback(_log_task_result)
 
-    manage_s = 5.0
     try:
         while not stop.is_set():
+            # Adaptive polling: 1s when any position is fresh (< early_filter_window_s),
+            # 5s otherwise.  This catches the 30-second adverse window without
+            # burning CPU when all positions are mature.
+            now = time.time()
+            has_fresh = any(
+                (now - p.get("ts", now)) < book.early_filter_window_s
+                for p in book.open.values()
+            )
+            manage_s = 1.0 if has_fresh else 5.0
             await asyncio.sleep(manage_s)
             # Never let a transient pricing/quote error kill the whole bot; a
             # single bad token must not take down the live book.
