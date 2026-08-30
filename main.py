@@ -163,6 +163,8 @@ class ShadowBook:
             self.closed = d.get("closed", [])
             self.start_balance_sol = d.get("start_balance_sol",
                                            self.start_balance_sol)
+            locked = sum(p.get("size_sol", 0.0) for p in self.open.values())
+            self.balance_sol = max(0.0, self.start_balance_sol - locked)
         except Exception:
             log.exception("shadow book load failed")
 

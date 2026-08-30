@@ -66,7 +66,7 @@ def build_weights(
             weights[addr] = 0.0
             continue
         # Sample-size confidence: shrink win rate toward 0.5 for small samples
-        trades = rec.get("picks") or 0
+        trades = rec.get("picks") or rec.get("trades") or 0
         confidence = min(1.0, trades / confidence_trades)
         adjusted_wr = 0.5 + confidence * (wr - 0.5)
         if adjusted_wr < floor_win:
