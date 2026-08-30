@@ -63,10 +63,11 @@ def get_csv_ints(env, key, default="") -> list[int]:
 
 
 def parse_ladder(env, key: str, default: str) -> list[tuple[float, float]]:
-    """Parse a take-profit ladder from env: "1.3:1.0,1.6:0.3,2.5:0.2".
+    """Parse a take-profit ladder from env: "1.3:0.4,1.8:0.3,3.0:0.3".
 
-    Each pair is (price_multiple, fraction_of_remaining_size_to_sell). Fractions
-    across levels should sum to ~1.0 (a level may sell the whole remainder).
+    Each pair is (price_multiple, fraction_of_original_position). Fractions
+    across levels should sum to ~1.0 (each level banks that fraction of the
+    original size, NOT the remaining size).
     """
     raw = get(env, key, default) or default
     out: list[tuple[float, float]] = []
@@ -89,10 +90,11 @@ class Settings:
     chat_id: str = ""
     # strategy
     size_sol: float = 0.05
-    # Take-profit ladder (backtest-validated). Each (mult, frac) sells `frac`
-    # of the REMAINING size when the peak hits `mult`. Backtest showed a
-    # full-exit-at-first-spike ladder is positive across all wallet regimes,
-    # so the default is a single level that exits 100% at +30%.
+    # Take-profit ladder (backtest-validated). Each (mult, frac) banks `frac`
+    # of the ORIGINAL position size at the level's multiple (virtual, paper).
+    # Fractions across levels should sum to ~1.0. Once any TP fires, the stop
+    # locks to breakeven so a winner can never become a loser.
+    # Example: "1.3:0.4,1.8:0.3,3.0:0.3" banks 40%/30%/30% of original size.
     tp_ladder: list = None             # filled by load_settings -> [(1.3, 1.0)]
     tp1_mult: float = 1.30             # legacy single-TP fallback (bank 50%)
     trail_retrace_pct: float = 0.35
@@ -155,7 +157,7 @@ class Settings:
     discover_enrich: bool = True      # fetch token details to mark pumped (no DeBot)
     # dexscreener
     dexscreener_base_url: str = "https://api.dexscreener.com"
-    dexscreener_rpm: int = 300
+    dexscreener_rpm: int = 60
     # DBotX data API — used only as a fail-open rug/safety filter in the open
     # gate (mint/freeze authority, top-10 concentration). Missing key or a
     # 403/whitelist rejection degrades to "allow", never blocks the bot.

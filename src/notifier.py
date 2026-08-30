@@ -280,7 +280,7 @@ class TelegramNotifier:
             "timeout": ("TIMEOUT", "⏱️"),
             "liq_collapse": ("LIQ COLLAPSE", "🚨"),
         }.get(reason, (reason.upper(), ICONS["close"]))
-        win = pnl_sol >= 0
+        win = pnl_sol > 0
         pnl_icon = "✅" if win else "❌"
         sign = "+" if win else ""
         pct = (mult - 1.0) * 100.0
@@ -335,7 +335,7 @@ class TelegramNotifier:
             pnl = float(summary.get("pnl_sol", 0.0) or 0.0)
         else:
             closed_n = len(closed)
-            wins = sum(1 for c in closed if c.get("pnl_sol", 0.0) >= 0.0)
+            wins = sum(1 for c in closed if c.get("pnl_sol", 0.0) > 0.0)
             wr = (wins / closed_n * 100.0) if closed_n else 0.0
             pnl = sum(c.get("pnl_sol", 0.0) for c in closed)
         return open_n, closed_n, wr, pnl

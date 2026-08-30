@@ -153,6 +153,21 @@ class SmartWalletWatcher:
         self._load_state()
 
     # ------------------------------------------------------------- state io
+    def _prune_token_hits(self) -> None:
+        """Drop token_hits whose newest wallet buy is older than 2x consensus window.
+
+        This prevents indefinite accumulation of stale consensus state
+        (the data was lifetime-oriented before; now it has a bounded TTL).
+        """
+        now = time.time()
+        ttl = self.consensus_window_s * 2
+        stale = [ca for ca, h in self.token_hits.items()
+                 if now - h.get("first_ts", 0) > ttl
+                 and all(now - x.get("ts", 0) > ttl
+                         for x in h.get("wallets", []))]
+        for ca in stale:
+            del self.token_hits[ca]
+
     def _load_state(self) -> None:
         if not self.state_file.exists():
             return
@@ -173,6 +188,7 @@ class SmartWalletWatcher:
             cons = st.get("consensus_sent", {})
             cutoff = time.time() - self.consensus_window_s * 2
             self._consensus_sent = {ca for ca, ts in cons.items() if ts > cutoff}
+            self._prune_token_hits()
         except Exception:
             logger.exception("watcher state load failed")
 
@@ -269,8 +285,18 @@ class SmartWalletWatcher:
 
     # ------------------------------------------------------------- pipeline
     async def process_now(self, wallet: str) -> None:
-        """Decode a wallet's last hour of activity now (push entrypoint)."""
-        await self._sweep_wallet(wallet, since=time.time() - 3600)
+        """Decode a wallet's recent activity now (push entrypoint).
+
+        Uses the persisted wallet timestamp + a small overlap buffer (5s)
+        to handle late indexing, instead of blindly replaying the last hour
+        which could re-fire stale consensus events.
+        """
+        persisted = self.state.get(f"ts:{wallet}", 0)
+        since = max(
+            persisted - 5 if persisted > 0 else 0,
+            time.time() - self.first_lookback_s,
+        )
+        await self._sweep_wallet(wallet, since=since)
 
     async def _sweep_wallet(self, wallet: str,
                             since: float | None = None) -> None:  # noqa: C901
@@ -305,9 +331,11 @@ class SmartWalletWatcher:
             hit["symbol"] = sym
         already = wallet in [x["w"] for x in hit["wallets"]]
         usd = b.get("usd") or 0.0
-        # Per-wallet minimum: a wallet only counts toward consensus if its own
-        # buy meets WATCH_MIN_BUY_USD. This makes the threshold meaningful
-        # (otherwise tiny buys still pile into consensus, causing bursts).
+        # Use the ACTUAL transaction timestamp when available (b["ts"] comes
+        # from Shyft blockTime). Fall back to now() only when absent (push
+        # path that synthesises buys).  This makes churn + consensus window
+        # measure wall-clock distance between trades, not processing lag.
+        tx_ts = b.get("ts") or now
         qualifies = usd >= self.min_buy_usd
         # Wallet churn detection: a wallet spraying 40+ distinct tokens in 5
         # minutes is almost certainly noise (airdrops, bot activity, or a
@@ -315,9 +343,9 @@ class SmartWalletWatcher:
         churn_ok = True
         if qualifies:
             buys = self._wallet_buys.setdefault(wallet, [])
-            buys.append((now, ca))
-            # Prune buys older than 5 minutes
-            cutoff = now - 300
+            buys.append((tx_ts, ca))
+            # Prune buys older than 5 minutes (using tx_ts, not now)
+            cutoff = tx_ts - 300
             self._wallet_buys[wallet] = [(t, c) for t, c in buys if t > cutoff]
             distinct_tokens = len(set(c for _, c in self._wallet_buys[wallet]))
             if distinct_tokens >= 40:
@@ -331,7 +359,7 @@ class SmartWalletWatcher:
         if qualifies:
             hit["usd"] += usd
             if not already:
-                hit["wallets"].append({"w": wallet, "usd": usd, "ts": now, "wt": wt})
+                hit["wallets"].append({"w": wallet, "usd": usd, "ts": tx_ts, "wt": wt})
         fresh = ca not in self.known_cas
         if not already:
             logs.journal("smart_buy_seen", ca=ca, wallet=wallet[:10],
@@ -343,8 +371,14 @@ class SmartWalletWatcher:
             return
         if fresh:
             self.known_cas.add(ca)
+        # ---- TIME-WINDOWED consensus: only wallets that bought within the
+        # configured window contribute to the score.  This is the core fix
+        # for noisy cross-session consensus (e.g. 10:00 + 10:08 + 10:25
+        # treated as one event when the window is 600s).
+        win_cutoff = now - self.consensus_window_s
+        active = [x for x in hit["wallets"] if x.get("ts", 0) >= win_cutoff]
         # Weighted consensus score: sum of distinct buying wallets' quality weights.
-        score = round(sum(x.get("wt", 0.0) for x in hit["wallets"]), 3)
+        score = round(sum(x.get("wt", 0.0) for x in active), 3)
         # Only a genuine consensus (score >= threshold, not yet fired) is surfaced.
         # Sub-threshold / single-wallet activity is still recorded in the journal
         # but does NOT log or trigger opens — this removes the noisy low-conviction
@@ -352,22 +386,22 @@ class SmartWalletWatcher:
         # require_strong_wallet: at least one contributing wallet must carry a real
         # edge (wt >= 1.0, i.e. >=60% win) so consensus is never manufactured by two
         # mediocre wallets alone.
-        n_strong = sum(1 for x in hit["wallets"] if x.get("wt", 0.0) >= 1.0)
+        n_strong = sum(1 for x in active if x.get("wt", 0.0) >= 1.0)
         strong_ok = (not self.require_strong_wallet) or n_strong >= 1
         consensus = score >= self.consensus_weight_threshold and strong_ok and ca not in self._consensus_sent
         if not consensus:
             return
         self.consensus_fired += 1
         self._consensus_sent.add(ca)
-        self._consensus_ts[ca] = time.time()
+        self._consensus_ts[ca] = now
         syms = ",".join(x["w"][:5] + "…(w" + format(x.get("wt", 0), ".2f") + ")"
-                        for x in hit["wallets"][-4:])
+                        for x in active[-4:])
         logger.info("CONSENSUS BUY %s %s (%s) score=%.2f — journal only",
                     hit.get("symbol", "?"), ca[:10], syms, score)
         if self.on_smart_buy:
             try:
                 await self.on_smart_buy(ca, hit.get("symbol", ""), usd, score,
-                                        [x["w"] for x in hit["wallets"]])
+                                        [x["w"] for x in active])
             except Exception:
                 logger.exception("on_smart_buy callback failed")
 
@@ -384,6 +418,7 @@ class SmartWalletWatcher:
                 if self._stop.is_set():
                     break
             self._save_state()
+            self._prune_token_hits()
             wait = max(1.0, self.poll_s - (time.time() - t0))
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=wait)

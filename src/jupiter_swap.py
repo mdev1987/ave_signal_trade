@@ -949,6 +949,7 @@ class JupiterSwap:
         mint: str,
         amount_raw: int,
         base: QuoteResult | None = None,
+        slippage_bps: int | None = None,
     ) -> tuple[bool, str, dict]:
         """Stability gate: the same quote sampled N times must stay within pct bounds.
 
@@ -958,6 +959,9 @@ class JupiterSwap:
                 measured against it — so the gate validates the exact order
                 that is about to be executed, not a throwaway first sample.
                 When omitted, ``checks`` fresh quotes are taken.
+            slippage_bps: The slippage mode to use for samples. Must match
+                the base quote's mode (None for RTSE/ultra, integer for
+                manual slippage) so routing/output is comparable.
 
         Returns:
             ``(ok, reason, info)``. ``info`` carries measurable features for
@@ -985,7 +989,7 @@ class JupiterSwap:
         samples_needed = max(checks - len(outs), 0)
         for i in range(samples_needed):
             q = await self._do_quote(
-                mint, amount_raw, self._slippage_bps, min_spacing=interval_s
+                mint, amount_raw, slippage_bps, min_spacing=interval_s
             )
             if not q.success:
                 return False, f"stability_no_quote:{q.reason}", {}

@@ -72,9 +72,20 @@ def build_status(st: dict) -> str:
     open_pos = st.get("open", [])
     closed = st.get("closed", [])
     wins = sum(1 for c in closed if c.get("pnl_sol", 0) > 0)
-    pnl = sum(c.get("pnl_sol", 0) for c in closed) + sum(
-        o.get("pnl_sol", 0) for o in open_pos)
+    # Closed PnL + unrealized PnL on open positions.
+    # Open positions store entry_usd/last_usd but not pnl_sol, so compute
+    # the unrealized multiple from price change.
+    open_pnl = 0.0
     start = st.get("start_balance_sol", 0.0)
+    for o in open_pos:
+        entry = o.get("entry_usd") or 0.0
+        last = o.get("last_usd") or entry
+        size = o.get("size_sol") or 0.0
+        remaining = o.get("remaining", 1.0)
+        banked = o.get("banked_pnl", 0.0)
+        if entry > 0 and size > 0:
+            open_pnl += banked + remaining * size * (last / entry - 1.0)
+    pnl = sum(c.get("pnl_sol", 0) for c in closed) + open_pnl
     pct = (pnl / start * 100.0) if start else 0.0
     icon = "🟢" if pnl >= 0 else "🔴"
 
@@ -87,8 +98,11 @@ def build_status(st: dict) -> str:
         f"▸ Open: {len(open_pos)}",
     ]
     for o in open_pos[:4]:
-        lines.append(f"   `{o.get('symbol','?')}` {o.get('mult',1):.2f}x "
-                     f"({o.get('pnl_sol',0):+.4f})")
+        entry = o.get("entry_usd") or 0.0
+        last = o.get("last_usd") or entry
+        mult = last / entry if entry else 1.0
+        lines.append(f"   `{o.get('symbol','?')}` {mult:.2f}x "
+                     f"({o.get('banked_pnl',0):+.4f})")
     wr = (wins / len(closed) * 100) if closed else 0.0
     lines.append(f"▸ Closed: {len(closed)} · win {wr:.0f}%")
     lines.append(f"{icon} **PnL `{pnl:+.4f}` SOL ({pct:+.1f}%)**")
@@ -132,8 +146,9 @@ class ShadowBook:
         self.trail_start_mult = float(trail_start_mult)
         self.be_buffer = float(be_buffer)
         self.max_hold_s = float(max_hold_s)
-        # Take-profit ladder: list of (price_multiple, frac_of_remaining). If
+        # Take-profit ladder: list of (price_multiple, frac_of_original_size). If
         # None, fall back to the legacy single-TP behaviour (tp1_mult bank 50%).
+        # Each level banks `frac` of the ORIGINAL position (not remaining).
         self.tp_ladder = tp_ladder or [(tp1_mult, 0.5)]
         self.trail_enabled = bool(trail_enabled)
         self.on_trade_close = on_trade_close  # async/normal fn(wallets, win: bool, pnl: float)
@@ -151,7 +166,7 @@ class ShadowBook:
     def _win_rate(self) -> float:
         if not self.closed:
             return 0.0
-        wins = sum(1 for c in self.closed if c.get("pnl_sol", 0.0) >= 0.0)
+        wins = sum(1 for c in self.closed if c.get("pnl_sol", 0.0) > 0.0)
         return wins / len(self.closed) * 100.0
 
     def _load(self) -> None:
@@ -163,8 +178,14 @@ class ShadowBook:
             self.closed = d.get("closed", [])
             self.start_balance_sol = d.get("start_balance_sol",
                                            self.start_balance_sol)
-            locked = sum(p.get("size_sol", 0.0) for p in self.open.values())
-            self.balance_sol = max(0.0, self.start_balance_sol - locked)
+            # Restore persisted balance if available (includes realized PnL).
+            # Fallback: derive from start_balance - locked (loses realized PnL
+            # on upgrade; next save fixes it).
+            if "balance_sol" in d:
+                self.balance_sol = float(d["balance_sol"])
+            else:
+                locked = sum(p.get("size_sol", 0.0) for p in self.open.values())
+                self.balance_sol = max(0.0, self.start_balance_sol - locked)
         except Exception:
             log.exception("shadow book load failed")
 
@@ -172,7 +193,8 @@ class ShadowBook:
         try:
             self.state_file.write_text(json.dumps({
                 "open": self.open, "closed": self.closed,
-                "start_balance_sol": self.start_balance_sol}, indent=1))
+                "start_balance_sol": self.start_balance_sol,
+                "balance_sol": self.balance_sol}, indent=1))
         except Exception:
             log.exception("shadow book save failed")
 
@@ -222,8 +244,11 @@ class ShadowBook:
             # repeated samples (CATE/ELON defense). Only runs when stability
             # checks are configured (>0).
             if self.jupiter.quote_stability_checks > 0:
+                # Pass the same slippage mode used for the base quote so
+                # samples and base are comparable (RTSE vs manual).
+                buy_slip = None if self.jupiter._buy_rtse else self.jupiter._slippage_bps
                 stable, stab_reason, stab_info = await self.jupiter.check_quote_stability(
-                    ca, int(self.size_sol * 1e9), base=q)
+                    ca, int(self.size_sol * 1e9), base=q, slippage_bps=buy_slip)
                 if not stable:
                     logs.journal("shadow_skip", ca=ca, symbol=symbol,
                                  reason=f"unstable:{stab_reason}", info=stab_info)
@@ -393,7 +418,7 @@ class ShadowBook:
                     logs.journal("shadow_close", **rec)
                     if self.on_trade_close is not None:
                         try:
-                            self.on_trade_close(pos.get("wallets", []), pnl >= 0, pnl)
+                            self.on_trade_close(pos.get("wallets", []), pnl > 0, pnl)
                         except Exception:
                             log.exception("on_trade_close failed")
                     if self.notifier is not None:
