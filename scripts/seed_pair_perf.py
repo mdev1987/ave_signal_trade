@@ -16,8 +16,9 @@ OUT = sys.argv[2] if len(sys.argv) > 2 else "pair_performance.json"
 
 
 def main() -> None:
-    opens: dict[str, list[str]] = {}
-    closes: dict[str, float] = {}
+    # Use a list of openings per CA to handle multiple trades on the same token.
+    opens: dict[str, list[list[str]]] = defaultdict(list)
+    closes: list[dict] = []
     with open(JOURNAL) as fh:
         for line in fh:
             line = line.strip()
@@ -25,19 +26,25 @@ def main() -> None:
                 continue
             e = json.loads(line)
             if e.get("event") == "shadow_open":
-                opens[e["ca"]] = list(e.get("wallets") or [])
+                opens[e["ca"]].append(list(e.get("wallets") or []))
             elif e.get("event") == "shadow_close":
-                closes[e["ca"]] = float(e.get("pnl_sol", 0.0))
+                closes.append(e)
+
+    # Match closes to opens by CA, consuming one opening per close.
     perf = defaultdict(lambda: {"trades": 0, "wins": 0, "pnl": 0.0})
-    for ca, wallets in opens.items():
-        if ca not in closes:
+    for cl in closes:
+        ca = cl.get("ca", "")
+        if ca not in opens or not opens[ca]:
             continue
+        wallets = opens[ca].pop(0)  # consume first unmatched opening
         key = "+".join(sorted(set(wallets)))
         d = perf[key]
         d["trades"] += 1
-        if closes[ca] > 0:
+        pnl = float(cl.get("pnl_sol", 0.0))
+        if pnl > 0:
             d["wins"] += 1
-        d["pnl"] = round(d["pnl"] + closes[ca], 5)
+        d["pnl"] = round(d["pnl"] + pnl, 5)
+
     Path(OUT).write_text(json.dumps(dict(perf), indent=2))
     print(f"seeded {len(perf)} pairs -> {OUT}")
     for key, d in sorted(perf.items(), key=lambda x: x[1]["pnl"]):

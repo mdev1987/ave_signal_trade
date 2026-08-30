@@ -196,59 +196,57 @@ class ShadowBook:
         px = float(snap.get("price_usd") or 0) if snap else 0.0
         tokens_raw = 0
         entry_note = "dexscreener"
+        entry_mode = "mark_only"  # EXECUTABLE once Jupiter buy+sell validated
         if self.jupiter is not None:
             q = await self.jupiter.quote(ca, int(self.size_sol * 1e9),
                                          force=True)
             if q is None or not q.success:
-                # Paper/simulation fallback: thin or brand-new pairs often have
-                # no Jupiter route yet, but the smart wallets demonstrably trade
-                # them. If DexScreener has a mark price, open using it (flagged)
-                # instead of discarding a genuine consensus signal.
-                if px > 0:
-                    logs.journal("shadow_open_nojup", ca=ca, symbol=symbol,
-                                 reason=(q.reason if q else "quote_exception"))
-                    entry_note = "dexscreener(jupiter_unavailable)"
-                else:
-                    reason = q.reason if q else "quote_exception"
+                # No Jupiter buy route: mark-only entry (flagged, separate metric).
+                reason = q.reason if q else "quote_exception"
+                logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                             reason=f"no_buy_route:{reason}")
+                log.info("shadow skip %s (%s): no buy route: %s", ca[:10], symbol, reason)
+                return
+            tokens_raw = q.output_amount
+            entry_note = f"jup impact={q.price_impact_pct:.2f}%"
+            # Execution-risk guard: a high buy-side impact means the fill is
+            # being eaten by slippage (MARIO opened at 4.47% impact then
+            # -39%). Don't open trades we can't enter cleanly.
+            if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
+                logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                             reason=f"untradable:impact{q.price_impact_pct:.2f}%")
+                log.info("shadow skip %s (%s): impact %.2f%%",
+                         ca[:10], symbol, q.price_impact_pct)
+                return
+            # Quote stability gate: reject pump-and-dump that moves >5% between
+            # repeated samples (CATE/ELON defense). Only runs when stability
+            # checks are configured (>0).
+            if self.jupiter.quote_stability_checks > 0:
+                stable, stab_reason, stab_info = await self.jupiter.check_quote_stability(
+                    ca, int(self.size_sol * 1e9), base=q)
+                if not stable:
                     logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                                 reason=f"untradable:{reason}")
-                    log.info("shadow skip %s (%s): %s", ca[:10], symbol, reason)
+                                 reason=f"unstable:{stab_reason}", info=stab_info)
+                    log.info("shadow skip %s (%s): %s", ca[:10], symbol, stab_reason)
                     return
-            else:
-                tokens_raw = q.output_amount
-                entry_note = f"jup impact={q.price_impact_pct:.2f}%"
-                # Execution-risk guard: a high buy-side impact means the fill is
-                # being eaten by slippage (MARIO opened at 4.47% impact then
-                # -39%). Don't open trades we can't enter cleanly.
-                if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
-                    logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                                 reason=f"untradable:impact{q.price_impact_pct:.2f}%")
-                    log.info("shadow skip %s (%s): impact %.2f%%",
-                             ca[:10], symbol, q.price_impact_pct)
-                    return
-                # Simulate the SELL side too: a token may be buyable yet have no
-                # TOKEN->SOL route. On a live book that would error on close, but
-                # in paper we fall back to the DexScreener mark so the position
-                # can still be tracked (flagged) instead of being dropped.
-                sq = await self.jupiter.quote_sell(ca, tokens_raw)
-                if sq is None or not sq.success:
-                    if px > 0:
-                        logs.journal("shadow_open_nojup", ca=ca, symbol=symbol,
-                                     reason=(sq.reason if sq else "quote_exception"))
-                        entry_note = "dexscreener(jupiter_unsellable)"
-                    else:
-                        reason = sq.reason if sq else "quote_exception"
-                        logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                                     reason=f"unsellable:{reason}")
-                        log.info("shadow skip %s (%s): unsellable %s", ca[:10], symbol, reason)
-                        return
-                # Fallback if DexScreener had no usable price: derive USD/token from
-                # the Jupiter fill (size_sol SOL spent -> tokens received) and SOL USD.
-                if px <= 0:
-                    dec = await self.jupiter.token_decimals(ca) or 6
-                    sol_usd = await self._sol_usd()
-                    if sol_usd and tokens_raw:
-                        px = (self.size_sol * sol_usd) / (tokens_raw / (10 ** dec))
+            # Sell-side validation: the token MUST have a TOKEN->SOL route
+            # before we open. A buyable-but-unsellable token is a dead end.
+            sq = await self.jupiter.quote_sell(ca, tokens_raw)
+            if sq is None or not sq.success:
+                reason = sq.reason if sq else "quote_exception"
+                logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                             reason=f"unsellable:{reason}")
+                log.info("shadow skip %s (%s): unsellable %s", ca[:10], symbol, reason)
+                return
+            # Both buy and sell routes validated — this is an executable trade.
+            entry_mode = "executable"
+            # Fallback if DexScreener had no usable price: derive USD/token from
+            # the Jupiter fill (size_sol SOL spent -> tokens received) and SOL USD.
+            if px <= 0:
+                dec = await self.jupiter.token_decimals(ca) or 6
+                sol_usd = await self._sol_usd()
+                if sol_usd and tokens_raw:
+                    px = (self.size_sol * sol_usd) / (tokens_raw / (10 ** dec))
         if px <= 0:
             logs.journal("shadow_skip", ca=ca, symbol=symbol, reason="no_price")
             log.info("shadow skip %s (%s): no price", ca[:10], symbol)
@@ -274,6 +272,7 @@ class ShadowBook:
                 "wallets": list(wallets or []),
                 "tp_taken": [], "remaining": 1.0, "banked_pnl": 0.0,
                 "be_armed": False, "peak_mult": 1.0,
+                "entry_mode": entry_mode,
             }
             logs.journal("shadow_entry_px", ca=ca, px=px, note=entry_note)
             logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
@@ -353,17 +352,18 @@ class ShadowBook:
                             and (time.time() - pos["ts"]) < self.early_exit_window_s
                             and mult <= 1.0 - self.early_exit_drop_pct):
                         exit_reason = "early_invalid"
-                    stop_mult = (1 - self.hard_stop)
-                    if pos["be_armed"]:
-                        stop_mult = max(stop_mult, 1.0 + self.be_buffer)
-                    if self.hard_stop > 0 and mult <= stop_mult:
-                        exit_reason = "sl"
-                    elif self.trail_enabled and peak_mult >= self.trail_start_mult and \
-                            mult <= peak_mult * (1 - self.retrace):
-                        # only trail after the position has actually run
-                        exit_reason = "trail"
-                    elif self.max_hold_s > 0 and (time.time() - pos["ts"]) > self.max_hold_s:
-                        exit_reason = "timeout"
+                    else:
+                        stop_mult = (1 - self.hard_stop)
+                        if pos["be_armed"]:
+                            stop_mult = max(stop_mult, 1.0 + self.be_buffer)
+                        if self.hard_stop > 0 and mult <= stop_mult:
+                            exit_reason = "sl"
+                        elif self.trail_enabled and peak_mult >= self.trail_start_mult and \
+                                mult <= peak_mult * (1 - self.retrace):
+                            # only trail after the position has actually run
+                            exit_reason = "trail"
+                        elif self.max_hold_s > 0 and (time.time() - pos["ts"]) > self.max_hold_s:
+                            exit_reason = "timeout"
                 if exit_reason and self.jupiter is not None and pos.get("tokens_raw") \
                         and exit_reason != "timeout":
                     try:
@@ -581,13 +581,24 @@ async def _run_watch(s: cfg.Settings) -> int:
                 if info.get("available"):
                     if info["mint_authority"] or info["freeze_authority"]:
                         reason = "skip:unsafe(mint/freeze authority)"
-                    elif info["top10"] > s.dbotx_top10_max:
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
+                    if info["top10"] > s.dbotx_top10_max:
                         reason = f"skip:unsafe(top10={info['top10']:.0%})"
-                    elif info["dev_position"] not in (None, "cleared"):
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
+                    if info["dev_position"] not in (None, "cleared"):
                         reason = f"skip:unsafe(dev={info['dev_position']})"
-                    else:
-                        logs.journal("open_safety_ok", ca=ca, symbol=sym,
-                                     safety=info)
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
+                    logs.journal("open_safety_ok", ca=ca, symbol=sym,
+                                 safety=info)
             pc = (snap or {}).get("price_change") or {}
             tfs = ("m5", "h1", "h6", "h24")
             avail = [k for k in tfs if pc.get(k) is not None]

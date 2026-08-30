@@ -138,7 +138,8 @@ class SmartWalletWatcher:
         self.consensus_alerted: set[str] = set()  # CAs that already had a consensus alert
         self.token_hits: dict[str, dict] = {}
         self.consensus_fired = 0
-        self._consensus_sent: set[str] = set()
+        self._consensus_sent: set[str] = set()  # legacy compat
+        self._consensus_ts: dict[str, float] = {}  # ca -> timestamp for persistence
         self.wallet_perf: dict[str, dict] = {}   # addr -> {picks, hits} (live learning)
         self.on_smart_buy = on_smart_buy
         self.tatum_push = False
@@ -168,17 +169,24 @@ class SmartWalletWatcher:
             self.known_cas = set(st.get("known_cas", []))
             self.token_hits = st.get("token_hits", {})
             self.wallet_perf = st.get("wallet_perf", {})
+            # Restore consensus dedup (expire entries older than 2x consensus window)
+            cons = st.get("consensus_sent", {})
+            cutoff = time.time() - self.consensus_window_s * 2
+            self._consensus_sent = {ca for ca, ts in cons.items() if ts > cutoff}
         except Exception:
             logger.exception("watcher state load failed")
 
     def _save_state(self) -> None:
         try:
             # self.state keys are already "ts:<wallet>" — do NOT re-prefix
+            # Persist consensus dedup as {ca: timestamp} so restarts don't re-fire
+            cons = {ca: ts for ca, ts in self._consensus_ts.items()}
             self.state_file.write_text(json.dumps({
                 **self.state,
                 "known_cas": sorted(self.known_cas),
                 "token_hits": self.token_hits,
                 "wallet_perf": self.wallet_perf,
+                "consensus_sent": cons,
             }, indent=1))
         except Exception:
             logger.exception("watcher state save failed")
@@ -351,6 +359,7 @@ class SmartWalletWatcher:
             return
         self.consensus_fired += 1
         self._consensus_sent.add(ca)
+        self._consensus_ts[ca] = time.time()
         syms = ",".join(x["w"][:5] + "…(w" + format(x.get("wt", 0), ".2f") + ")"
                         for x in hit["wallets"][-4:])
         logger.info("CONSENSUS BUY %s %s (%s) score=%.2f — journal only",
