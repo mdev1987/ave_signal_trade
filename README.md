@@ -109,6 +109,11 @@ Everything lives in `.env` (template: `.env.example`):
   `TRAIL_RETRACE_PCT=0.25`, `HARD_STOP_PCT=0.25`, `MAX_HOLD_H=24`,
   `MAX_OPEN_POSITIONS=18`, `PER_WALLET_MAX_POSITIONS=3` (caps correlated bets per wallet),
   `OPEN_MIN_LIQ_USD=1500`, `START_BALANCE_SOL`, `STATUS_EVERY_MIN`
+- Pair-aware penalty: `PAIR_PERF_FILE=pair_performance.json` (adaptive per-wallet-PAIR
+  expectancy; `seed_pair_perf.py` seeds it from a past journal so known-losing pairs like
+  AgmLJ+kEFiA are blocked from the first run), `OPEN_MAX_IMPACT_PCT=4.0` (don't open when
+  Jupiter buy-side impact is too high), `EARLY_EXIT_WINDOW_S=120` + `EARLY_EXIT_DROP_PCT=0.30`
+  (fast-rug guard: bail on positions that collapse >30% in the first 2 min)
 - SolanaTracker (wallet PnL ranking): `SOLTRACKER_BASE_URL`, `SOLTRACKER_API_KEY`
 
 ## State & logs

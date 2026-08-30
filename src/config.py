@@ -102,6 +102,10 @@ class Settings:
     open_min_wallets: int = 2           # legacy distinct-wallet floor (kept for compat; weighted score is the real gate)
     open_min_liq_usd: float = 1500.0    # skip only the thinnest tokens; smart wallets buy fresh <$5k pumps
     per_wallet_max_positions: int = 3   # cap open positions that share a wallet (kills AgmLJ/kEFiA correlation stack)
+    open_max_impact_pct: float = 4.0    # skip open if Jupiter buy-side price impact > this (execution risk; MARIO opened at 4.47%)
+    pair_perf_file: str = "pair_performance.json"  # adaptive pair-quality penalty store
+    early_exit_window_s: float = 0.0    # if >0, fast-rug guard: close positions that drop early_exit_drop_pct within this many seconds
+    early_exit_drop_pct: float = 0.30   # fast-rug drop threshold (e.g. -30% in first early_exit_window_s -> early-invalid)
     # --- data-driven wallet-quality weighting (consensus = weighted score) ---
     # Each KOL contributes a weight from its real win rate + PnL (see
     # wallet_weights.build_weights); a token "fires" when the summed weight of
@@ -182,6 +186,10 @@ def load_settings(path: str = ".env") -> Settings:
         max_hold_h=get_float(env, "MAX_HOLD_H", 24.0),
         max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", 18),
         per_wallet_max_positions=get_int(env, "PER_WALLET_MAX_POSITIONS", 3),
+        open_max_impact_pct=get_float(env, "OPEN_MAX_IMPACT_PCT", 4.0),
+        pair_perf_file=get(env, "PAIR_PERF_FILE", "pair_performance.json"),
+        early_exit_window_s=get_float(env, "EARLY_EXIT_WINDOW_S", 0.0),
+        early_exit_drop_pct=get_float(env, "EARLY_EXIT_DROP_PCT", 0.30),
         start_balance_sol=get_float(env, "START_BALANCE_SOL", 4.0),
         shadow_state_file=get(env, "SHADOW_STATE_FILE", "shadow_book.json"),
         status_every_min=get_float(env, "STATUS_EVERY_MIN", 30.0),

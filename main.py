@@ -35,6 +35,8 @@ from dexscreener import DexScreenerClient  # noqa: E402
 from jupiter_swap import JupiterSwap  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 from logs import setup_logging  # noqa: E402
+from pair_perf import (load as load_pair_perf, save as save_pair_perf,  # noqa: E402
+                       update as update_pair_perf, penalty as pair_penalty)
 from notifier import TelegramNotifier  # noqa: E402
 from pump_stream import PumpApiStream  # noqa: E402
 from tatum_notify import TatumNotifications  # noqa: E402
@@ -111,10 +113,13 @@ class ShadowBook:
                  state_file: Path, start_balance_sol: float,
                  jupiter=None, notifier=None, max_positions: int = 12,
                  tp1_mult: float = 1.5, trail_start_mult: float = 1.3,
-                 be_buffer: float = 0.0, max_hold_s: float = 0.0,
-                 tp_ladder: list | None = None,
-                 trail_enabled: bool = False,
-                 on_trade_close=None) -> None:
+                  be_buffer: float = 0.0, max_hold_s: float = 0.0,
+                  tp_ladder: list | None = None,
+                  trail_enabled: bool = False,
+                  on_trade_close=None,
+                  open_max_impact_pct: float = 4.0,
+                  early_exit_window_s: float = 0.0,
+                  early_exit_drop_pct: float = 0.30) -> None:
         self.jupiter = jupiter
         self.notifier = notifier
         self.max_positions = int(max_positions)
@@ -130,7 +135,10 @@ class ShadowBook:
         # None, fall back to the legacy single-TP behaviour (tp1_mult bank 50%).
         self.tp_ladder = tp_ladder or [(tp1_mult, 0.5)]
         self.trail_enabled = bool(trail_enabled)
-        self.on_trade_close = on_trade_close  # async/normal fn(wallets, win: bool)
+        self.on_trade_close = on_trade_close  # async/normal fn(wallets, win: bool, pnl: float)
+        self.open_max_impact_pct = float(open_max_impact_pct)
+        self.early_exit_window_s = float(early_exit_window_s)
+        self.early_exit_drop_pct = float(early_exit_drop_pct)
         self.state_file = state_file
         self.start_balance_sol = float(start_balance_sol)
         self.balance_sol = float(start_balance_sol)
@@ -206,6 +214,15 @@ class ShadowBook:
             else:
                 tokens_raw = q.output_amount
                 entry_note = f"jup impact={q.price_impact_pct:.2f}%"
+                # Execution-risk guard: a high buy-side impact means the fill is
+                # being eaten by slippage (MARIO opened at 4.47% impact then
+                # -39%). Don't open trades we can't enter cleanly.
+                if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
+                    logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                 reason=f"untradable:impact{q.price_impact_pct:.2f}%")
+                    log.info("shadow skip %s (%s): impact %.2f%%",
+                             ca[:10], symbol, q.price_impact_pct)
+                    return
                 # Simulate the SELL side too: a token may be buyable yet have no
                 # TOKEN->SOL route. On a live book that would error on close, but
                 # in paper we fall back to the DexScreener mark so the position
@@ -324,6 +341,16 @@ class ShadowBook:
                 if pos["remaining"] <= 0:
                     exit_reason = "tp"   # fully scaled out at the spike
                 else:
+                    # Fast-rug guard: the journal is full of positions that
+                    # collapsed -26%..-48% within the first minute (no chance for
+                    # the -25% hard stop to poll in time). If a fresh position
+                    # drops hard immediately, bail as early-invalid instead of
+                    # riding it to the wider stop.
+                    if (self.early_exit_window_s > 0 and mult is not None
+                            and (time.time() - pos["ts"]) < self.early_exit_window_s
+                            and mult <= 1.0 - self.early_exit_drop_pct):
+                        exit_reason = "early_invalid"
+                    stop_mult = (1 - self.hard_stop)
                     stop_mult = (1 - self.hard_stop)
                     if pos["be_armed"]:
                         stop_mult = max(stop_mult, 1.0 + self.be_buffer)
@@ -364,7 +391,7 @@ class ShadowBook:
                     logs.journal("shadow_close", **rec)
                     if self.on_trade_close is not None:
                         try:
-                            self.on_trade_close(pos.get("wallets", []), pnl >= 0)
+                            self.on_trade_close(pos.get("wallets", []), pnl >= 0, pnl)
                         except Exception:
                             log.exception("on_trade_close failed")
                     if self.notifier is not None:
@@ -459,16 +486,22 @@ async def _run_watch(s: cfg.Settings) -> int:
     max_positions = min(max(1, int(round(s.start_balance_sol / s.size_sol))),
                         s.max_open_positions)
     # Live learning loop: every shadow close updates each triggering wallet's
-    # hit-rate (picks vs winners). Over time this makes discovery's pump-hit-rate
-    # scorer self-correcting — bad wallets stop driving consensus opens.
-    def _record_trade(wallets, win):
+    # hit-rate (picks vs winners) and the wallet-PAIR expectancy. Pairs with
+    # clearly negative expectancy (e.g. AgmLJ+kEFiA: 6 trades / 1 win / -0.0558)
+    # get penalised in the open gate so they stop monopolising the book.
+    pair_perf = load_pair_perf(s.pair_perf_file)
+
+    def _record_trade(wallets, win, pnl_sol=0.0):
         for addr in (wallets or []):
             perf = w.wallet_perf.setdefault(addr, {"picks": 0, "hits": 0})
             perf["picks"] = perf.get("picks", 0) + 1
             if win:
                 perf["hits"] = perf.get("hits", 0) + 1
+        pk = update_pair_perf(pair_perf, wallets, pnl_sol)
+        save_pair_perf(pair_perf, s.pair_perf_file)
         logs.journal("wallet_perf_update", picks=sum(
-            v.get("picks", 0) for v in w.wallet_perf.values()))
+            v.get("picks", 0) for v in w.wallet_perf.values()),
+            pair=pk, pair_pnl=round(pnl_sol, 5))
 
     book = ShadowBook(ds, s.size_sol, s.trail_retrace_pct, s.hard_stop_pct,
                       Path(s.shadow_state_file), s.start_balance_sol,
@@ -477,7 +510,10 @@ async def _run_watch(s: cfg.Settings) -> int:
                       tp1_mult=s.tp1_mult, trail_start_mult=s.trail_start_mult,
                       be_buffer=s.be_buffer_pct, max_hold_s=s.max_hold_h * 3600.0,
                       tp_ladder=s.tp_ladder, trail_enabled=s.trail_enabled,
-                      on_trade_close=_record_trade)
+                      on_trade_close=_record_trade,
+                      open_max_impact_pct=s.open_max_impact_pct,
+                      early_exit_window_s=s.early_exit_window_s,
+                      early_exit_drop_pct=s.early_exit_drop_pct)
 
     # shadow book opens automatically via on_smart_buy callback. During the
     # initial lookback window we only TRACK buys (so consensus alerts still
@@ -502,6 +538,11 @@ async def _run_watch(s: cfg.Settings) -> int:
             c = sum(1 for p in book.open.values()
                     if w in (p.get("wallets") or []))
             overlap = max(overlap, c)
+        # Pair-aware penalty: a wallet PAIR with clearly negative expectancy
+        # (the journal's AgmLJ+kEFiA: 6 trades / 1 win / -0.0558 SOL) is
+        # down-weighted so its 2.49 "max" score no longer forces opens. Adaptive
+        # — only engages after >=3 tracked trades, so we don't overfit noise.
+        pen, pen_note = pair_penalty(pair_perf, wallets)
         if not backfill_done.is_set():
             reason = "deferred:lookback"
         elif score < s.consensus_weight_threshold:
@@ -514,6 +555,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             reason = f"skip:min_wallets<{s.open_min_wallets}"
         elif overlap >= s.per_wallet_max_positions:
             reason = f"skip:per_wallet_cap>={s.per_wallet_max_positions}"
+        elif pen > 0 and (score - pen) < s.consensus_weight_threshold:
+            reason = f"skip:{pen_note}"
         elif usd < s.watch_min_buy_usd:
             reason = "skip:below_min_buy"
         elif ca in book.open:
