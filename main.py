@@ -120,7 +120,8 @@ class ShadowBook:
 
     Entries and exits are priced by Jupiter executable quotes (impact +
     slippage included) when available; DexScreener mid is the fallback.
-    Partial TPs reduce the quoted sell size proportionally.
+    Peak tracking uses only executable prices so TP/trail can only fire
+    at prices the bot could actually exit at.
     """
 
     def __init__(self, ds: DexScreenerClient, size_sol: float,
@@ -370,14 +371,14 @@ class ShadowBook:
                     px = float(snap["price_usd"])
                     dex_mult = px / entry if entry else 0
                     pos["last_usd"] = px
-                    # Track peak using the HIGHER of Jupiter/DexScreener
-                    # so we don't miss spikes between polls.
-                    best_mult = max(jup_mult or 0, dex_mult or 0)
-                    if best_mult > 0:
-                        pos["peak_usd"] = max(pos["peak_usd"], px)
-                        pos["peak_mult"] = max(pos.get("peak_mult", 1.0), best_mult)
-                elif jup_mult is not None:
-                    pos["peak_mult"] = max(pos.get("peak_mult", 1.0), jup_mult)
+                # Track peak using ONLY the executable price (Jupiter when
+                # available, DexScreener only as fallback).  A non-executable
+                # DEX spike must not arm TP/trail at a price we can't sell at.
+                best_mult = jup_mult if jup_mult is not None else dex_mult
+                if best_mult is not None and best_mult > 0:
+                    pos["peak_usd"] = max(pos["peak_usd"],
+                                          pos["entry_usd"] * best_mult)
+                    pos["peak_mult"] = max(pos.get("peak_mult", 1.0), best_mult)
                 # Use Jupiter price as authoritative for exit decisions.
                 # Fall back to DexScreener only when Jupiter is unavailable.
                 mult = jup_mult if jup_mult is not None else dex_mult
