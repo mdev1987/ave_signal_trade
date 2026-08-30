@@ -423,41 +423,38 @@ class ShadowBook:
                 # level, bank that fraction of the ORIGINAL size. Use the
                 # EXECUTABLE (Jupiter) price so we only record levels that
                 # were actually reachable at fill quality.
-                for lvl, frac in self.tp_ladder:
-                    if lvl in pos["tp_taken"]:
-                        continue
-                    if peak_mult >= lvl:
-                        # Clamp TP proceeds to the executable price: if price
-                        # jumped from 1.0x to 2.8x between polls, we don't
-                        # pretend we sold at exactly 1.3x and 1.8x — we sell
-                        # at the current executable price for the fraction that
-                        # would have been triggered.
-                        exec_at_level = min(mult, lvl) if mult < lvl else lvl
-                        pos["tp_taken"].append(lvl)
-                        pos["banked_pnl"] += frac * pos["size_sol"] * (exec_at_level - 1.0)
-                        pos["remaining"] = max(0.0, pos["remaining"] - frac)
-                        logs.journal("shadow_tp", ca=ca, symbol=pos["symbol"],
-                                     lvl=lvl, frac=frac,
-                                     exec_px=round(exec_at_level, 3))
-                        if pos["remaining"] <= 1e-9:
-                            pos["remaining"] = 0.0
-                if pos["tp_taken"] and not pos["be_armed"]:
-                    pos["be_armed"] = True
-                    logs.journal("shadow_be", ca=ca, symbol=pos["symbol"])
-                if pos["remaining"] <= 0:
-                    exit_reason = "tp"   # fully scaled out at the spike
-                else:
-                    stop_mult = (1 - self.hard_stop)
-                    if pos["be_armed"]:
-                        stop_mult = max(stop_mult, 1.0 + self.be_buffer)
-                    if self.hard_stop > 0 and mult <= stop_mult:
-                        exit_reason = "sl"
-                    elif self.trail_enabled and peak_mult >= self.trail_start_mult and \
-                            mult <= peak_mult * (1 - self.retrace):
-                        # only trail after the position has actually run
-                        exit_reason = "trail"
-                    elif self.max_hold_s > 0 and (time.time() - pos["ts"]) > self.max_hold_s:
-                        exit_reason = "timeout"
+                # IMPORTANT: skip all normal exit logic when early_invalid
+                # fired — it is terminal (matches the ablation semantics).
+                if exit_reason != "early_invalid":
+                    for lvl, frac in self.tp_ladder:
+                        if lvl in pos["tp_taken"]:
+                            continue
+                        if peak_mult >= lvl:
+                            exec_at_level = min(mult, lvl) if mult < lvl else lvl
+                            pos["tp_taken"].append(lvl)
+                            pos["banked_pnl"] += frac * pos["size_sol"] * (exec_at_level - 1.0)
+                            pos["remaining"] = max(0.0, pos["remaining"] - frac)
+                            logs.journal("shadow_tp", ca=ca, symbol=pos["symbol"],
+                                         lvl=lvl, frac=frac,
+                                         exec_px=round(exec_at_level, 3))
+                            if pos["remaining"] <= 1e-9:
+                                pos["remaining"] = 0.0
+                    if pos["tp_taken"] and not pos["be_armed"]:
+                        pos["be_armed"] = True
+                        logs.journal("shadow_be", ca=ca, symbol=pos["symbol"])
+                    if pos["remaining"] <= 0:
+                        exit_reason = "tp"   # fully scaled out at the spike
+                    else:
+                        stop_mult = (1 - self.hard_stop)
+                        if pos["be_armed"]:
+                            stop_mult = max(stop_mult, 1.0 + self.be_buffer)
+                        if self.hard_stop > 0 and mult <= stop_mult:
+                            exit_reason = "sl"
+                        elif self.trail_enabled and peak_mult >= self.trail_start_mult and \
+                                mult <= peak_mult * (1 - self.retrace):
+                            exit_reason = "trail"
+                        elif self.max_hold_s > 0 and (time.time() - pos["ts"]) > self.max_hold_s:
+                            exit_reason = "timeout"
                 if exit_reason:
                     pnl = pos.get("banked_pnl", 0.0) + \
                         pos["remaining"] * pos["size_sol"] * (mult - 1.0)
