@@ -1,16 +1,11 @@
-"""End-to-end signal quality backtest with excursion analysis.
+"""Signal quality backtest: single-pass extraction + post-hoc filter ablation.
 
-For every consensus signal, measures:
-  1. Entry execution (PumpAPI price + configurable slippage)
-  2. Adverse excursion (max drawdown from entry before exit)
-  3. Max favorable excursion (peak profit from entry before exit)
-  4. Actual exit via production TP ladder + stops
-  5. Net PnL in SOL (including fee/slippage model)
+Phase 1: Single pass over parquet — detect consensus entries, record price
+snapshots at T+5/10/15/30/60/120/300s, run exit logic, produce trade list.
 
-This answers: "given a consensus signal, what was the realistic PnL path?"
+Phase 2: Apply filters as post-processing on the trade list — no re-scan.
 
-Production TP ladder: 1.3x:40%, 1.8x:30%, 3.0x:30% (of original size).
-Fees: Jupiter taker fee + Solana priority fee (configurable).
+This makes the 4-way ablation ~1x instead of ~4x the single-pass cost.
 
 Run:
   uv run --with pyarrow python backtests/backtest_excursion.py \
@@ -28,7 +23,6 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-# ---- production config (mirror src/config.py) --------------------------------
 SIZE_SOL = 0.05
 TP_LADDER: list[tuple[float, float]] = [(1.3, 0.4), (1.8, 0.3), (3.0, 0.3)]
 TRAIL_START_MULT = 1.30
@@ -42,91 +36,135 @@ CONSENSUS_WINDOW_S = 600.0
 MAX_CANDIDATE_AGE_S = 90 * 60.0
 MAX_POSITIONS = 18
 SOL_USD = 150.0
-ENTRY_SLIPPAGE_BPS = 100    # 1% entry slippage (Jupiter taker worst case)
-EXIT_SLIPPAGE_BPS = 300     # 3% exit slippage (escalating ladder starts here)
-JUPITER_FEE_BPS = 40        # Jupiter platform fee
-PRIORITY_FEE_SOL = 0.001    # Solana priority fee per tx (approx)
-
+ENTRY_SLIPPAGE_BPS = 100
+EXIT_SLIPPAGE_BPS = 300
+JUPITER_FEE_BPS = 40
+PRIORITY_FEE_SOL = 0.001
+SNAPSHOT_WINDOWS = [5, 10, 15, 30, 60, 120, 300]
 COLS = ["action", "mint", "txSigner", "price", "quoteInPool", "timestamp",
         "symbol", "name"]
 
 
+def _pct(arr, x):
+    s = sorted(arr)
+    return round(s[min(len(s) - 1, int(x * len(s)))], 2) if s else 0.0
+
+
+def _time_features(snaps: dict[int, float], entry_px: float) -> dict:
+    if not snaps or entry_px <= 0:
+        return {}
+    f = {}
+    for w in SNAPSHOT_WINDOWS:
+        if w in snaps:
+            f[f"ret_{w}s"] = round(snaps[w] / entry_px - 1.0, 4)
+    p30 = [v for k, v in snaps.items() if k <= 30]
+    p60 = [v for k, v in snaps.items() if k <= 60]
+    if p30:
+        f["early_adv_30"] = round(1.0 - min(p30) / entry_px, 4)
+        f["early_fav_30"] = round(max(p30) / entry_px - 1.0, 4)
+    if p60:
+        f["early_adv_60"] = round(1.0 - min(p60) / entry_px, 4)
+        f["early_fav_60"] = round(max(p60) / entry_px - 1.0, 4)
+    for lbl, tgt in [("t10", 1.10), ("t20", 1.20), ("t30", 1.30)]:
+        t = None
+        for w in sorted(snaps):
+            if snaps[w] / entry_px >= tgt:
+                t = w
+                break
+        f[f"time_{lbl}"] = t
+    for lbl, tgt in [("tm10", 0.90), ("tm20", 0.80), ("tm30", 0.70)]:
+        t = None
+        for w in sorted(snaps):
+            if snaps[w] / entry_px <= tgt:
+                t = w
+                break
+        f[f"time_{lbl}"] = t
+    t10 = f.get("time_t10")
+    tm20 = f.get("time_tm20")
+    if t10 is not None and tm20 is not None:
+        f["conf_ratio"] = 1.0 if t10 < tm20 else 0.0
+    elif t10 is not None:
+        f["conf_ratio"] = 1.0
+    elif tm20 is not None:
+        f["conf_ratio"] = 0.0
+    return f
+
+
+def _metrics(trades: list[dict]) -> dict:
+    entries = len(trades)
+    if entries == 0:
+        return {"entries": 0, "win_rate": 0, "pnl_sol": 0, "gross_pnl_sol": 0,
+                "profit_factor": 0, "avg_pnl": 0}
+    wins = sum(1 for t in trades if t["pnl_sol"] >= 0)
+    pnl = sum(t["pnl_sol"] for t in trades)
+    gross = sum(t["gross_pnl_sol"] for t in trades)
+    gw = sum(t["pnl_sol"] for t in trades if t["pnl_sol"] > 0)
+    gl = abs(sum(t["pnl_sol"] for t in trades if t["pnl_sol"] < 0))
+    return {
+        "entries": entries, "wins": wins, "losses": entries - wins,
+        "win_rate": round(wins / entries * 100, 1),
+        "pnl_sol": round(pnl, 4), "gross_pnl_sol": round(gross, 4),
+        "fee_cost": round(pnl - gross, 4),
+        "profit_factor": round(gw / gl, 3) if gl > 0 else float("inf"),
+        "avg_pnl": round(pnl / entries, 5),
+        "adverse_p50": _pct([t["adverse_pct"] for t in trades], 0.50),
+        "favorable_p50": _pct([t["favorable_pct"] for t in trades], 0.50),
+        "sl_count": sum(1 for t in trades if t["reason"] == "sl"),
+        "trail_count": sum(1 for t in trades if t["reason"] == "trail"),
+        "tp_count": sum(1 for t in trades if t["reason"] == "tp"),
+        "early_invalid_count": sum(1 for t in trades if t["reason"] == "early_invalid"),
+    }
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Signal quality backtest with excursion analysis")
-    ap.add_argument("--data", required=True, help="parquet folder (HH.parquet)")
-    ap.add_argument("--max-trades", type=int, default=0)
-    ap.add_argument("--min-consensus", type=int, default=MIN_CONSENSUS)
-    ap.add_argument("--min-liq", type=float, default=MIN_LIQ_USD)
-    ap.add_argument("--max-positions", type=int, default=MAX_POSITIONS)
-    ap.add_argument("--entry-slippage-bps", type=int, default=ENTRY_SLIPPAGE_BPS)
-    ap.add_argument("--exit-slippage-bps", type=int, default=EXIT_SLIPPAGE_BPS)
-    ap.add_argument("--no-slippage", action="store_true", help="disable fee/slippage model")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", required=True)
     ap.add_argument("--out", default="/tmp/backtest_excursion.json")
     args = ap.parse_args()
-
-    fee_mult = (1.0 + (ENTRY_SLIPPAGE_BPS + EXIT_SLIPPAGE_BPS + JUPITER_FEE_BPS) / 10_000.0) \
-        if not args.no_slippage else 1.0
 
     files = sorted(glob.glob(str(Path(args.data) / "*.parquet")))
     if not files:
         raise SystemExit(f"no parquet in {args.data}")
     total = sum(pq.ParquetFile(f).metadata.num_rows for f in files)
-    print(f"backtest: {len(files)} files, {total:,} rows, fee_mult={fee_mult:.4f}", flush=True)
+    print(f"backtest: {len(files)} files, {total:,} rows", flush=True)
+    t0 = time.time()
 
+    # ---- Phase 1: single pass ----
     buyers: dict[str, dict[str, float]] = defaultdict(dict)
     first_buy: dict[str, float] = {}
     open_pos: dict[str, dict] = {}
     trades: list[dict] = []
-    all_mult: list[float] = []
-    all_adverse: list[float] = []    # max drawdown from entry (0..1)
-    all_favorable: list[float] = []  # peak gain from entry (mult - 1)
-    all_hold_s: list[float] = []
-    exit_reasons = Counter()
     stats = Counter()
-    t0 = time.time()
 
     def try_open(mint, price, liq, ts):
-        if mint in open_pos:
+        if mint in open_pos or len(open_pos) >= MAX_POSITIONS:
             return
-        if len(open_pos) >= args.max_positions:
-            stats["pos_cap"] += 1
+        distinct = [s for s, bt in buyers[mint].items() if ts - bt <= CONSENSUS_WINDOW_S]
+        if len(distinct) < MIN_CONSENSUS:
             return
-        distinct = [s for s, bt in buyers[mint].items()
-                    if ts - bt <= CONSENSUS_WINDOW_S]
-        if len(distinct) < args.min_consensus:
-            return
-        if liq < args.min_liq:
+        if liq < MIN_LIQ_USD:
             stats["low_liq"] += 1
             return
-        # Jupiter entry: apply slippage to entry price (we pay more)
-        exec_entry = price * (1.0 + args.entry_slippage_bps / 10_000.0)
+        exec_entry = price * (1.0 + ENTRY_SLIPPAGE_BPS / 10_000.0)
         open_pos[mint] = {
-            "entry_px": exec_entry, "entry_ts": ts,
-            "raw_entry_px": price,
+            "entry_px": exec_entry, "entry_ts": ts, "raw_entry_px": price,
             "peak": exec_entry, "trough": exec_entry,
             "tp_taken": [], "be_armed": False, "banked_pnl": 0.0,
-            "remaining": 1.0,
+            "remaining": 1.0, "snaps": {},
         }
         stats["entries"] += 1
 
     def close(mint, reason, price, ts):
         p = open_pos.pop(mint)
-        # Jupiter exit: apply slippage (we receive less)
-        exec_exit = price * (1.0 - args.exit_slippage_bps / 10_000.0)
+        exec_exit = price * (1.0 - EXIT_SLIPPAGE_BPS / 10_000.0)
         mult = exec_exit / p["entry_px"] if p["entry_px"] else 0.0
-        # Net PnL includes banked TP + remaining at exit multiple, minus fees
         gross_pnl = p["banked_pnl"] + p["remaining"] * SIZE_SOL * (mult - 1.0)
-        fee_cost = SIZE_SOL * (ENTRY_SLIPPAGE_BPS + EXIT_SLIPPAGE_BPS + JUPITER_FEE_BPS) / 10_000.0 \
-            if not args.no_slippage else 0.0
-        net_pnl = gross_pnl - fee_cost - PRIORITY_FEE_SOL
-        # Excursion metrics (measured from exec entry to raw price path)
-        adverse = max(0, 1.0 - p["trough"] / p["entry_px"])  # max drawdown
-        favorable = max(0, p["peak"] / p["entry_px"] - 1.0)   # max gain
+        fee = SIZE_SOL * (ENTRY_SLIPPAGE_BPS + EXIT_SLIPPAGE_BPS + JUPITER_FEE_BPS) / 10_000.0
+        net_pnl = gross_pnl - fee - PRIORITY_FEE_SOL
+        adverse = max(0, 1.0 - p["trough"] / p["entry_px"])
+        favorable = max(0, p["peak"] / p["entry_px"] - 1.0)
         hold_s = ts - p["entry_ts"]
-        all_mult.append(mult)
-        all_adverse.append(adverse)
-        all_favorable.append(favorable)
-        all_hold_s.append(hold_s)
+        tf = _time_features(p["snaps"], p["entry_px"])
         trades.append({
             "mint": mint[:12], "reason": reason,
             "entry_px": round(p["entry_px"], 8),
@@ -139,8 +177,8 @@ def main() -> None:
             "favorable_pct": round(favorable * 100, 2),
             "hold_min": round(hold_s / 60, 1),
             "tp_taken": list(p["tp_taken"]),
+            **tf,
         })
-        exit_reasons[reason] += 1
         stats["wins" if net_pnl >= 0 else "losses"] += 1
 
     for fpath in files:
@@ -163,25 +201,23 @@ def main() -> None:
                 price = d["price"][i]
                 liq = (d["quoteInPool"][i] or 0.0) * 2.0 * SOL_USD
                 signer = d["txSigner"][i]
-
                 if action == "buy" and signer:
                     if mint not in first_buy:
                         first_buy[mint] = ts
                     if ts - first_buy[mint] <= MAX_CANDIDATE_AGE_S:
                         buyers[mint][signer] = ts
-
                 if action == "buy" and mint not in open_pos:
                     try_open(mint, price, liq, ts)
-
-                # Monitor open position: track price path for excursion
                 if mint in open_pos and price:
                     p = open_pos[mint]
+                    elapsed = ts - p["entry_ts"]
+                    for w in SNAPSHOT_WINDOWS:
+                        if w not in p["snaps"] and elapsed >= w:
+                            p["snaps"][w] = price
                     p["peak"] = max(p["peak"], price)
                     p["trough"] = min(p["trough"], price)
                     peak_mult = p["peak"] / p["entry_px"]
                     mult = price / p["entry_px"]
-
-                    # --- TP ladder (production: 1.3:0.4, 1.8:0.3, 3.0:0.3)
                     for lvl, frac in TP_LADDER:
                         if lvl in p["tp_taken"]:
                             continue
@@ -194,13 +230,10 @@ def main() -> None:
                                 p["remaining"] = 0.0
                     if p["tp_taken"] and not p["be_armed"]:
                         p["be_armed"] = True
-
                     if p["remaining"] <= 0:
                         close(mint, "tp", price, ts)
                     else:
-                        # Early rug guard
-                        if (mult <= 1.0 - 0.30 and
-                                ts - p["entry_ts"] < 60):
+                        if mult <= 0.70 and elapsed < 60:
                             close(mint, "early_invalid", price, ts)
                         else:
                             stop_mult = 1.0 - HARD_STOP
@@ -208,91 +241,117 @@ def main() -> None:
                                 stop_mult = max(stop_mult, 1.0 + BE_BUFFER)
                             if mult <= stop_mult:
                                 close(mint, "sl", price, ts)
-                            elif (peak_mult >= TRAIL_START_MULT and
-                                  price <= p["peak"] * (1 - TRAIL_RETRACE)):
+                            elif peak_mult >= TRAIL_START_MULT and price <= p["peak"] * (1 - TRAIL_RETRACE):
                                 close(mint, "trail", price, ts)
-                            elif ts - p["entry_ts"] > MAX_HOLD_S:
+                            elif elapsed > MAX_HOLD_S:
                                 close(mint, "max_hold", price, ts)
 
-                if args.max_trades and stats["entries"] >= args.max_trades:
-                    break
-            if args.max_trades and stats["entries"] >= args.max_trades:
-                break
-        if args.max_trades and stats["entries"] >= args.max_trades:
-            break
+    for mint in list(open_pos):
+        p = open_pos[mint]
+        close(mint, "end_of_data", p["peak"], p["entry_ts"] + MAX_HOLD_S)
 
-    wins = stats["wins"]
-    entries = stats["entries"]
-    pnl = sum(t["pnl_sol"] for t in trades)
-    gross_pnl = sum(t["gross_pnl_sol"] for t in trades)
+    print(f"phase 1 done: {len(trades)} trades in {time.time()-t0:.1f}s", flush=True)
 
-    def _pct(arr, x):
-        s = sorted(arr)
-        return round(s[min(len(s) - 1, int(x * len(s)))], 2) if s else 0.0
+    # ---- Phase 2: post-hoc filter ablation ----
+    def apply_filters(trades, early_adv_thresh, early_fav_thresh, conf_thresh):
+        kept = []
+        filtered = Counter()
+        for t in trades:
+            reject = False
+            reason = None
+            if early_adv_thresh is not None and early_fav_thresh is not None:
+                adv = t.get("early_adv_30")
+                fav = t.get("early_fav_30")
+                if adv is not None and fav is not None:
+                    if adv >= early_adv_thresh and fav < early_fav_thresh:
+                        reject = True
+                        reason = "early_adverse"
+            if conf_thresh is not None and not reject:
+                cr = t.get("conf_ratio")
+                if cr is not None and cr < conf_thresh:
+                    reject = True
+                    reason = "no_confirmation"
+            if reject:
+                filtered[reason] += 1
+            else:
+                kept.append(t)
+        return kept, dict(filtered)
 
-    # Per-exit-reason breakdown
-    reason_stats: dict[str, dict] = {}
-    for reason in exit_reasons:
+    # A: baseline
+    a_m = _metrics(trades)
+    print(f"\nA baseline: {a_m['entries']} entries, {a_m['win_rate']}% win, "
+          f"gross={a_m['gross_pnl_sol']:.4f} net={a_m['pnl_sol']:.4f} PF={a_m['profit_factor']}")
+
+    # B: early adverse filter (-20% adverse AND < +5% favorable in first 30s)
+    b_trades, b_filt = apply_filters(trades, -0.20, 0.05, None)
+    b_m = _metrics(b_trades)
+    print(f"B early_adv: {b_m['entries']} entries (-{sum(b_filt.values())} filtered), "
+          f"{b_m['win_rate']}% win, gross={b_m['gross_pnl_sol']:.4f} net={b_m['pnl_sol']:.4f} PF={b_m['profit_factor']}")
+
+    # C: confirmation race filter (+10% before -20%)
+    c_trades, c_filt = apply_filters(trades, None, None, 0.4)
+    c_m = _metrics(c_trades)
+    print(f"C confirm:   {c_m['entries']} entries (-{sum(c_filt.values())} filtered), "
+          f"{c_m['win_rate']}% win, gross={c_m['gross_pnl_sol']:.4f} net={c_m['pnl_sol']:.4f} PF={c_m['profit_factor']}")
+
+    # D: both
+    d_trades, d_filt = apply_filters(trades, -0.20, 0.05, 0.4)
+    d_m = _metrics(d_trades)
+    print(f"D both:      {d_m['entries']} entries (-{sum(d_filt.values())} filtered), "
+          f"{d_m['win_rate']}% win, gross={d_m['gross_pnl_sol']:.4f} net={d_m['pnl_sol']:.4f} PF={d_m['profit_factor']}")
+
+    # Per-reason breakdown for baseline
+    reason_stats = {}
+    for reason in set(t["reason"] for t in trades):
         rts = [t for t in trades if t["reason"] == reason]
+        rts_pnl = [t["pnl_sol"] for t in rts]
         reason_stats[reason] = {
             "count": len(rts),
-            "win_rate": round(sum(1 for t in rts if t["pnl_sol"] >= 0) / len(rts) * 100, 1) if rts else 0,
-            "avg_pnl": round(sum(t["pnl_sol"] for t in rts) / len(rts), 5) if rts else 0,
+            "win_rate": round(sum(1 for p in rts_pnl if p >= 0) / len(rts) * 100, 1) if rts else 0,
+            "avg_pnl": round(sum(rts_pnl) / len(rts), 5) if rts else 0,
+            "total_pnl": round(sum(rts_pnl), 5),
             "avg_adverse": round(sum(t["adverse_pct"] for t in rts) / len(rts), 2) if rts else 0,
-            "avg_favorable": round(sum(t["favorable_pct"] for t in rts) / len(rts), 2) if rts else 0,
         }
 
-    res = {
-        "data": args.data,
-        "rows": total,
-        "params": {
-            "tp_ladder": TP_LADDER, "trail_start": TRAIL_START_MULT,
-            "trail_retrace": TRAIL_RETRACE, "hard_stop": HARD_STOP,
-            "min_consensus": args.min_consensus, "min_liq": args.min_liq,
-            "max_hold_h": MAX_HOLD_S / 3600, "size_sol": SIZE_SOL,
-            "entry_slippage_bps": args.entry_slippage_bps,
-            "exit_slippage_bps": args.exit_slippage_bps,
-            "no_slippage": args.no_slippage,
+    # Print comparison table
+    print("\n" + "=" * 90)
+    print("ABLATION COMPARISON")
+    print("=" * 90)
+    hdr = f"{'variant':<22} {'ent':>6} {'w%':>6} {'gross':>9} {'net':>9} {'PF':>7} {'adv_p50':>8} {'SL':>5} {'trail':>6}"
+    print(hdr)
+    print("-" * 90)
+    for label, m, filt in [("A_baseline", a_m, {}),
+                            ("B_early_adv", b_m, b_filt),
+                            ("C_confirm", c_m, c_filt),
+                            ("D_both", d_m, d_filt)]:
+        filt_str = f"-{sum(filt.values())}" if filt else ""
+        print(f"{label:<22} {m['entries']:>6} {m['win_rate']:>5}% "
+              f"{m['gross_pnl_sol']:>9.4f} {m['pnl_sol']:>9.4f} "
+              f"{m['profit_factor']:>7.3f} {m['adverse_p50']:>7.2f} "
+              f"{m['sl_count']:>5} {m['trail_count']:>6}  {filt_str}")
+    print("=" * 90)
+
+    # Reason breakdown
+    print("\nEXIT REASON BREAKDOWN (baseline):")
+    for reason, rs in sorted(reason_stats.items()):
+        print(f"  {reason:<16} n={rs['count']:>4}  wr={rs['win_rate']:>5.1f}%  "
+              f"avg_pnl={rs['avg_pnl']:>9.5f}  total={rs['total_pnl']:>9.5f}  "
+              f"avg_adv={rs['avg_adverse']:>6.2f}%")
+
+    # Write full output
+    result = {
+        "data": args.data, "rows": total, "seconds": round(time.time() - t0, 1),
+        "ablation": {
+            "A_baseline": {k: v for k, v in a_m.items()},
+            "B_early_adverse": {**{k: v for k, v in b_m.items()}, "filtered": b_filt},
+            "C_confirmation": {**{k: v for k, v in c_m.items()}, "filtered": c_filt},
+            "D_both": {**{k: v for k, v in d_m.items()}, "filtered": d_filt},
         },
-        "funnel": {k: stats[k] for k in
-                   ("launches", "entries", "wins", "losses", "low_liq", "pos_cap")},
-        "exit_reasons": dict(exit_reasons),
         "reason_breakdown": reason_stats,
-        # Core metrics
-        "pnl_sol": round(pnl, 4),
-        "gross_pnl_sol": round(gross_pnl, 4),
-        "win_rate": round(wins / entries * 100, 1) if entries else 0.0,
-        "avg_pnl_per_trade": round(pnl / entries, 5) if entries else 0.0,
-        # Multiple stats
-        "mult_p10": _pct(all_mult, 0.10),
-        "mult_p50": _pct(all_mult, 0.50),
-        "mult_p90": _pct(all_mult, 0.90),
-        "mult_max": round(max(all_mult), 2) if all_mult else 0,
-        # EXCURSION ANALYSIS (the key new metrics)
-        "adverse": {
-            "p50": _pct(all_adverse, 0.50),   # median max drawdown
-            "p90": _pct(all_adverse, 0.90),   # 90th percentile drawdown
-            "max": round(max(all_adverse), 4) if all_adverse else 0,
-            "avg": round(sum(all_adverse) / len(all_adverse), 4) if all_adverse else 0,
-        },
-        "favorable": {
-            "p50": _pct(all_favorable, 0.50),
-            "p90": _pct(all_favorable, 0.90),
-            "max": round(max(all_favorable), 4) if all_favorable else 0,
-            "avg": round(sum(all_favorable) / len(all_favorable), 4) if all_favorable else 0,
-        },
-        "hold": {
-            "avg_min": round(sum(all_hold_s) / len(all_hold_s) / 60, 1) if all_hold_s else 0,
-            "median_min": round(_pct([h/60 for h in all_hold_s], 0.50), 1) if all_hold_s else 0,
-            "p90_min": round(_pct([h/60 for h in all_hold_s], 0.90), 1) if all_hold_s else 0,
-        },
-        "top_trades": sorted(trades, key=lambda x: x["pnl_sol"], reverse=True)[:15],
-        "worst_trades": sorted(trades, key=lambda x: x["pnl_sol"])[:10],
-        "seconds": round(time.time() - t0, 1),
+        "baseline_trades": trades,
     }
-    print(json.dumps(res, indent=2))
     with open(args.out, "w") as f:
-        json.dump(res, f, indent=2)
+        json.dump(result, f, indent=2)
     print(f"\nwrote {args.out}")
 
 
