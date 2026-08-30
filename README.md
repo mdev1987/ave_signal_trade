@@ -17,6 +17,38 @@ DeBot tier/rank --> Moralis Solana swaps (launch-window buyers)
    Telegram alerts --> shadow paper book (trailing stop + TP ladder)
 ```
 
+## Project structure
+
+```
+main.py                  # entry point: watch / status / sim / wallet-new
+src/
+  config.py              # .env parser + Settings dataclass
+  watcher.py             # smart-wallet watcher (consensus scoring)
+  pair_perf.py           # adaptive pair-quality multiplier
+  wallet_weights.py      # wallet-quality weights (Bayesian confidence)
+  dexscreener.py         # DexScreener REST oracle
+  dbotx.py               # DBotX fail-open rug filter
+  jupiter_swap.py        # Jupiter Swap V2 client
+  notifier.py            # Telegram notifications
+  pump_stream.py         # pumpapi.io WebSocket firehose
+  wallet_discovery.py    # batch wallet discovery
+  logs.py                # logging + journal (JSONL)
+  tatum_notify.py        # Tatum push subscriptions
+  debot.py               # DeBot.ai community-signal client
+scripts/
+  discover_wallets.py    # expand watchlist from SolanaTracker leaderboard
+  wallet_perf.py         # rank wallets by PnL / win rate
+  seed_pair_perf.py      # seed pair_performance.json from past journal
+  dexscreener_kol.py     # headless scrape Top-Gainers for KOL wallets
+  gen_wallets_from_replay.py  # generate wallet candidates from parquet
+backtests/
+  backtest_consensus.py  # wallet-consensus strategy backtest
+  backtest_ideal.py      # upper-bound test with perfect wallet list
+  backtest_v2.py         # sweep exit ladders x consensus x wallet-quality
+tests/
+  test_watcher_core.py   # unit tests: Shyft tx parsing + status card
+```
+
 ## Commands
 
 | Command | What it does |
@@ -27,9 +59,9 @@ DeBot tier/rank --> Moralis Solana swaps (launch-window buyers)
 | `uv run main.py sim <CA> [--size X]` | Jupiter round-trip quote check (paper) |
 | `uv run main.py sim <CA> --size 0.05 --live --yes` | execute real buy+sell on the throwaway wallet |
 | `uv run main.py wallet-new` / `wallet-show` | create/inspect throwaway trading wallet |
-| `uv run wallet_perf.py` | rank every tracked wallet by PnL / win rate |
-| `uv run discover_wallets.py` | expand the watchlist from SolanaTracker leaderboard |
-| `uv run seed_pair_perf.py` | seed `pair_performance.json` from past journal entries |
+| `uv run scripts/wallet_perf.py` | rank every tracked wallet by PnL / win rate |
+| `uv run scripts/discover_wallets.py` | expand the watchlist from SolanaTracker leaderboard |
+| `uv run scripts/seed_pair_perf.py` | seed `pair_performance.json` from past journal entries |
 
 ## Strategy
 
@@ -96,7 +128,7 @@ Everything lives in `.env` (template: `.env.example`). Key groups:
   `MAX_OPEN_POSITIONS`, `PER_WALLET_MAX_POSITIONS`
 - **Open gates**: `OPEN_MIN_LIQ_USD`, `OPEN_MAX_IMPACT_PCT`, `OPEN_MIN_H1_PCT`,
   `OPEN_MAX_M5_DUMP_PCT`, `MTF_ALIGN_BONUS`
-- **Pair quality**: `PAIR_PERF_FILE`, `seed_pair_perf.py`
+- **Pair quality**: `PAIR_PERF_FILE`, `scripts/seed_pair_perf.py`
 - **DBotX safety**: `DBOTX_API_KEY`, `DBOTX_SAFETY`, `DBOTX_TOP10_MAX`
 - **Early exit**: `EARLY_EXIT_WINDOW_S`, `EARLY_EXIT_DROP_PCT`
 
@@ -108,10 +140,3 @@ Everything lives in `.env` (template: `.env.example`). Key groups:
 - `bot_logs/journal.jsonl` — structured event journal (JSONL)
 - `pair_performance.json` — adaptive pair-quality multiplier store
 - `wallet_performance.json` — wallet PnL/win-rate data
-
-## Helper scripts
-
-- `wallet_perf.py` — score every tracked wallet from SolanaTracker PnL V2
-- `discover_wallets.py` — expand watchlist from leaderboard API
-- `seed_pair_perf.py` — seed pair_performance.json from past journal
-- `dexscreener_kol.py` — headless scrape Top-Gainers for KOL wallets

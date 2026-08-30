@@ -186,7 +186,7 @@ async def scrape_gainers(browser, url: str, limit: int, out: str | None = None
 async def get_token_price(chain: str, token: str, env: dict) -> dict:
     base = env.get("DEXSCREENER_BASE_URL", "https://api.dexscreener.com").rstrip("/")
     try:
-        from dexscreener import DexScreenerClient
+        from src.dexscreener import DexScreenerClient
         async with DexScreenerClient() as client:
             pairs = await client.get_token_pairs(chain, token)
             if pairs:
