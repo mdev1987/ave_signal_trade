@@ -16,8 +16,14 @@ positions*.json
 tpositions.json
 smart_wallets.json
 smart_money_wallets_pertoken.json
-.runwisp/
-.freebuff
+smart_money_wallets.candidates.json
+pair_performance.json
+wallet_performance.json
+wallet_performance.ranked.md
+gainers_discovery.json
+fone_discovery.json
+dexscreener_top_gainer.md
+KOL.md
 
 # ---- python / tooling ----
 __pycache__/
@@ -40,12 +46,10 @@ discovered_wallets.json
 .vscode/
 .opencode/
 docs/
+.playwright-mcp/
 
-# ---- retired stack configs ----
+# ---- retired / misc ----
 runwisp.toml
-paper_positions.json
-.playwright-mcp
-dexscreener_top_gainer.md
+.runwisp/
+.freebuff
 *.bak
-gainers.log
-bot_run*.log

@@ -123,5 +123,16 @@
     "trades": 1,
     "wins": 0,
     "pnl": -0.04201
+  },
+  "6mWeK1tPhW2LcVTopbF1tRSuAQeRzQn4w14nhGN45CkQ+Cy686z68GX7UrJMbCPvk4B74xzr4QLbzBQ2bgJ8qFxip": {
+    "trades": 1,
+    "wins": 0,
+    "pnl": -0.04489,
+    "history": [
+      {
+        "pnl": -0.04489,
+        "ts": 1788101637.9706721
+      }
+    ]
   }
 }

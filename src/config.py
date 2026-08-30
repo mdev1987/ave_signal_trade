@@ -99,7 +99,6 @@ class Settings:
     trail_enabled: bool = False         # trailing stop OFF by default (full-spike exit wins)
     trail_start_mult: float = 1.30     # only trail after a peak >= this
     hard_stop_pct: float = 0.25        # hard stop (tightened from 0.30; gaps still slip, see review)
-    open_min_wallets: int = 2           # legacy distinct-wallet floor (kept for compat; weighted score is the real gate)
     open_min_liq_usd: float = 1500.0    # skip only the thinnest tokens; smart wallets buy fresh <$5k pumps
     per_wallet_max_positions: int = 3   # cap open positions that share a wallet (kills AgmLJ/kEFiA correlation stack)
     open_max_impact_pct: float = 4.0    # skip open if Jupiter buy-side price impact > this (execution risk; MARIO opened at 4.47%)

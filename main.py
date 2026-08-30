@@ -354,7 +354,6 @@ class ShadowBook:
                             and mult <= 1.0 - self.early_exit_drop_pct):
                         exit_reason = "early_invalid"
                     stop_mult = (1 - self.hard_stop)
-                    stop_mult = (1 - self.hard_stop)
                     if pos["be_armed"]:
                         stop_mult = max(stop_mult, 1.0 + self.be_buffer)
                     if self.hard_stop > 0 and mult <= stop_mult:
