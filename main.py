@@ -32,11 +32,12 @@ import os  # noqa: E402
 import config as cfg  # noqa: E402
 import logs  # noqa: E402
 from dexscreener import DexScreenerClient  # noqa: E402
+from dbotx import DBotXClient  # noqa: E402
 from jupiter_swap import JupiterSwap  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 from logs import setup_logging  # noqa: E402
 from pair_perf import (load as load_pair_perf, save as save_pair_perf,  # noqa: E402
-                       update as update_pair_perf, penalty as pair_penalty)
+                       update as update_pair_perf, pair_multiplier)
 from notifier import TelegramNotifier  # noqa: E402
 from pump_stream import PumpApiStream  # noqa: E402
 from tatum_notify import TatumNotifications  # noqa: E402
@@ -434,6 +435,8 @@ async def _run_watch(s: cfg.Settings) -> int:
     notifier = TelegramNotifier()
     ds = DexScreenerClient(base_url=s.dexscreener_base_url,
                            rpm=s.dexscreener_rpm)
+    # Fail-open rug/safety filter (DBotX). Degrades to allow on any error.
+    dbx = DBotXClient(api_key=s.dbotx_api_key, base_url=s.dbotx_base_url)
 
     # Data-driven wallet quality: weight each KOL by real win rate + PnL so the
     # consensus score reflects conviction, not just head-count.
@@ -529,8 +532,7 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     async def _on_smart_buy(ca, sym, usd, score, wallets=None):
         n = len(wallets or [])
-        # Concentration guard: the journal showed ~19/23 opens came from a single
-        # wallet pair (AgmLJ+kEFiA). Cap how many open positions may share any one
+        # Concentration guard: cap how many open positions may share any one
         # triggering wallet so we don't stack correlated bets and so slots stay
         # free for genuinely different signals.
         overlap = 0
@@ -538,11 +540,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             c = sum(1 for p in book.open.values()
                     if w in (p.get("wallets") or []))
             overlap = max(overlap, c)
-        # Pair-aware penalty: a wallet PAIR with clearly negative expectancy
-        # (the journal's AgmLJ+kEFiA: 6 trades / 1 win / -0.0558 SOL) is
-        # down-weighted so its 2.49 "max" score no longer forces opens. Adaptive
-        # — only engages after >=3 tracked trades, so we don't overfit noise.
-        pen, pen_note = pair_penalty(pair_perf, wallets)
         if not backfill_done.is_set():
             reason = "deferred:lookback"
         elif score < s.consensus_weight_threshold:
@@ -555,8 +552,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             reason = f"skip:min_wallets<{s.open_min_wallets}"
         elif overlap >= s.per_wallet_max_positions:
             reason = f"skip:per_wallet_cap>={s.per_wallet_max_positions}"
-        elif pen > 0 and (score - pen) < s.consensus_weight_threshold:
-            reason = f"skip:{pen_note}"
         elif usd < s.watch_min_buy_usd:
             reason = "skip:below_min_buy"
         elif ca in book.open:
@@ -570,27 +565,73 @@ async def _run_watch(s: cfg.Settings) -> int:
         elif time.time() - last_open["t"] < open_gap_s:
             reason = "skip:open_spacing"
         else:
-            # Quality gate: only trade liquid tokens. On illiquid pump tokens
-            # exit slippage turns a +12% price move into a -5% SOL fill
-            # (observed: Grokstreet), silently destroying paper PnL.
+            # Fetch the market snapshot once: it drives both the momentum floor
+            # and the multi-timeframe alignment score modifier below.
             try:
                 snap = await ds.token_pairs("solana", ca)
             except Exception:
                 snap = None
-            if not snap:
-                # DexScreener blip: don't throw away a genuine consensus signal
-                # on a transient outage — open anyway, flagged as liq-unchecked.
+            # Rug/safety gate (DBotX, fail-open): reject tokens that still hold a
+            # mint or freeze authority, or are dangerously top-10 concentrated.
+            # A 403 / missing key degrades to "allow" so an outage never blocks.
+            if s.dbotx_safety:
+                pair_addr = (snap or {}).get("pair_address") or ca
+                info = await dbx.pair_safety("solana", pair_addr)
+                if info.get("available"):
+                    if info["mint_authority"] or info["freeze_authority"]:
+                        reason = "skip:unsafe(mint/freeze authority)"
+                    elif info["top10"] > s.dbotx_top10_max:
+                        reason = f"skip:unsafe(top10={info['top10']:.0%})"
+                    elif info["dev_position"] not in (None, "cleared"):
+                        reason = f"skip:unsafe(dev={info['dev_position']})"
+                    else:
+                        logs.journal("open_safety_ok", ca=ca, symbol=sym,
+                                     safety=info)
+            pc = (snap or {}).get("price_change") or {}
+            tfs = ("m5", "h1", "h6", "h24")
+            avail = [k for k in tfs if pc.get(k) is not None]
+            align = sum(1 for k in avail if (pc.get(k) or 0) > 0)
+            # Multi-timeframe alignment: trend-shaped tokens (sling/SABL/Leafy:
+            # green on all horizons) get a bonus; reversing/late ones (PINU:
+            # +825% h24 but -56% h1) get a discount. Avoids entering tops.
+            mkt_bonus = (align - 2) * s.mtf_align_bonus
+            # Pair quality is a MULTIPLIER on the market score, not a veto: a weak
+            # pair (AgmLJ+kEFiA) is down-weighted but may still trade when the
+            # market confirms hard — so we don't overfit to a 6-trade sample.
+            pmult, pnote = pair_multiplier(pair_perf, wallets)
+            effective = (score + mkt_bonus) * pmult
+            # Weak pair -> require strong confirmation: every AVAILABLE timeframe
+            # positive (m5>0 & h1>0 at minimum) before it may open at all.
+            if pmult < 1.0 and not all((pc.get(k) or 0) > 0 for k in avail):
+                reason = f"skip:pair_needs_confirmation({pnote},align={align}/{len(avail)})"
+            elif effective < s.consensus_weight_threshold:
+                reason = (f"skip:score<{s.consensus_weight_threshold}"
+                          f"(eff={effective:.2f},pmult={pmult:.2f},align={align})")
+            elif not snap:
+                # DexScreener blip with a genuine consensus: open flagged as
+                # liq-unchecked rather than discarding the signal.
                 last_open["t"] = time.time()
                 logs.journal("open_liq_unchecked", ca=ca, symbol=sym,
                              note="dexscreener_unavailable")
+                logs.journal("open_signal_momentum", ca=ca, symbol=sym,
+                             score=score, effective=round(effective, 3),
+                             pmult=pmult, align=align, price_change=pc)
                 await book.open_position(ca, sym, usd, usd, n, wallets=wallets)
                 return
             elif (snap.get("liq") or 0) < s.open_min_liq_usd:
                 reason = "skip:low_liq"
+            elif (pc.get("h1") or 0) < s.open_min_h1_pct:
+                reason = f"skip:no_momentum(h1={pc.get('h1')})"
+            elif (pc.get("m5") or 0) < s.open_max_m5_dump_pct:
+                reason = f"skip:dumping(m5={pc.get('m5')})"
             else:
                 last_open["t"] = time.time()
+                logs.journal("open_signal_momentum", ca=ca, symbol=sym,
+                             score=score, effective=round(effective, 3),
+                             pmult=pmult, align=align, price_change=pc)
                 await book.open_position(ca, sym, usd, usd, n, wallets=wallets)
                 return
+            return
         now = time.time()
         if _skip_log.get(ca, 0) < now - 300:
             _skip_log[ca] = now
@@ -710,6 +751,7 @@ async def _run_watch(s: cfg.Settings) -> int:
         await w.stop()
         await runner.cleanup()
         await ds.close()
+        await dbx.close()
         await jupiter.close()
     return 0
 

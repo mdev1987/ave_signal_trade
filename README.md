@@ -108,7 +108,11 @@ Everything lives in `.env` (template: `.env.example`):
 - Shadow book: `SIZE_SOL`, `TP_LADDER=1.3:0.4,1.8:0.3,3.0:0.3`,
   `TRAIL_RETRACE_PCT=0.25`, `HARD_STOP_PCT=0.25`, `MAX_HOLD_H=24`,
   `MAX_OPEN_POSITIONS=18`, `PER_WALLET_MAX_POSITIONS=3` (caps correlated bets per wallet),
-  `OPEN_MIN_LIQ_USD=1500`, `START_BALANCE_SOL`, `STATUS_EVERY_MIN`
+  `OPEN_MIN_LIQ_USD=1500`, `START_BALANCE_SOL`, `STATUS_EVERY_MIN`,
+  `OPEN_MIN_H1_PCT=0.0` (only enter tokens with a 1h uptrend; skip tops/flat),
+  `OPEN_MAX_M5_DUMP_PCT=-5.0` (skip tokens dumping >5% in the last 5m at the signal),
+  `MTF_ALIGN_BONUS=0.3` (multi-timeframe alignment score modifier: trend-shaped tokens get a bonus, reversing/late ones a discount),
+  `DBOTX_SAFETY=1` + `DBOTX_API_KEY` (fail-open rug filter: skips tokens with an active mint/freeze authority or top-10 holding > `DBOTX_TOP10_MAX`)
 - Pair-aware penalty: `PAIR_PERF_FILE=pair_performance.json` (adaptive per-wallet-PAIR
   expectancy; `seed_pair_perf.py` seeds it from a past journal so known-losing pairs like
   AgmLJ+kEFiA are blocked from the first run), `OPEN_MAX_IMPACT_PCT=4.0` (don't open when

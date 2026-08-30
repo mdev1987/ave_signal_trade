@@ -103,6 +103,9 @@ class Settings:
     open_min_liq_usd: float = 1500.0    # skip only the thinnest tokens; smart wallets buy fresh <$5k pumps
     per_wallet_max_positions: int = 3   # cap open positions that share a wallet (kills AgmLJ/kEFiA correlation stack)
     open_max_impact_pct: float = 4.0    # skip open if Jupiter buy-side price impact > this (execution risk; MARIO opened at 4.47%)
+    open_min_h1_pct: float = 0.0        # require 1h price change >= this (enter uptrends, skip tops/flat)
+    open_max_m5_dump_pct: float = -5.0  # skip if 5m price change < this (don't enter a token dumping at the signal)
+    mtf_align_bonus: float = 0.3       # multi-timeframe alignment score modifier (per aligned timeframe above the 2/4 midpoint)
     pair_perf_file: str = "pair_performance.json"  # adaptive pair-quality penalty store
     early_exit_window_s: float = 0.0    # if >0, fast-rug guard: close positions that drop early_exit_drop_pct within this many seconds
     early_exit_drop_pct: float = 0.30   # fast-rug drop threshold (e.g. -30% in first early_exit_window_s -> early-invalid)
@@ -154,6 +157,13 @@ class Settings:
     # dexscreener
     dexscreener_base_url: str = "https://api.dexscreener.com"
     dexscreener_rpm: int = 300
+    # DBotX data API — used only as a fail-open rug/safety filter in the open
+    # gate (mint/freeze authority, top-10 concentration). Missing key or a
+    # 403/whitelist rejection degrades to "allow", never blocks the bot.
+    dbotx_api_key: str = ""
+    dbotx_base_url: str = "https://api-data-v1.dbotx.com"
+    dbotx_safety: bool = True
+    dbotx_top10_max: float = 0.25  # skip if top-10 holders own more than this (0.25 = 25%)
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -187,6 +197,9 @@ def load_settings(path: str = ".env") -> Settings:
         max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", 18),
         per_wallet_max_positions=get_int(env, "PER_WALLET_MAX_POSITIONS", 3),
         open_max_impact_pct=get_float(env, "OPEN_MAX_IMPACT_PCT", 4.0),
+        open_min_h1_pct=get_float(env, "OPEN_MIN_H1_PCT", 0.0),
+        open_max_m5_dump_pct=get_float(env, "OPEN_MAX_M5_DUMP_PCT", -5.0),
+        mtf_align_bonus=get_float(env, "MTF_ALIGN_BONUS", 0.3),
         pair_perf_file=get(env, "PAIR_PERF_FILE", "pair_performance.json"),
         early_exit_window_s=get_float(env, "EARLY_EXIT_WINDOW_S", 0.0),
         early_exit_drop_pct=get_float(env, "EARLY_EXIT_DROP_PCT", 0.30),
@@ -212,4 +225,8 @@ def load_settings(path: str = ".env") -> Settings:
         dexscreener_base_url=get(env, "DEXSCREENER_BASE_URL",
                                  "https://api.dexscreener.com"),
         dexscreener_rpm=get_int(env, "DEXSCREENER_RPM", 300),
+        dbotx_api_key=get(env, "DBOTX_API_KEY", ""),
+        dbotx_base_url=get(env, "DBOTX_BASE_URL", "https://api-data-v1.dbotx.com"),
+        dbotx_safety=get_bool(env, "DBOTX_SAFETY", True),
+        dbotx_top10_max=get_float(env, "DBOTX_TOP10_MAX", 0.25),
     )

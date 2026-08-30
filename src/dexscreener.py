@@ -91,6 +91,7 @@ class DexScreenerClient:
         txns = pair.get("txns") or {}
         m5 = txns.get("m5") or {}
         base = pair.get("baseToken") or {}
+        pc = pair.get("priceChange") or {}
         return {
             "symbol": base.get("symbol"),
             "liq": _f(liq),
@@ -98,9 +99,20 @@ class DexScreenerClient:
             "price_usd": _f(pair.get("priceUsd")),
             "vol_m5": _f(vol.get("m5")),
             "vol_h1": _f(vol.get("h1")),
+            "vol_h24": _f(vol.get("h24")),
             "txns_m5": int((m5.get("buys") or 0) + (m5.get("sells") or 0)),
             "dex_id": pair.get("dexId"),
+            "pair_address": pair.get("pairAddress"),
             "pair_created_ms": pair.get("pairCreatedAt"),
+            # Short-term momentum (percentages). Lets the open gate reject
+            # tokens that are already dumping or have topped out — the rug/top
+            # pattern the journal's biggest losers showed.
+            "price_change": {
+                "m5": _f(pc.get("m5")),
+                "h1": _f(pc.get("h1")),
+                "h6": _f(pc.get("h6")),
+                "h24": _f(pc.get("h24")),
+            },
         }
 
     async def token_pairs(self, chain: str, ca: str) -> dict[str, Any] | None:

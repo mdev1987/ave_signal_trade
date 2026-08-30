@@ -48,19 +48,39 @@ def update(perf: dict, wallets: Iterable[str], pnl_sol: float) -> str:
 def penalty(perf: dict, wallets: Iterable[str]) -> Tuple[float, str]:
     """Return (score_penalty, note).
 
-    The penalty subtracts from the consensus score in the open gate; a large
-    enough penalty pushes it below threshold, effectively blocking the pair.
+    Deprecated: pair quality is now modelled as a MULTIPLIER on the market
+    score (see pair_multiplier) rather than an absolute veto, so a weak pair
+    can still trade when the market confirms hard. Kept for backwards compat.
+    """
+    mult, note = pair_multiplier(perf, wallets)
+    return (0.0 if mult >= 1.0 else (1.0 - mult) * 2.0), note
+
+
+def pair_multiplier(perf: dict, wallets: Iterable[str]) -> Tuple[float, str]:
+    """Return (score_multiplier, note).
+
+    Pair quality modulates the *market* score instead of vetoing it:
+      - normal / currently-profitable pair -> 1.0 (no effect)
+      - weak pair (negative expectancy)     -> 0.5 .. 0.7
+
+    A weak pair is therefore down-weighted but may still open when the market
+    aligns (e.g. 4/4 uptrend) — exactly the "conditional gate" the review asked
+    for — so we never hard-block on a small sample (AgmLJ+kEFiA was only 6
+    trades). The multiplier is recomputed from live pair stats every close, so
+    a pair that turns around un-restricts itself automatically.
     """
     d = perf.get(pair_key(wallets))
     if not d or d.get("trades", 0) < 3:
-        return 0.0, ""
+        return 1.0, ""
     trades = d["trades"]
     wr = d["wins"] / trades
     pnl = d.get("pnl", 0.0)
+    if pnl >= 0:
+        return 1.0, ""  # pair currently profitable -> no discount
     if trades >= 6 and wr < 0.45:
-        return 2.0, f"pair_block(t={trades},wr={wr:.0%},pnl={pnl:+.3f})"
-    if trades >= 4 and wr < 0.40:
-        return 1.5, f"pair_penalty(t={trades},wr={wr:.0%},pnl={pnl:+.3f})"
-    if trades >= 3 and pnl < 0:
-        return 0.8, f"pair_penalty_small(t={trades},wr={wr:.0%},pnl={pnl:+.3f})"
-    return 0.0, ""
+        return 0.5, f"pair_weak(t={trades},wr={wr:.0%},pnl={pnl:+.3f})"
+    if trades >= 5 and wr < 0.40:
+        return 0.6, f"pair_weak(t={trades},wr={wr:.0%},pnl={pnl:+.3f})"
+    if trades >= 3:
+        return 0.7, f"pair_soft(t={trades},wr={wr:.0%},pnl={pnl:+.3f})"
+    return 1.0, ""
