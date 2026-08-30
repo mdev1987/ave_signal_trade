@@ -52,7 +52,10 @@ def parse_shyft_buys(wallet: str, txs: list[dict]) -> list[dict]:
     """Derive buy rows from full Shyft transaction payloads.
 
     A row is emitted when the tracked wallet's balance of a non-wSOL token
-    INCREASED inside a successful transaction. Returns oldest-first.
+    INCREASED inside a successful transaction AND the wallet's SOL/WSOL
+    balance DECREASED in the same transaction (proxy for "spent SOL to buy").
+    This filters out airdrops, transfers, and other non-purchase balance
+    changes. Returns oldest-first.
     """
     rows: list[dict] = []
     for tx in txs or []:
@@ -60,7 +63,36 @@ def parse_shyft_buys(wallet: str, txs: list[dict]) -> list[dict]:
             continue
         bt = tx.get("blockTime") or 0
         meta = tx.get("meta") or {}
-        pre = {(b.get("accountIndex")): b for b in meta.get("preTokenBalances") or []}
+        # Check if wallet spent SOL/WSOL (balance decreased) — proxy for a swap.
+        pre_sol = {(b.get("accountIndex")): b for b in meta.get("preTokenBalances") or []}
+        post_sol_map = {b.get("accountIndex"): b for b in meta.get("postTokenBalances") or []}
+        # Also check native SOL balance change via pre/postBalances
+        pre_balances = meta.get("preBalances") or []
+        post_balances = meta.get("postBalances") or []
+        # Account keys tell us which index is the wallet
+        account_keys = (tx.get("transaction") or {}).get("message", {}).get("accountKeys") or []
+        wallet_idx = None
+        for i, k in enumerate(account_keys):
+            if k == wallet:
+                wallet_idx = i
+                break
+        sol_spent = False
+        if wallet_idx is not None and wallet_idx < len(pre_balances) and wallet_idx < len(post_balances):
+            sol_spent = post_balances[wallet_idx] < pre_balances[wallet_idx]
+        # Fallback: check if WSOL token balance decreased
+        if not sol_spent:
+            for ai in pre_sol:
+                pre = pre_sol.get(ai)
+                post = post_sol_map.get(ai)
+                if pre and pre.get("mint") == WSOL and pre.get("owner") == wallet:
+                    try:
+                        pre_amt = float(pre.get("uiTokenAmount", {}).get("uiAmount") or 0)
+                        post_amt = float((post or {}).get("uiTokenAmount", {}).get("uiAmount") or 0)
+                        if post_amt < pre_amt:
+                            sol_spent = True
+                            break
+                    except (TypeError, ValueError):
+                        pass
         for pb in meta.get("postTokenBalances") or []:
             mint = pb.get("mint")
             if not mint or mint == WSOL:
@@ -68,7 +100,7 @@ def parse_shyft_buys(wallet: str, txs: list[dict]) -> list[dict]:
             if pb.get("owner") != wallet:
                 continue
             pre_amt = 0.0
-            old = pre.get(pb.get("accountIndex"))
+            old = pre_sol.get(pb.get("accountIndex"))
             if old and old.get("mint") == mint:
                 try:
                     pre_amt = float(old.get("uiTokenAmount", {}).get("uiAmount") or 0)
@@ -81,6 +113,12 @@ def parse_shyft_buys(wallet: str, txs: list[dict]) -> list[dict]:
                 continue
             delta = post_amt - pre_amt
             if delta <= 0:
+                continue
+            # Require SOL spend in the same transaction: token balance increase
+            # alone is not enough — it could be an airdrop, transfer, or
+            # other non-purchase balance change.  SOL spend (native or WSOL)
+            # is a strong proxy for "wallet bought this token."
+            if not sol_spent:
                 continue
             rows.append({"wallet": wallet, "ca": mint, "ts": float(bt),
                          "amount": delta})
@@ -110,6 +148,7 @@ class SmartWalletWatcher:
         wallet_default_weight: float = 0.5,
         consensus_weight_threshold: float = 1.5,
         require_strong_wallet: bool = True,
+        sweep_concurrency: int = 6,
     ) -> None:
         wf = Path(wallets_file)
         data = json.loads(wf.read_text()) if wf.exists() else {}
@@ -130,6 +169,7 @@ class SmartWalletWatcher:
         self.default_weight = wallet_default_weight
         self.consensus_weight_threshold = consensus_weight_threshold
         self.require_strong_wallet = require_strong_wallet
+        self._sweep_concurrency = int(sweep_concurrency)
         self.state_file = Path(state_file)
         self.tokens_file = Path(tokens_file)
         self._http = httpx.AsyncClient(timeout=25)
@@ -187,7 +227,9 @@ class SmartWalletWatcher:
             # Restore consensus dedup (expire entries older than 2x consensus window)
             cons = st.get("consensus_sent", {})
             cutoff = time.time() - self.consensus_window_s * 2
-            self._consensus_sent = {ca for ca, ts in cons.items() if ts > cutoff}
+            self._consensus_ts = {ca: float(ts) for ca, ts in cons.items()
+                                  if ts > cutoff}
+            self._consensus_sent = set(self._consensus_ts)
             self._prune_token_hits()
         except Exception:
             logger.exception("watcher state load failed")
@@ -358,7 +400,16 @@ class SmartWalletWatcher:
             wt *= 0.5
         if qualifies:
             hit["usd"] += usd
-            if not already:
+            # Update existing wallet entry or append new one.
+            # This ensures the consensus window uses the LATEST buy time,
+            # not the first — so repeated conviction from the same wallet
+            # refreshes its timestamp and keeps it in the active window.
+            existing = next((x for x in hit["wallets"] if x["w"] == wallet), None)
+            if existing:
+                existing["ts"] = tx_ts
+                existing["usd"] = usd
+                existing["wt"] = wt
+            else:
                 hit["wallets"].append({"w": wallet, "usd": usd, "ts": tx_ts, "wt": wt})
         fresh = ca not in self.known_cas
         if not already:
@@ -406,17 +457,19 @@ class SmartWalletWatcher:
                 logger.exception("on_smart_buy callback failed")
 
     async def run(self) -> None:
-        logger.info("watcher started: %d wallets, poll %.0fs (shyft)",
-                    len(self.wallets), self.poll_s)
+        logger.info("wallets: %d, poll %.0fs (shyft), concurrency=%d",
+                    len(self.wallets), self.poll_s, self._sweep_concurrency)
         while not self._stop.is_set():
             t0 = time.time()
-            for w in list(self.wallets):
-                try:
+            sem = asyncio.Semaphore(self._sweep_concurrency)
+            async def _guarded(w):
+                async with sem:
                     await self._sweep_wallet(w)
-                except Exception:
-                    logger.exception("sweep failed for %s", w[:10])
-                if self._stop.is_set():
-                    break
+            tasks = [asyncio.create_task(_guarded(w))
+                     for w in list(self.wallets)]
+            await asyncio.gather(*tasks, return_exceptions=True)
+            if self._stop.is_set():
+                break
             self._save_state()
             self._prune_token_hits()
             wait = max(1.0, self.poll_s - (time.time() - t0))

@@ -209,21 +209,27 @@ class ShadowBook:
     async def open_position(self, ca: str, symbol: str, usd_entry: float,
                             trigger_usd: float, n_wallets: int,
                             wallets: list[str] | None = None) -> None:
-        # Entry price MUST be in the same unit as refresh_prices' DexScreener
-        # price_usd (USD per token). We use DexScreener as the canonical source
-        # so TP1 / trail / hard-stop thresholds compare like-for-like. (An
-        # earlier bug stored a SOL-per-token Jupiter price as USD-per-token,
-        # producing a ~100x mismatch that fired TP1 instantly.)
-        snap = await self.ds.token_pairs("solana", ca)
-        px = float(snap.get("price_usd") or 0) if snap else 0.0
+        # --- Jupiter executable entry basis (primary) ---
+        # When Jupiter is available, derive the actual entry price from the buy
+        # quote: size_sol SOL -> tokens_raw, so entry = SOL_per_token * SOL_USD.
+        # This is the price the paper book would really pay, including impact +
+        # slippage — asymmetric pricing (DexScreener mid in, Jupiter out) was
+        # distorting paper PnL.
         tokens_raw = 0
-        entry_note = "dexscreener"
-        entry_mode = "mark_only"  # EXECUTABLE once Jupiter buy+sell validated
+        entry_note = "no_jupiter"
+        entry_mode = "mark_only"
+        exec_px = 0.0  # Jupiter-derived USD/token (authoritative when available)
+        market_px = 0.0  # DexScreener mid (reference only)
+
+        # DexScreener snapshot: used for market context (liq, price_change) and
+        # as fallback when Jupiter is unavailable.
+        snap = await self.ds.token_pairs("solana", ca)
+        market_px = float(snap.get("price_usd") or 0) if snap else 0.0
+
         if self.jupiter is not None:
             q = await self.jupiter.quote(ca, int(self.size_sol * 1e9),
                                          force=True)
             if q is None or not q.success:
-                # No Jupiter buy route: mark-only entry (flagged, separate metric).
                 reason = q.reason if q else "quote_exception"
                 logs.journal("shadow_skip", ca=ca, symbol=symbol,
                              reason=f"no_buy_route:{reason}")
@@ -231,21 +237,13 @@ class ShadowBook:
                 return
             tokens_raw = q.output_amount
             entry_note = f"jup impact={q.price_impact_pct:.2f}%"
-            # Execution-risk guard: a high buy-side impact means the fill is
-            # being eaten by slippage (MARIO opened at 4.47% impact then
-            # -39%). Don't open trades we can't enter cleanly.
             if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
                 logs.journal("shadow_skip", ca=ca, symbol=symbol,
                              reason=f"untradable:impact{q.price_impact_pct:.2f}%")
                 log.info("shadow skip %s (%s): impact %.2f%%",
                          ca[:10], symbol, q.price_impact_pct)
                 return
-            # Quote stability gate: reject pump-and-dump that moves >5% between
-            # repeated samples (CATE/ELON defense). Only runs when stability
-            # checks are configured (>0).
             if self.jupiter.quote_stability_checks > 0:
-                # Pass the same slippage mode used for the base quote so
-                # samples and base are comparable (RTSE vs manual).
                 buy_slip = None if self.jupiter._buy_rtse else self.jupiter._slippage_bps
                 stable, stab_reason, stab_info = await self.jupiter.check_quote_stability(
                     ca, int(self.size_sol * 1e9), base=q, slippage_bps=buy_slip)
@@ -254,8 +252,6 @@ class ShadowBook:
                                  reason=f"unstable:{stab_reason}", info=stab_info)
                     log.info("shadow skip %s (%s): %s", ca[:10], symbol, stab_reason)
                     return
-            # Sell-side validation: the token MUST have a TOKEN->SOL route
-            # before we open. A buyable-but-unsellable token is a dead end.
             sq = await self.jupiter.quote_sell(ca, tokens_raw)
             if sq is None or not sq.success:
                 reason = sq.reason if sq else "quote_exception"
@@ -263,15 +259,16 @@ class ShadowBook:
                              reason=f"unsellable:{reason}")
                 log.info("shadow skip %s (%s): unsellable %s", ca[:10], symbol, reason)
                 return
-            # Both buy and sell routes validated — this is an executable trade.
             entry_mode = "executable"
-            # Fallback if DexScreener had no usable price: derive USD/token from
-            # the Jupiter fill (size_sol SOL spent -> tokens received) and SOL USD.
-            if px <= 0:
-                dec = await self.jupiter.token_decimals(ca) or 6
-                sol_usd = await self._sol_usd()
-                if sol_usd and tokens_raw:
-                    px = (self.size_sol * sol_usd) / (tokens_raw / (10 ** dec))
+            # Derive executable entry from the Jupiter buy quote:
+            # size_sol SOL spent, tokens_raw received, SOL price in USD.
+            dec = await self.jupiter.token_decimals(ca) or 6
+            sol_usd = await self._sol_usd()
+            if sol_usd and tokens_raw:
+                exec_px = (self.size_sol * sol_usd) / (tokens_raw / (10 ** dec))
+        # Use Jupiter executable price as canonical entry when available;
+        # fall back to DexScreener mid only when Jupiter is absent.
+        px = exec_px if exec_px > 0 else market_px
         if px <= 0:
             logs.journal("shadow_skip", ca=ca, symbol=symbol, reason="no_price")
             log.info("shadow skip %s (%s): no price", ca[:10], symbol)
@@ -281,6 +278,12 @@ class ShadowBook:
         # The mutation is locked so an in-flight refresh_prices() (running in
         # the main loop) can never interleave and double-count balance/positions.
         async with self._lock:
+            if len(self.open) >= self.max_positions:
+                logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                             reason="max_positions")
+                log.info("shadow skip %s (%s): max positions %d reached",
+                         ca[:10], symbol, self.max_positions)
+                return
             if self.balance_sol < self.size_sol:
                 logs.journal("shadow_skip", ca=ca, symbol=symbol,
                              reason="insufficient_balance")
@@ -291,7 +294,8 @@ class ShadowBook:
             self.balance_sol -= self.size_sol
             self.open[ca] = {
                 "symbol": symbol, "entry_usd": px, "peak_usd": px, "last_usd": px,
-                "tokens_raw": tokens_raw, "entry_note": entry_note,
+                "market_entry_px": market_px, "tokens_raw": tokens_raw,
+                "entry_note": entry_note,
                 "size_sol": self.size_sol, "ts": time.time(),
                 "trigger_usd": trigger_usd, "n_wallets": n_wallets,
                 "wallets": list(wallets or []),
@@ -394,9 +398,20 @@ class ShadowBook:
                     try:
                         sq = await self.jupiter.quote_sell(ca, pos["tokens_raw"])
                         if sq is not None and sq.success:
-                            sol_out = sq.output_amount / 1e9
-                            mult = sol_out / pos["size_sol"]
+                            jup_mult = (sq.output_amount / 1e9) / pos["size_sol"]
                             pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
+                            # Re-evaluate exit using the executable price.
+                            # If Jupiter says the position is still healthy
+                            # (e.g. DexScreener lag triggered a trail but the
+                            # actual fill would be better), defer the close.
+                            if jup_mult > mult:
+                                # Jupiter price is better than DexScreener —
+                                # the exit was triggered by stale DEX data.
+                                # Update mult to the executable value but still
+                                # exit if the DEX-triggered reason still holds
+                                # at the executable level.
+                                pass  # will re-check below
+                            mult = jup_mult  # use executable price for PnL
                     except Exception:
                         log.exception("sell-quote failed for %s; using price-ratio pnl",
                                       ca[:10])

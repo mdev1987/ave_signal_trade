@@ -52,7 +52,9 @@ BASE_MINT = "So11111111111111111111111111111111111111112"  # WSOL
 BASE_DECIMALS = 9
 
 # Slippage escalation ladder when a sell keeps failing (basis points).
-SELL_SLIPPAGE_ESCALATION = (200, 300, 500, 1000)
+# Must be strictly ascending and deduplicated. The sell() method prepends
+# the base slippage (self._slippage_bps) and deduplicates automatically.
+SELL_SLIPPAGE_ESCALATION = (500, 1000)
 
 # Recent-latency samples kept for p50/p95 percentiles in quote_summary().
 _LATENCY_SAMPLES_MAX = 500
@@ -1054,8 +1056,19 @@ class JupiterSwap:
         """
         if self._keypair is None:
             return SwapResult(False, "", amount_raw, 0, "paper mode: cannot sign")
+        # Build a strictly-ascending, deduplicated slippage ladder starting
+        # from the base slippage.  E.g. base=300 + escalation=(500,1000)
+        # -> [300, 500, 1000].  Older configs with overlapping values like
+        # (200, 300, 500, 1000) are safely deduped.
+        seen: set[int] = set()
+        ladder: list[int] = []
+        for s in (self._slippage_bps,) + tuple(self._sell_slippage_escalation):
+            if s not in seen:
+                seen.add(s)
+                ladder.append(s)
+        ladder.sort()
         last: SwapResult | None = None
-        for slippage in (self._slippage_bps,) + self._sell_slippage_escalation:
+        for slippage in ladder:
             try:
                 order = await self._order(
                     mint,

@@ -84,10 +84,14 @@ class PumpApiStream:
                 amount = float(ev.get("tokenAmount") or 0.0)
                 sym = self._sym.get(ca) or ev.get("symbol") or ev.get("name") or "?"
                 usd = quote * await self._sol_usd()
-                try:
-                    await self.on_buy(next(iter(hit)), ca, sym, usd, amount)
-                except Exception:
-                    log.exception("pumpapi on_buy failed")
+                # Forward EVERY tracked wallet in this event, not just one.
+                # A single PumpAPI buy can contain multiple KOL wallets; only
+                # forwarding one destroys the consensus signal.
+                for wallet in hit:
+                    try:
+                        await self.on_buy(wallet, ca, sym, usd, amount)
+                    except Exception:
+                        log.exception("pumpapi on_buy failed for %s", wallet[:10])
 
     async def _sol_usd(self) -> float:
         now = time.time()
