@@ -1,14 +1,11 @@
 """DexScreener REST oracle client (rate-limited).
 
-Docs: https://docs.dexscreener.com/api/reference — all REST endpoints are
-rate-limited to **60 requests/minute** on the public API (no keyed tier is
-documented; higher plans exist privately — ``rpm`` is configurable so a
-300 rpm plan can be honored without code changes).
-
-Used as the fast fallback liquidity/market-cap oracle when DexPaprika has not
-indexed a brand-new pool yet (observed live 2026-08-24: WOFI graduated to
-PumpSwap and pumped ~1380x within the minute while DexPaprika still returned
-no pool — DexScreener had the pair indexed immediately).
+Docs: https://docs.dexscreener.com/api/reference
+Rate limits are per-endpoint:
+  /latest/dex/pairs/*, /latest/dex/search, /tokens/v1/* → 300 RPM
+  /token-profiles/*, /metas/*, /ads/*                   → 60 RPM
+We only use the 300-RPM endpoints.  ``rpm`` is configurable so a paid plan
+can be honored without code changes.
 """
 
 from __future__ import annotations

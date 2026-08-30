@@ -157,7 +157,7 @@ class Settings:
     discover_enrich: bool = True      # fetch token details to mark pumped (no DeBot)
     # dexscreener
     dexscreener_base_url: str = "https://api.dexscreener.com"
-    dexscreener_rpm: int = 60
+    dexscreener_rpm: int = 300  # /latest/dex/* and /tokens/v1/* are 300 RPM
     # DBotX data API — used only as a fail-open rug/safety filter in the open
     # gate (mint/freeze authority, top-10 concentration). Missing key or a
     # 403/whitelist rejection degrades to "allow", never blocks the bot.
