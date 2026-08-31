@@ -1,11 +1,11 @@
 """Smart-money watcher: poll the discovered wallets, alert on new buys.
 
-Single-provider design (Shyft):
-  One ``getTransactionsForAddress`` call per wallet per sweep returns FULL
-  transactions since the last sweep — server-side blockTime filter, parsed
-  token balances included. Buys are derived locally as "wallet received a
-  non-SOL token it didn't hold before"; USD value is enriched from the
-  DexScreener price feed that the shadow book already uses.
+Two-feed architecture:
+  - **PumpAPI WebSocket** (primary): real-time buy events (~1-3s latency)
+  - **Shyft polling** (fallback): periodic sweeps for missed/backfill events
+
+The Shyft path uses a global rate gate (token bucket) to stay under the
+plan's 10 req/sec RPC limit, plus per-wallet backoff on 429s.
 
 Alerts:
   - tracked wallet buys an unseen CA -> 🕵️ Smart buy
@@ -30,6 +30,38 @@ logger = logging.getLogger(__name__)
 
 SOL = "So11111111111111111111111111111111111111112"
 WSOL = SOL
+
+
+class _RateGate:
+    """Global token-bucket rate limiter for Shyft RPC calls.
+
+    All 262 wallet sweeps share one gate.  On 429 the gate pauses entirely
+    (``backoff_s``) so the whole provider recovers, instead of each wallet
+    fighting independently.
+    """
+
+    def __init__(self, min_gap_s: float = 0.20) -> None:
+        self._min_gap = min_gap_s
+        self._last_ts = 0.0
+        self._lock = asyncio.Lock()
+        self._pause_until = 0.0  # global 429 backoff
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            # honour global backoff
+            if now < self._pause_until:
+                await asyncio.sleep(self._pause_until - now)
+                now = time.monotonic()
+            wait = self._last_ts + self._min_gap - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_ts = time.monotonic()
+
+    def backoff(self, seconds: float) -> None:
+        """Pause the entire gate (all workers) on 429."""
+        self._pause_until = time.monotonic() + seconds
+        logger.info("rate gate: global pause %.1fs", seconds)
 
 
 def _report_crash(task: asyncio.Task) -> None:
@@ -137,7 +169,7 @@ class SmartWalletWatcher:
         wallets_file: str = "smart_money_wallets.json",
         state_file: str = "watcher_state.json",
         tokens_file: str = "watched_tokens.json",
-        poll_s: float = 45.0,
+        poll_s: float = 120.0,
         min_buy_usd: float = 100.0,
         consensus_wallets: int = 2,
         consensus_window_s: float = 7200.0,
@@ -148,7 +180,7 @@ class SmartWalletWatcher:
         wallet_default_weight: float = 0.5,
         consensus_weight_threshold: float = 1.5,
         require_strong_wallet: bool = True,
-        sweep_concurrency: int = 6,
+        sweep_concurrency: int = 3,
     ) -> None:
         wf = Path(wallets_file)
         data = json.loads(wf.read_text()) if wf.exists() else {}
@@ -186,7 +218,11 @@ class SmartWalletWatcher:
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._price_cache: dict[str, tuple[float, float, str | None]] = {}
-        self._last_rpc_ts = 0.0
+        # Global rate gate for Shyft RPC (shared across all wallet sweeps)
+        self._rate_gate = _RateGate(min_gap_s=0.20)
+        # Per-wallet 429 cooldown: wallet -> monotonic timestamp when safe to retry
+        self._wallet_cooldown: dict[str, float] = {}
+        self._shyft_429_count = 0
         # Wallet churn tracking: detect wallets that spray many tokens in
         # a short window (noise signal). Maps wallet -> [(ts, ca), ...].
         self._wallet_buys: dict[str, list[tuple[float, str]]] = {}
@@ -250,15 +286,12 @@ class SmartWalletWatcher:
             logger.exception("watcher state save failed")
 
     # ---------------------------------------------------------------- shyft
-    async def _throttle(self, min_gap_s: float = 0.35) -> None:
-        """Keep Shyft RPC under the plan's rate limit (conservative for 262 wallets)."""
-        now = time.monotonic()
-        wait = self._last_rpc_ts + min_gap_s - now
-        if wait > 0:
-            await asyncio.sleep(wait)
-        self._last_rpc_ts = time.monotonic()
-
     async def _fetch_txs(self, wallet: str, since_ts: float) -> list[dict]:
+        # Per-wallet 429 cooldown — skip wallets that recently 429'd
+        now_mono = time.monotonic()
+        cooldown_until = self._wallet_cooldown.get(wallet, 0.0)
+        if now_mono < cooldown_until:
+            return []
         base = self.shyft_rpc.split("?")[0].rstrip("/")
         url = f"{base}?api_key={self.shyft_key}"
         txs: list[dict] = []
@@ -275,8 +308,8 @@ class SmartWalletWatcher:
             }]
             if cursor:
                 params[1]["paginationToken"] = cursor
-            for attempt in range(4):          # up to 3 retries on 429
-                await self._throttle()
+            for attempt in range(3):          # up to 2 retries on 429
+                await self._rate_gate.acquire()
                 try:
                     r = await self._http.post(url, json={
                         "jsonrpc": "2.0", "id": "1",
@@ -286,10 +319,14 @@ class SmartWalletWatcher:
                     logger.warning("shyft %s… error %s", wallet[:10], exc)
                     return txs
                 if r.status_code == 429:
-                    backoff = min(2.0 * (2 ** attempt), 16.0)
-                    logger.info("shyft 429 %s… backoff %.1fs", wallet[:10], backoff)
-                    await asyncio.sleep(backoff)
-                    continue
+                    self._shyft_429_count += 1
+                    # Per-wallet cooldown: 60s for this wallet
+                    self._wallet_cooldown[wallet] = time.monotonic() + 60.0
+                    # Global backoff: pause ALL workers briefly
+                    self._rate_gate.backoff(min(2.0 * (2 ** attempt), 8.0))
+                    logger.info("shyft 429 %s… wallet cooldown 60s, global pause",
+                                wallet[:10])
+                    return []  # skip this wallet entirely for now
                 break
             if r.status_code != 200:
                 logger.warning("shyft HTTP %s for %s…",
@@ -459,10 +496,20 @@ class SmartWalletWatcher:
                 logger.exception("on_smart_buy callback failed")
 
     async def run(self) -> None:
-        logger.info("wallets: %d, poll %.0fs (shyft), concurrency=%d",
+        logger.info("wallets: %d, poll %.0fs (shyft fallback), concurrency=%d",
                     len(self.wallets), self.poll_s, self._sweep_concurrency)
         while not self._stop.is_set():
             t0 = time.time()
+            # Prune expired per-wallet cooldowns
+            now_mono = time.monotonic()
+            self._wallet_cooldown = {w: t for w, t in self._wallet_cooldown.items()
+                                     if t > now_mono}
+            active = len(self.wallets) - len(self._wallet_cooldown)
+            shyft_429s = self._shyft_429_count
+            self._shyft_429_count = 0
+            if self._wallet_cooldown:
+                logger.info("shyft: %d wallets in cooldown, %d active, %d 429s last sweep",
+                            len(self._wallet_cooldown), active, shyft_429s)
             sem = asyncio.Semaphore(self._sweep_concurrency)
             async def _guarded(w):
                 async with sem:

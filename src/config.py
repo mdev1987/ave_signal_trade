@@ -140,7 +140,7 @@ class Settings:
     shadow_state_file: str = "shadow_book.json"
     status_every_min: float = 30.0
     # watcher
-    watch_poll_s: float = 45.0
+    watch_poll_s: float = 120.0
     watch_min_buy_usd: float = 50.0
     watch_consensus_wallets: int = 2
     watch_consensus_window_s: float = 600.0
