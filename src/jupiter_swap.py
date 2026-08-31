@@ -188,10 +188,10 @@ class JupiterSwap:
             config.get(env, "QUOTE_STABILITY_INTERVAL_MS", 300)
         )
         self.max_quote_change_pct = float(
-            config.get(env, "MAX_QUOTE_CHANGE_PCT", 5.0)
+            config.get(env, "MAX_QUOTE_CHANGE_PCT", 10.0)
         )
         self.max_impact_change_pct = float(
-            config.get(env, "MAX_IMPACT_CHANGE_PCT", 3.0)
+            config.get(env, "MAX_IMPACT_CHANGE_PCT", 5.0)
         )
         self._quote_cache_s = config.get_float(env, "JUPITER_QUOTE_CACHE_S", 30.0)
         self._quote_throttle_s = config.get_float(env, "JUPITER_QUOTE_THROTTLE_S", 1.0)

@@ -103,7 +103,7 @@ class Settings:
     hard_stop_pct: float = 0.25        # hard stop (tightened from 0.30; gaps still slip, see review)
     open_min_liq_usd: float = 1500.0    # skip only the thinnest tokens; smart wallets buy fresh <$5k pumps
     per_wallet_max_positions: int = 3   # cap open positions that share a wallet (kills AgmLJ/kEFiA correlation stack)
-    open_max_impact_pct: float = 4.0    # skip open if Jupiter buy-side price impact > this (execution risk; MARIO opened at 4.47%)
+    open_max_impact_pct: float = 5.0    # skip open if Jupiter buy-side price impact > this (match Jupiter's own gate)
     open_min_h1_pct: float = 0.0        # require 1h price change >= this (enter uptrends, skip tops/flat)
     open_max_m5_dump_pct: float = -5.0  # skip if 5m price change < this (don't enter a token dumping at the signal)
     mtf_align_bonus: float = 0.3       # multi-timeframe alignment score modifier (per aligned timeframe above the 2/4 midpoint)

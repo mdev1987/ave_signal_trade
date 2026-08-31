@@ -41,14 +41,17 @@ class PumpApiStream:
         self._sol_t = 0.0
 
     async def run(self) -> None:
+        backoff = 1.0
         while not self._stop.is_set():
             try:
                 await self._loop()
+                backoff = 1.0  # reset on clean exit
             except asyncio.CancelledError:
                 raise
             except Exception as exc:                       # noqa: BLE001
                 log.warning("pumpapi stream dropped: %s", exc)
-                await asyncio.sleep(3)
+                await asyncio.sleep(min(backoff, 30.0))
+                backoff = min(backoff * 2, 30.0)
 
     async def _loop(self) -> None:
         async with websockets.connect(WS_URL, ping_interval=20,

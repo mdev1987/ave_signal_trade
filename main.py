@@ -608,7 +608,7 @@ async def _run_watch(s: cfg.Settings) -> int:
     backfill_done = asyncio.Event()
     # Space out opens so a backlog (e.g. post-lookback batch) can't dump a
     # burst of positions at once. Configurable via OPEN_GAP_S.
-    last_open = {"t": 0.0}
+    last_open = {"t": 0.0, "score": 0.0}
     open_gap_s = s.open_gap_s
 
     _skip_log = {}
@@ -646,7 +646,16 @@ async def _run_watch(s: cfg.Settings) -> int:
         elif any(c.get("ca") == ca for c in book.closed[-100:]):
             reason = "skip:recently_closed"
         elif time.time() - last_open["t"] < open_gap_s:
-            reason = "skip:open_spacing"
+            # Open-spacing override: a much stronger signal (score >= 2.5) can
+            # bypass the gap if the last open was weak (score < 2.0).  This
+            # prevents a mediocre signal from blocking a genuine multi-wallet
+            # consensus that arrives within the cooldown.
+            last_score = last_open.get("score", 0)
+            if score >= 2.5 and last_score < 2.0:
+                log.info("open_spacing override %s (%s) score=%.2f > last %.2f",
+                         ca[:10], sym, score, last_score)
+            else:
+                reason = "skip:open_spacing"
         else:
             # Fetch the market snapshot once: it drives both the momentum floor
             # and the multi-timeframe alignment score modifier below.
@@ -705,6 +714,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                 # DexScreener blip with a genuine consensus: open flagged as
                 # liq-unchecked rather than discarding the signal.
                 last_open["t"] = time.time()
+                last_open["score"] = score
                 logs.journal("open_liq_unchecked", ca=ca, symbol=sym,
                              note="dexscreener_unavailable")
                 logs.journal("open_signal_momentum", ca=ca, symbol=sym,
@@ -720,6 +730,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                 reason = f"skip:dumping(m5={pc.get('m5')})"
             else:
                 last_open["t"] = time.time()
+                last_open["score"] = score
                 logs.journal("open_signal_momentum", ca=ca, symbol=sym,
                              score=score, effective=round(effective, 3),
                              pmult=pmult, align=align, price_change=pc)
