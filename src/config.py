@@ -166,6 +166,16 @@ class Settings:
     dbotx_base_url: str = "https://api-data-v1.dbotx.com"
     dbotx_safety: bool = True
     dbotx_top10_max: float = 0.25  # skip if top-10 holders own more than this (0.25 = 25%)
+    # --- SolanaTracker Data API ---
+    soltracker_api_key: str = ""
+    soltracker_base_url: str = "https://data.solanatracker.io"
+    soltracker_kol_feed: bool = False       # enable KOL trade polling (needs Advanced tier)
+    soltracker_kol_poll_s: float = 30.0     # poll interval for KOL trades
+    soltracker_risk_gate: bool = True       # enable risk score pre-filter
+    soltracker_risk_max_score: float = 7.0  # reject tokens with risk > this (1-10 scale)
+    soltracker_sniper_filter: bool = False  # enable sniper detection filter
+    soltracker_sniper_max_pct: float = 30.0 # max % of snipers among first-buyers
+    soltracker_wallet_refresh_h: float = 4.0  # hours between wallet score refresh
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -232,4 +242,13 @@ def load_settings(path: str = ".env") -> Settings:
         dbotx_base_url=get(env, "DBOTX_BASE_URL", _d.dbotx_base_url),
         dbotx_safety=get_bool(env, "DBOTX_SAFETY", _d.dbotx_safety),
         dbotx_top10_max=get_float(env, "DBOTX_TOP10_MAX", _d.dbotx_top10_max),
+        soltracker_api_key=get(env, "SOLTRACKER_API_KEY", _d.soltracker_api_key),
+        soltracker_base_url=get(env, "SOLTRACKER_BASE_URL", _d.soltracker_base_url),
+        soltracker_kol_feed=get_bool(env, "SOLTRACKER_KOL_FEED", _d.soltracker_kol_feed),
+        soltracker_kol_poll_s=get_float(env, "SOLTRACKER_KOL_POLL_S", _d.soltracker_kol_poll_s),
+        soltracker_risk_gate=get_bool(env, "SOLTRACKER_RISK_GATE", _d.soltracker_risk_gate),
+        soltracker_risk_max_score=get_float(env, "SOLTRACKER_RISK_MAX_SCORE", _d.soltracker_risk_max_score),
+        soltracker_sniper_filter=get_bool(env, "SOLTRACKER_SNIPER_FILTER", _d.soltracker_sniper_filter),
+        soltracker_sniper_max_pct=get_float(env, "SOLTRACKER_SNIPER_MAX_PCT", _d.soltracker_sniper_max_pct),
+        soltracker_wallet_refresh_h=get_float(env, "SOLTRACKER_WALLET_REFRESH_H", _d.soltracker_wallet_refresh_h),
     )

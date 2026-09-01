@@ -26,7 +26,10 @@ degrades gracefully to the legacy behaviour instead of breaking.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 def build_weights(
@@ -76,4 +79,75 @@ def build_weights(
         pnl = rec.get("pnl_total") or 0.0
         tier = tier2_mult if pnl >= pnl_tier2 else tier1_mult if pnl >= pnl_tier1 else 1.0
         weights[addr] = round(min(max_weight, base * tier), 3)
+    return weights, default_weight
+
+
+async def build_weights_from_soltracker(
+    soltracker,
+    wallets: list[str],
+    *,
+    floor_win: float = 0.40,
+    full_win: float = 0.60,
+    pnl_tier1: float = 1_000_000.0,
+    pnl_tier2: float = 5_000_000.0,
+    tier1_mult: float = 1.25,
+    tier2_mult: float = 1.5,
+    default_weight: float = 0.5,
+    max_weight: float = 2.0,
+    confidence_trades: int = 30,
+) -> tuple[dict[str, float], float]:
+    """Build wallet weights from live SolanaTracker PnL V2 batch summaries.
+
+    Falls back to empty dict on any failure so the caller can use the JSON
+    file instead.
+    """
+    if not wallets:
+        return {}, default_weight
+    try:
+        summaries = await soltracker.get_wallets_summary(wallets)
+    except Exception:
+        log.exception("soltracker wallet summary failed")
+        return {}, default_weight
+    if not summaries:
+        return {}, default_weight
+    weights: dict[str, float] = {}
+    denom = (full_win - floor_win) or 1.0
+    for addr in wallets:
+        s = summaries.get(addr)
+        if not s:
+            weights[addr] = default_weight
+            continue
+        # Extract win rate from PnL V2 response
+        wr_pct = 0.0
+        pnl_data = s.get("pnl") or {}
+        if isinstance(pnl_data, dict):
+            wr_pct = pnl_data.get("winPercentage") or 0.0
+        if wr_pct <= 0:
+            # Try top-level winRate field
+            wr_pct = s.get("winRate") or 0.0
+        wr = wr_pct / 100.0 if wr_pct > 1 else wr_pct  # handle both % and fraction
+        if wr <= 0 or wr < floor_win:
+            weights[addr] = 0.0
+            continue
+        # Sample-size confidence
+        trades = 0
+        if isinstance(pnl_data, dict):
+            trades = pnl_data.get("trades") or 0
+        if trades <= 0:
+            trades = s.get("trades") or 0
+        confidence = min(1.0, trades / confidence_trades)
+        adjusted_wr = 0.5 + confidence * (wr - 0.5)
+        if adjusted_wr < floor_win:
+            weights[addr] = 0.0
+            continue
+        base = min(1.0, (adjusted_wr - floor_win) / denom)
+        pnl_total = 0.0
+        if isinstance(pnl_data, dict):
+            pnl_total = pnl_data.get("total") or pnl_data.get("realized") or 0.0
+        if pnl_total <= 0:
+            pnl_total = s.get("pnlTotal") or 0.0
+        tier = tier2_mult if pnl_total >= pnl_tier2 else tier1_mult if pnl_total >= pnl_tier1 else 1.0
+        weights[addr] = round(min(max_weight, base * tier), 3)
+    n_scored = sum(1 for w in weights.values() if w > 0)
+    log.info("soltracker weights: %d/%d wallets scored (live)", n_scored, len(wallets))
     return weights, default_weight

@@ -539,3 +539,48 @@ class SmartWalletWatcher:
         if self._task:
             await asyncio.gather(self._task, return_exceptions=True)
         await self._http.aclose()
+
+    # --------------------------------------------------------- SolanaTracker KOL feed
+    async def kol_trade_poll(self, soltracker, poll_s: float) -> None:
+        """Poll SolanaTracker KOL trades and forward tracked buys to _process_buy.
+
+        Requires Advanced tier (€50/mo). Polls every ``poll_s`` seconds,
+        deduplicates by (wallet, ca, ts) tuples, and filters to only our
+        tracked wallets + unseen CAs.
+        """
+        if not soltracker:
+            return
+        seen: set[tuple[str, str, float]] = set()
+        logger.info("kol_trade_poll: started (interval=%.0fs)", poll_s)
+        while not self._stop.is_set():
+            try:
+                trades = await soltracker.get_kol_trades(limit=50)
+            except Exception:
+                logger.exception("kol_trade_poll: fetch failed")
+                trades = []
+            for tr in (trades or []):
+                wallet = (tr.get("wallet") or tr.get("address") or "").strip()
+                ca = (tr.get("token") or tr.get("mint") or "").strip()
+                ts = tr.get("timestamp") or tr.get("blockTime") or 0
+                if not wallet or not ca:
+                    continue
+                if wallet not in self.wallets:
+                    continue
+                dedup_key = (wallet, ca, float(ts))
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                # Prune old seen keys (keep last 10k)
+                if len(seen) > 10_000:
+                    old = sorted(seen, key=lambda x: x[2])[:5_000]
+                    for k in old:
+                        seen.discard(k)
+                usd = tr.get("usd") or tr.get("amountUsd") or tr.get("price") or 0
+                if usd < self.min_buy_usd:
+                    continue
+                logger.info("kol_trade_poll: %s bought %s ($%.2f)", wallet[:8], ca[:8], usd)
+                await self._process_buy(wallet, ca, usd)
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=poll_s)
+            except TimeoutError:
+                pass

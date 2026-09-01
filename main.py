@@ -560,6 +560,22 @@ async def _run_watch(s: cfg.Settings) -> int:
     # Fail-open rug/safety filter (DBotX). Degrades to allow on any error.
     dbx = DBotXClient(api_key=s.dbotx_api_key, base_url=s.dbotx_base_url)
 
+    # SolanaTracker (optional): live wallet scoring, risk gate, KOL feed
+    _st_key = (s.soltracker_api_key or "").strip()
+    soltracker = None
+    if _st_key:
+        try:
+            from soltracker import SolanaTrackerClient
+            soltracker = SolanaTrackerClient(
+                api_key=_st_key,
+                base_url=s.soltracker_base_url,
+            )
+            log.info("soltracker: enabled (feed=%s, risk=%s, sniper=%s)",
+                     s.soltracker_kol_feed, s.soltracker_risk_gate,
+                     s.soltracker_sniper_filter)
+        except Exception:
+            log.exception("soltracker init failed — disabled")
+
     # Data-driven wallet quality: weight each KOL by real win rate + PnL so the
     # consensus score reflects conviction, not just head-count.
     weights, default_weight = build_weights(
@@ -605,6 +621,52 @@ async def _run_watch(s: cfg.Settings) -> int:
         wallets=w.wallets, on_buy=_on_pump_buy, http=w._http)
     pump_task = asyncio.create_task(pump_stream.run())
     pump_task.add_done_callback(_log_task_result)
+
+    # SolanaTracker KOL trade feed (optional, needs Advanced tier)
+    _kol_task = None
+    if soltracker and s.soltracker_kol_feed:
+        _kol_task = asyncio.create_task(
+            w.kol_trade_poll(soltracker, s.soltracker_kol_poll_s))
+        _kol_task.add_done_callback(_log_task_result)
+        log.info("kol_trade_poll: started (interval=%.0fs)", s.soltracker_kol_poll_s)
+
+    # SolanaTracker wallet score refresh (periodic)
+    async def _wallet_refresh_loop() -> None:
+        """Refresh wallet weights from SolanaTracker every N hours."""
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(),
+                                       timeout=s.soltracker_wallet_refresh_h * 3600)
+            except TimeoutError:
+                pass
+            if stop.is_set():
+                break
+            if not soltracker:
+                continue
+            try:
+                from wallet_weights import build_weights_from_soltracker
+                new_weights, new_default = await build_weights_from_soltracker(
+                    soltracker, w.wallets,
+                    floor_win=s.wallet_weight_floor_win,
+                    full_win=s.wallet_weight_full_win,
+                    pnl_tier1=s.wallet_pnl_tier1, pnl_tier2=s.wallet_pnl_tier2,
+                    tier1_mult=s.wallet_weight_tier1_mult,
+                    tier2_mult=s.wallet_weight_tier2_mult,
+                    default_weight=s.wallet_default_weight,
+                    max_weight=s.wallet_weight_max,
+                )
+                if new_weights:
+                    w.weights = new_weights
+                    w.default_weight = new_default
+                    log.info("wallet weights refreshed from soltracker: %d scored",
+                             sum(1 for v in new_weights.values() if v > 0))
+            except Exception:
+                log.exception("wallet refresh failed")
+
+    if soltracker:
+        _refresh_task = asyncio.create_task(_wallet_refresh_loop())
+        _refresh_task.add_done_callback(_log_task_result)
+
     # Hard cap on concurrent positions: never more than capital allows, and
     # never above the configured max_open_positions (avoids a consensus burst
     # over-leveraging the paper book).
@@ -705,6 +767,19 @@ async def _run_watch(s: cfg.Settings) -> int:
                 snap = await ds.token_pairs("solana", ca)
             except Exception:
                 snap = None
+            # SolanaTracker risk score gate (fail-open): reject tokens with
+            # high risk scores before the DBotX check.
+            if soltracker and s.soltracker_risk_gate:
+                try:
+                    risk = await soltracker.get_token_info(ca)
+                    if risk and risk.get("riskScore", 0) > s.soltracker_risk_max_score:
+                        reason = f"skip:high_risk(score={risk['riskScore']:.1f})"
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
+                except Exception:
+                    log.debug("soltracker risk check failed for %s", ca[:10])
             # Rug/safety gate (DBotX, fail-open): reject tokens that still hold a
             # mint or freeze authority, or are dangerously top-10 concentrated.
             # A 403 / missing key degrades to "allow" so an outage never blocks.
@@ -732,6 +807,23 @@ async def _run_watch(s: cfg.Settings) -> int:
                         return
                     logs.journal("open_safety_ok", ca=ca, symbol=sym,
                                  safety=info)
+            # SolanaTracker sniper filter (fail-open): reject tokens where
+            # too many first-buyers are known snipers (bot accounts).
+            if soltracker and s.soltracker_sniper_filter:
+                try:
+                    first_buyers = await soltracker.get_first_buyers(ca)
+                    if first_buyers and len(first_buyers) > 0:
+                        sniper_count = sum(1 for fb in first_buyers
+                                          if fb.get("isSniper") or fb.get("type") == "sniper")
+                        sniper_pct = sniper_count / len(first_buyers) * 100
+                        if sniper_pct > s.soltracker_sniper_max_pct:
+                            reason = f"skip:snipers({sniper_pct:.0f}%>{s.soltracker_sniper_max_pct}%)"
+                            if _skip_log.get(ca, 0) < time.time() - 300:
+                                _skip_log[ca] = time.time()
+                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                            return
+                except Exception:
+                    log.debug("soltracker sniper check failed for %s", ca[:10])
             pc = (snap or {}).get("price_change") or {}
             tfs = ("m5", "h1", "h6", "h24")
             avail = [k for k in tfs if pc.get(k) is not None]
