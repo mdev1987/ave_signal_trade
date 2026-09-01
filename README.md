@@ -15,6 +15,12 @@ DeBot tier/rank --> Moralis Solana swaps (launch-window buyers)
          |                                 |
          v                                 v
    Telegram alerts --> shadow paper book (trailing stop + TP ladder)
+
+SolanaTracker (optional):
+  ├── Live wallet scoring (every 4h refresh)
+  ├── Token risk score gate (fail-open pre-filter)
+  ├── KOL trade feed polling (every 30s)
+  └── Sniper detection filter
 ```
 
 ## Project structure
@@ -35,6 +41,7 @@ src/
   logs.py                # logging + journal (JSONL)
   tatum_notify.py        # Tatum push subscriptions
   debot.py               # DeBot.ai community-signal client
+  soltracker.py          # SolanaTracker API client (risk, KOL feed, wallets)
 scripts/
   discover_wallets.py    # expand watchlist from SolanaTracker leaderboard
   wallet_perf.py         # rank wallets by PnL / win rate
@@ -93,9 +100,13 @@ shadow position:
 5. **Pair-quality multiplier** — adaptive per-wallet-pair multiplier based
    on rolling trade history. Known-losing pairs (e.g. AgmLJ+kEFiA) get
    0.5x; unknown pairs stay at 1.0
-6. **DBotX safety** — fail-open rug filter checking mint/freeze authority
+6. **SolanaTracker risk gate** — fail-open pre-filter checking token risk
+   score (1-10 scale). Tokens above `SOLTRACKER_RISK_MAX_SCORE` (7) rejected
+7. **DBotX safety** — fail-open rug filter checking mint/freeze authority
    and top-10 holder concentration
-7. **Jupiter impact guard** — skip if buy-side slippage exceeds
+8. **SolanaTracker sniper filter** — fail-open check rejecting tokens where
+   too many first-buyers are known snipers (bot accounts)
+9. **Jupiter impact guard** — skip if buy-side slippage exceeds
    `OPEN_MAX_IMPACT_PCT`
 
 ### Shadow book exit logic
@@ -120,8 +131,10 @@ Health check restarts the app if `bot_logs/watcher.log` goes stale >6 min.
 Everything lives in `.env` (template: `.env.example`). Key groups:
 
 - **Telegram**: `BOT_TOKEN`, `CHAT_ID`
-- **Data providers**: `HELIUS_API_KEYS`, `SHYFT_API_KEY`, `TATUM_API_KEY`,
-  `SOLTRACKER_API_KEY`
+- **Data providers**: `HELIUS_API_KEYS`, `SHYFT_API_KEY`, `TATUM_API_KEY`
+- **SolanaTracker**: `SOLTRACKER_API_KEY`, `SOLTRACKER_KOL_FEED`,
+  `SOLTRACKER_RISK_GATE`, `SOLTRACKER_RISK_MAX_SCORE`, `SOLTRACKER_SNIPER_FILTER`,
+  `SOLTRACKER_SNIPER_MAX_PCT`, `SOLTRACKER_WALLET_REFRESH_H`
 - **Wallet weighting**: `WALLET_WEIGHT_FLOOR_WIN`, `WALLET_WEIGHT_FULL_WIN`,
   `CONSENSUS_WEIGHT_THRESHOLD`, `REQUIRE_STRONG_WALLET`
 - **Shadow book**: `SIZE_SOL`, `TP_LADDER`, `TRAIL_*`, `HARD_STOP_PCT`,
