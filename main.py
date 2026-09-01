@@ -565,8 +565,8 @@ async def _run_watch(s: cfg.Settings) -> int:
     soltracker = None
     if _st_key:
         try:
-            from soltracker import SolanaTrackerClient
-            soltracker = SolanaTrackerClient(
+            from soltracker import SolTrackerClient
+            soltracker = SolTrackerClient(
                 api_key=_st_key,
                 base_url=s.soltracker_base_url,
             )
