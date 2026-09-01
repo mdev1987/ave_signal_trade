@@ -272,16 +272,19 @@ class SmartWalletWatcher:
 
     def _save_state(self) -> None:
         try:
+            import os as _os
             # self.state keys are already "ts:<wallet>" — do NOT re-prefix
             # Persist consensus dedup as {ca: timestamp} so restarts don't re-fire
             cons = {ca: ts for ca, ts in self._consensus_ts.items()}
-            self.state_file.write_text(json.dumps({
+            tmp = self.state_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps({
                 **self.state,
                 "known_cas": sorted(self.known_cas),
                 "token_hits": self.token_hits,
                 "wallet_perf": self.wallet_perf,
                 "consensus_sent": cons,
             }, indent=1))
+            _os.replace(str(tmp), str(self.state_file))
         except Exception:
             logger.exception("watcher state save failed")
 

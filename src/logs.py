@@ -160,7 +160,7 @@ def journal(event: str, **fields) -> None:
             if old.exists():
                 old.unlink()
             JOURNAL_LOG.rename(old)
-            JOURNAL_LOG.touch()
+            JOURNAL_LOG.write_text("", encoding="utf-8")
     except OSError:
         logging.getLogger("logs").exception("failed to write journal entry")
 

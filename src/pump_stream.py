@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from typing import Awaitable, Callable
 
@@ -25,6 +26,7 @@ log = logging.getLogger(__name__)
 WS_URL = "wss://stream.pumpapi.io/"
 WSOL = "So11111111111111111111111111111111111111112"
 _COINGECKO = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
+_MAX_SYM_CACHE = 10_000  # LRU cap for mint→symbol cache
 
 # on_buy(wallet, ca, symbol, usd, amount) -> awaited
 BuyHook = Callable[[str, str, str, float, float], Awaitable[None]]
@@ -50,7 +52,8 @@ class PumpApiStream:
                 raise
             except Exception as exc:                       # noqa: BLE001
                 log.warning("pumpapi stream dropped: %s", exc)
-                await asyncio.sleep(min(backoff, 30.0))
+                delay = backoff + random.uniform(0, backoff * 0.5)
+                await asyncio.sleep(min(delay, 30.0))
                 backoff = min(backoff * 2, 30.0)
 
     async def _loop(self) -> None:
@@ -69,6 +72,12 @@ class PumpApiStream:
                     m = ev.get("mint")
                     if m:
                         self._sym[m] = ev.get("symbol") or ev.get("name") or "?"
+                        # LRU cap: evict oldest entries when cache grows too large
+                        if len(self._sym) > _MAX_SYM_CACHE:
+                            # Remove ~20% of oldest entries (dict preserves insertion order)
+                            evict_count = _MAX_SYM_CACHE // 5
+                            for old_key in list(self._sym.keys())[:evict_count]:
+                                del self._sym[old_key]
                     continue
                 if action != "buy":
                     continue

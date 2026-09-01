@@ -194,12 +194,52 @@ class ShadowBook:
 
     def save(self) -> None:
         try:
-            self.state_file.write_text(json.dumps({
+            tmp = self.state_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps({
                 "open": self.open, "closed": self.closed,
                 "start_balance_sol": self.start_balance_sol,
                 "balance_sol": self.balance_sol}, indent=1))
+            os.replace(str(tmp), str(self.state_file))
         except Exception:
             log.exception("shadow book save failed")
+
+    async def reconcile_balances(self) -> None:
+        """Validate restored open positions against on-chain token balances.
+
+        Called once at startup after the Jupiter RPC client is available.
+        Positions with tokens_raw == 0 are moved to stuck (can't sell).
+        Positions whose on-chain balance is zero are closed as losses.
+        """
+        if self.jupiter is None or not self.open:
+            return
+        async with self._lock:
+            removed = []
+            for ca, pos in list(self.open.items()):
+                real_balance = await self.jupiter.token_balance(ca)
+                if real_balance is None:
+                    # RPC failed — keep position as-is, will reconcile later
+                    continue
+                stored = pos.get("tokens_raw", 0)
+                if stored == 0 and real_balance > 0:
+                    # Fix: we have tokens on-chain but didn't capture amount
+                    pos["tokens_raw"] = real_balance
+                    log.info("reconcile %s: fixed tokens_raw 0 → %d", ca[:10], real_balance)
+                elif real_balance == 0:
+                    # Tokens gone — close as loss
+                    log.warning("reconcile %s: tokens gone on-chain, closing", ca[:10])
+                    removed.append(ca)
+            for ca in removed:
+                pos = self.open.pop(ca)
+                pos["pnl_sol"] = -pos.get("size_sol", 0.0)
+                pos["exit_reason"] = "reconcile:sold_offchain"
+                self.closed.append(pos)
+                if self.on_trade_close:
+                    try:
+                        await self.on_trade_close(pos.get("wallets", []), False, pos["pnl_sol"])
+                    except Exception:
+                        log.exception("on_trade_close reconcile callback failed")
+            if removed:
+                self.save()
 
     async def _sol_usd(self) -> float:
         """Current SOL price in USD, used to derive a USD entry from a SOL quote."""
@@ -600,6 +640,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                       early_filter_window_s=s.early_filter_window_s,
                       early_filter_dd_pct=s.early_filter_dd_pct,
                       early_filter_gain_pct=s.early_filter_gain_pct)
+    await book.reconcile_balances()
 
     # shadow book opens automatically via on_smart_buy callback. During the
     # initial lookback window we only TRACK buys (so consensus alerts still
@@ -614,6 +655,7 @@ async def _run_watch(s: cfg.Settings) -> int:
     _skip_log = {}
 
     async def _on_smart_buy(ca, sym, usd, score, wallets=None):
+        last_detection_ts["t"] = time.time()
         n = len(wallets or [])
         # Concentration guard: cap how many open positions may share any one
         # triggering wallet so we don't stack correlated bets and so slots stay
@@ -751,6 +793,7 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     started = time.time()
     alerts = {"n": 0}
+    last_detection_ts = {"t": started}  # updated on any consensus event
 
     async def status_loop() -> None:
         while not stop.is_set():
@@ -805,14 +848,12 @@ async def _run_watch(s: cfg.Settings) -> int:
     log.info("bot started: %s", build_status(book.snapshot(
         len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True})))
     if notifier is not None:
-        try:
-            await notifier.send_startup(
-                summary=f"watching {len(w.wallets)} wallets · "
-                        f"balance {s.start_balance_sol:.2f} SOL · "
-                    f"E4 ladder cw={s.watch_consensus_window_s:.0f}s · "
-                    f"weight_thr={s.consensus_weight_threshold}")
-        except Exception:
-            log.exception("send_startup failed")
+        asyncio.create_task(notifier.send_startup(
+            summary=f"watching {len(w.wallets)} wallets · "
+                    f"balance {s.start_balance_sol:.2f} SOL · "
+                f"E4 ladder cw={s.watch_consensus_window_s:.0f}s · "
+                f"weight_thr={s.consensus_weight_threshold}")
+        ).add_done_callback(_log_task_result)
     w.start()
 
     async def _enable_live_opens() -> None:
@@ -828,7 +869,19 @@ async def _run_watch(s: cfg.Settings) -> int:
         log.info("initial lookback complete — live position opening enabled")
 
     asyncio.create_task(_enable_live_opens()).add_done_callback(_log_task_result)
-    status_task = asyncio.create_task(status_loop())
+
+    async def _status_with_restart() -> None:
+        """Run status_loop, auto-restart on crash."""
+        while not stop.is_set():
+            try:
+                await status_loop()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                log.exception("status_loop crashed — restarting in 60s")
+                await asyncio.sleep(60)
+
+    status_task = asyncio.create_task(_status_with_restart())
     status_task.add_done_callback(_log_task_result)
 
     try:
@@ -849,13 +902,30 @@ async def _run_watch(s: cfg.Settings) -> int:
                 await book.refresh_prices()
             except Exception:
                 log.exception("refresh_prices failed this cycle; continuing")
+            # Feed watchdog: alert if no detections for >5 min with open
+            # positions (the bot might be blind), or >15 min regardless.
+            silence_s = time.time() - last_detection_ts["t"]
+            has_open = bool(book.open)
+            watchdog_thresh = 300 if has_open else 900
+            if silence_s > watchdog_thresh and notifier is not None:
+                alert_key = f"watchdog_{int(silence_s // 60)}"
+                # Only alert once per minute-bucket to avoid spam
+                if alerts.get(alert_key, 0) == 0:
+                    alerts[alert_key] = 1
+                    open_cas = list(book.open.keys())[:3]
+                    await notifier._send(
+                        f"⚠️ **Feed watchdog**\n"
+                        f"▸ No detections for {int(silence_s)}s\n"
+                        f"▸ Open: {', '.join(c[:8] for c in open_cas) or 'none'}"
+                    )
     finally:
         try:
             if notifier is not None:
-                await notifier.send_stopped(book.snapshot(
+                asyncio.create_task(notifier.send_stopped(book.snapshot(
                     len(w.wallets), alerts["n"], w.consensus_fired,
                     time.time() - started,
                     {"tatum": w.tatum_push, "dexscreener": True}))
+                ).add_done_callback(_log_task_result)
         except Exception:
             log.exception("send_stopped failed")
         status_task.cancel()

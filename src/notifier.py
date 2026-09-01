@@ -56,6 +56,7 @@ class TelegramNotifier:
         self._lock = asyncio.Lock()
         self._last_send = 0.0
         self._sent: list[float] = []
+        self._dropped_count = 0  # rate-limited messages dropped
 
     # ----------------------------------------------------------------- send
     async def _send(self, text: str) -> None:
@@ -73,8 +74,10 @@ class TelegramNotifier:
             # drop timestamps older than 60s
             self._sent = [t for t in self._sent if now - t < 60.0]
             if len(self._sent) >= _MAX_PER_MIN:
+                self._dropped_count += 1
                 log.warning(
-                    "telegram rate limit (%d/min) — dropping message", _MAX_PER_MIN
+                    "telegram rate limit (%d/min) — dropping message (total dropped: %d)",
+                    _MAX_PER_MIN, self._dropped_count
                 )
                 return
             # honour the minimum gap between successive sends

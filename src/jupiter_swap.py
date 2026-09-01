@@ -45,6 +45,7 @@ from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 
 import config
+import logs
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +90,22 @@ class SwapResult:
     input_amount: int  # raw: what went in
     output_amount: int  # raw: what came out
     error: str = ""
+    error_code: int | None = None  # Jupiter error code for classification
+
+    @property
+    def is_retryable_quote_error(self) -> bool:
+        """True when the error means 're-quote needed' (not a market hostility)."""
+        return self.error_code in (-2003,)  # quote expired
+
+    @property
+    def is_slippage_error(self) -> bool:
+        """True when slippage was too aggressive — widen and retry."""
+        return self.error_code in (6024, 6051)  # DexNotEnoughAmountOut, DexExceedsAmountInMax
+
+    @property
+    def is_hostile_market(self) -> bool:
+        """True when the market is actively hostile — skip, don't retry."""
+        return self.error_code in (-2004,)  # swap rejected (honeypot/bundled)
 
 
 @dataclass(frozen=True)
@@ -668,12 +685,22 @@ class JupiterSwap:
             )
         data = resp.json() if resp.content else {}
         if resp.status_code != 200 or data.get("status") != "Success":
+            # Parse Jupiter error code for classification
+            error_code = None
+            error_msg = data.get("error") or f"execute HTTP {resp.status_code}"
+            # Jupiter wraps errors in {"error": "...", "code": N}
+            if isinstance(data.get("error"), dict):
+                error_code = data["error"].get("code")
+                error_msg = data["error"].get("message") or error_msg
+            elif "code" in data:
+                error_code = data.get("code")
             return SwapResult(
                 success=False,
                 signature=data.get("signature", ""),
                 input_amount=int(data.get("totalInputAmount") or 0),
                 output_amount=int(data.get("totalOutputAmount") or 0),
-                error=data.get("error") or f"execute HTTP {resp.status_code}",
+                error=error_msg,
+                error_code=error_code,
             )
         return SwapResult(
             success=True,
@@ -683,7 +710,7 @@ class JupiterSwap:
         )
 
     async def check_tx_status(self, signature: str) -> str | None:
-        """Check if a transaction landed on Solana via public RPC.
+        """Check if a transaction landed on Solana via Helius RPC.
 
         Returns the confirmation status string ('processed', 'confirmed',
         'finalized') or 'error' if the tx failed on-chain, or None on
@@ -694,13 +721,13 @@ class JupiterSwap:
             return None
         try:
             resp = await self._client.post(
-                "https://api.mainnet-beta.solana.com",
+                self._rpc_url,
                 json={
                     "jsonrpc": "2.0", "id": "tx-check",
                     "method": "getSignatureStatuses",
                     "params": [[signature], {"searchTransactionHistory": True}],
                 },
-                timeout=10.0,
+                timeout=self._rpc_timeout_s,
             )
             data = resp.json()
             statuses = (data.get("result") or {}).get("value") or []
@@ -1123,6 +1150,11 @@ class JupiterSwap:
         landed (confirmed/finalized) or errored on-chain, we return immediately
         — preventing the dangerous double-sell that happens when a timeout
         caused a retry on an already-landed tx.
+
+        Error classification:
+            - -2003 (quote expired): re-quote at same slippage
+            - 6024/6051 (slippage): widen slippage for next attempt
+            - -2004 (swap rejected): market hostile, skip immediately
         """
         if self._keypair is None:
             return SwapResult(False, "", amount_raw, 0, "paper mode: cannot sign")
@@ -1155,7 +1187,20 @@ class JupiterSwap:
             if result.success:
                 return result
             last = result
-            log.warning("sell execute @%dbps failed: %s", slippage, result.error)
+            log.warning("sell execute @%dbps failed (code=%s): %s",
+                        slippage, result.error_code, result.error)
+            # --- Error classification ---
+            if result.is_hostile_market:
+                log.warning("sell %s: hostile market (code=%d) — skipping",
+                            mint[:10], result.error_code or 0)
+                break
+            if result.is_retryable_quote_error:
+                # Quote expired — re-quote at same slippage (don't widen)
+                log.info("sell %s: quote expired — re-quoting at %dbps",
+                         mint[:10], slippage)
+                await asyncio.sleep(0.5)
+                continue
+            # For slippage errors (6024/6051), fall through to widen
             # --- Reconcile before retrying ---
             sig = result.signature
             if sig:
@@ -1189,6 +1234,14 @@ class JupiterSwap:
                 else:
                     log.info("sell tx %s not found on-chain — retrying",
                              sig[:12])
+            # Backoff before next escalation step
+            if slippage < ladder[-1]:
+                await asyncio.sleep(0.5)
             if slippage >= 1000:
                 break
+        if last and not last.success:
+            log.warning("sell %s: all slippage levels exhausted (final error: %s)",
+                        mint[:10], last.error)
+            logs.journal("sell_failed", mint=mint, amount_raw=amount_raw,
+                         error=last.error, error_code=last.error_code)
         return last or SwapResult(False, "", amount_raw, 0, "sell failed")
