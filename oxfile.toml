@@ -1,7 +1,7 @@
 version = 1
 
 [[apps]]
-name = "watcher"
+name = "track-wallet"
 command = "/usr/bin/env uv run main.py watch"
 cwd = "/home/mdev/Programming/ave_signal_trade"
 restart_policy = "always"

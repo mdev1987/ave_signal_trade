@@ -393,9 +393,6 @@ class ShadowBook:
                 jup_mult = None
                 dex_mult = None
                 if self.jupiter is not None and pos.get("tokens_raw"):
-                    # Quote sell for the REMAINING tokens only (not the full
-                    # position).  After a partial TP, remaining may be <1.0,
-                    # so the sell quote reflects the actual executable size.
                     remaining_raw = int(pos["tokens_raw"] * pos.get("remaining", 1.0))
                     if remaining_raw > 0:
                         try:
@@ -404,26 +401,64 @@ class ShadowBook:
                                 jup_mult = (sq.output_amount / 1e9) / \
                                     (pos["size_sol"] * pos.get("remaining", 1.0))
                                 pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
+                                pos["_quote_fail_count"] = 0  # reset on success
+                            else:
+                                pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
                         except Exception:
+                            pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
                             log.exception("refresh jup quote failed %s", ca[:10])
+                else:
+                    # No Jupiter or no tokens — try DexScreener only
+                    pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
+
                 snap = await self.ds.token_pairs("solana", ca)
                 if snap and snap.get("price_usd"):
                     px = float(snap["price_usd"])
                     dex_mult = px / entry if entry else 0
                     pos["last_usd"] = px
-                # Track peak using ONLY the executable price (Jupiter when
-                # available, DexScreener only as fallback).  A non-executable
-                # DEX spike must not arm TP/trail at a price we can't sell at.
+                else:
+                    # DexScreener also dead — no pair found
+                    dex_mult = None
+
+                # --- dead-liquidity force-close ---
+                # If both Jupiter AND DexScreener have no route, the token is
+                # dead (rug / drained pool).  Force-close after a short grace
+                # period so we don't hold zombie slots forever.
+                DEAD_QUOTE_LIMIT = 10   # consecutive no-route failures before force-close
+                DEAD_LIQ_USD = 10.0     # DexScreener liq below this = dead pool
+                is_dead = False
+                if jup_mult is None and dex_mult is None:
+                    qfails = pos.get("_quote_fail_count", 0)
+                    if qfails >= DEAD_QUOTE_LIMIT:
+                        is_dead = True
+                        log.warning("dead liquidity %s (%s): %d consecutive quote failures, force-closing",
+                                    ca[:10], pos["symbol"], qfails)
+                elif dex_mult is not None:
+                    # DexScreener returned but pool is essentially dead
+                    liq = (snap or {}).get("liq") or 0
+                    if 0 < liq < DEAD_LIQ_USD:
+                        is_dead = True
+                        log.warning("dead pool %s (%s): liq=$%.0f < $%d, force-closing",
+                                    ca[:10], pos["symbol"], liq, DEAD_LIQ_USD)
+
+                # --- max_hold timeout check (runs even when pricing fails) ---
+                age_s = time.time() - pos["ts"]
+                exit_reason = None
+                if is_dead:
+                    exit_reason = "dead_liquidity"
+                elif self.max_hold_s > 0 and age_s > self.max_hold_s:
+                    exit_reason = "timeout"
+
+                # Track peak using ONLY the executable price.
                 best_mult = jup_mult if jup_mult is not None else dex_mult
                 if best_mult is not None and best_mult > 0:
                     pos["peak_usd"] = max(pos["peak_usd"],
                                           pos["entry_usd"] * best_mult)
                     pos["peak_mult"] = max(pos.get("peak_mult", 1.0), best_mult)
                 # Use Jupiter price as authoritative for exit decisions.
-                # Fall back to DexScreener only when Jupiter is unavailable.
                 mult = jup_mult if jup_mult is not None else dex_mult
-                if mult is None:
-                    continue  # can't price this cycle; leave open (safe)
+                if mult is None and not exit_reason:
+                    continue  # can't price, not dead yet — leave open
                 peak_mult = pos.get("peak_mult", mult)
                 exit_reason = None
                 # ---- early adverse filter (one-shot at early_filter_window_s):
@@ -434,7 +469,7 @@ class ShadowBook:
                 # rejecting trades with >20% adverse AND <5% favorable in
                 # first 30s turns gross PnL from -0.447 to +0.335 SOL.
                 age_s = time.time() - pos["ts"]
-                if not pos.get("early_checked", False):
+                if not pos.get("early_checked", False) and mult is not None:
                     if age_s < self.early_filter_window_s:
                         # Still in early window: track min/max excursion
                         pos["early_min_mult"] = min(
@@ -466,7 +501,8 @@ class ShadowBook:
                 # were actually reachable at fill quality.
                 # IMPORTANT: skip all normal exit logic when early_invalid
                 # fired — it is terminal (matches the ablation semantics).
-                if exit_reason != "early_invalid":
+                # Also skip when mult is None (dead token, can't price).
+                if exit_reason != "early_invalid" and mult is not None:
                     for lvl, frac in self.tp_ladder:
                         if lvl in pos["tp_taken"]:
                             continue
@@ -494,11 +530,12 @@ class ShadowBook:
                         elif self.trail_enabled and peak_mult >= self.trail_start_mult and \
                                 mult <= peak_mult * (1 - self.retrace):
                             exit_reason = "trail"
-                        elif self.max_hold_s > 0 and (time.time() - pos["ts"]) > self.max_hold_s:
-                            exit_reason = "timeout"
                 if exit_reason:
+                    # For dead tokens (mult=None), remaining tokens are
+                    # worthless: mult = 0.0.  Banked TP is already counted.
+                    eff_mult = mult if mult is not None else 0.0
                     pnl = pos.get("banked_pnl", 0.0) + \
-                        pos["remaining"] * pos["size_sol"] * (mult - 1.0)
+                        pos["remaining"] * pos["size_sol"] * (eff_mult - 1.0)
                     # Trade-level multiple (incl. any banked TP) for honest
                     # reporting — the exit-leg `mult` alone misleads when a
                     # partial was already banked (e.g. Bear: exit 0.70x but net +).
