@@ -584,3 +584,50 @@ class SmartWalletWatcher:
                 await asyncio.wait_for(self._stop.wait(), timeout=poll_s)
             except TimeoutError:
                 pass
+
+    # --------------------------------------------------------- GMGN smart money feed
+    async def gmgn_track_poll(self, gmgn, poll_s: float) -> None:
+        """Poll GMGN smartmoney + kol trades and forward tracked buys to _process_buy.
+
+        Deduplicates by (wallet, ca, ts) and filters to only our tracked
+        wallets + unseen CAs. This is a 3rd signal source alongside PumpAPI
+        and Shyft.
+        """
+        if not gmgn:
+            return
+        seen: set[tuple[str, str, float]] = set()
+        logger.info("gmgn_track_poll: started (interval=%.0fs)", poll_s)
+        while not self._stop.is_set():
+            try:
+                sm_trades = await gmgn.get_smartmoney_trades(limit=100)
+                kol_trades = await gmgn.get_kol_trades(limit=100)
+            except Exception:
+                logger.exception("gmgn_track_poll: fetch failed")
+                sm_trades, kol_trades = [], []
+            for tr in (sm_trades or []) + (kol_trades or []):
+                wallet = (tr.get("maker") or "").strip()
+                ca = (tr.get("base_address") or "").strip()
+                ts = tr.get("timestamp") or 0
+                side = tr.get("side", "buy")
+                if not wallet or not ca or side != "buy":
+                    continue
+                if wallet not in self.wallets:
+                    continue
+                dedup_key = (wallet, ca, float(ts))
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                if len(seen) > 10_000:
+                    old = sorted(seen, key=lambda x: x[2])[:5_000]
+                    for k in old:
+                        seen.discard(k)
+                usd = tr.get("amount_usd") or 0
+                if usd < self.min_buy_usd:
+                    continue
+                # is_open_or_close=0 on smartmoney/kol = position opened (conviction)
+                logger.info("gmgn_track_poll: %s bought %s ($%.2f)", wallet[:8], ca[:8], usd)
+                await self._process_buy(wallet, {"ca": ca, "usd": usd, "ts": float(ts)})
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=poll_s)
+            except TimeoutError:
+                pass

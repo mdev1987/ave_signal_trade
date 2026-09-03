@@ -151,3 +151,60 @@ async def build_weights_from_soltracker(
     n_scored = sum(1 for w in weights.values() if w > 0)
     log.info("soltracker weights: %d/%d wallets scored (live)", n_scored, len(wallets))
     return weights, default_weight
+
+
+async def build_weights_from_gmgn(
+    gmgn,
+    wallets: list[str],
+    *,
+    floor_win: float = 0.40,
+    full_win: float = 0.60,
+    pnl_tier1: float = 1_000_000.0,
+    pnl_tier2: float = 5_000_000.0,
+    tier1_mult: float = 1.25,
+    tier2_mult: float = 1.5,
+    default_weight: float = 0.5,
+    max_weight: float = 2.0,
+    confidence_trades: int = 30,
+) -> tuple[dict[str, float], float]:
+    """Build wallet weights from GMGN batch wallet_profits (single call, weight=3).
+
+    Falls back to empty dict on any failure so the caller can use soltracker
+    or file-based weights instead.
+    """
+    if not wallets:
+        return {}, default_weight
+    try:
+        profits = await gmgn.get_wallet_profits(wallets, period="all")
+    except Exception:
+        log.exception("gmgn wallet_profits failed")
+        return {}, default_weight
+    if not profits:
+        return {}, default_weight
+    weights: dict[str, float] = {}
+    denom = (full_win - floor_win) or 1.0
+    for addr in wallets:
+        p = profits.get(addr)
+        if not p:
+            weights[addr] = default_weight
+            continue
+        # GMGN returns winrate as a percentage (e.g. 65.5)
+        wr_pct = p.get("winrate") or p.get("win_rate") or 0.0
+        wr = wr_pct / 100.0 if wr_pct > 1 else wr_pct
+        if wr <= 0 or wr < floor_win:
+            weights[addr] = 0.0
+            continue
+        # Sample-size confidence
+        trades = (p.get("buy") or 0) + (p.get("sell") or 0)
+        confidence = min(1.0, trades / confidence_trades)
+        adjusted_wr = 0.5 + confidence * (wr - 0.5)
+        if adjusted_wr < floor_win:
+            weights[addr] = 0.0
+            continue
+        base = min(1.0, (adjusted_wr - floor_win) / denom)
+        pnl_total = p.get("realized_profit") or p.get("total_realized_profit") or 0.0
+        tier = tier2_mult if pnl_total >= pnl_tier2 else tier1_mult if pnl_total >= pnl_tier1 else 1.0
+        weights[addr] = round(min(max_weight, base * tier), 3)
+    n_scored = sum(1 for w in weights.values() if w > 0)
+    log.info("gmgn weights: %d/%d wallets scored (live)", n_scored, len(wallets))
+    return weights, default_weight

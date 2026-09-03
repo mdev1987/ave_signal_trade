@@ -176,6 +176,18 @@ class Settings:
     soltracker_sniper_filter: bool = False  # enable sniper detection filter
     soltracker_sniper_max_pct: float = 30.0 # max % of snipers among first-buyers
     soltracker_wallet_refresh_h: float = 4.0  # hours between wallet score refresh
+    # --- GMGN API ---
+    gmgn_api_key: str = ""
+    gmgn_base_url: str = "https://gmgn.ai/api"
+    gmgn_track_feed: bool = False        # enable GMGN smartmoney/kol feed
+    gmgn_track_poll_s: float = 30.0      # poll interval for GMGN track
+    gmgn_security_gate: bool = True      # enable GMGN token security gate
+    gmgn_rug_ratio_max: float = 0.30     # reject tokens with rug_ratio > this
+    gmgn_sniper_max: int = 20            # reject if sniper_count > this
+    gmgn_holdings_gate: bool = True      # enable smart_wallets count bonus/penalty
+    gmgn_kline_gate: bool = True         # enable kline pattern gate
+    gmgn_kline_max_drawdown: float = 0.60  # reject if drawdown > this from kline
+    gmgn_wallet_refresh_h: float = 4.0   # hours between GMGN wallet score refresh
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -251,4 +263,15 @@ def load_settings(path: str = ".env") -> Settings:
         soltracker_sniper_filter=get_bool(env, "SOLTRACKER_SNIPER_FILTER", _d.soltracker_sniper_filter),
         soltracker_sniper_max_pct=get_float(env, "SOLTRACKER_SNIPER_MAX_PCT", _d.soltracker_sniper_max_pct),
         soltracker_wallet_refresh_h=get_float(env, "SOLTRACKER_WALLET_REFRESH_H", _d.soltracker_wallet_refresh_h),
+        gmgn_api_key=get(env, "GMGN_API_KEY", _d.gmgn_api_key),
+        gmgn_base_url=get(env, "GMGN_BASE_URL", _d.gmgn_base_url),
+        gmgn_track_feed=get_bool(env, "GMGN_TRACK_FEED", _d.gmgn_track_feed),
+        gmgn_track_poll_s=get_float(env, "GMGN_TRACK_POLL_S", _d.gmgn_track_poll_s),
+        gmgn_security_gate=get_bool(env, "GMGN_SECURITY_GATE", _d.gmgn_security_gate),
+        gmgn_rug_ratio_max=get_float(env, "GMGN_RUG_RATIO_MAX", _d.gmgn_rug_ratio_max),
+        gmgn_sniper_max=get_int(env, "GMGN_SNIPER_MAX", _d.gmgn_sniper_max),
+        gmgn_holdings_gate=get_bool(env, "GMGN_HOLDINGS_GATE", _d.gmgn_holdings_gate),
+        gmgn_kline_gate=get_bool(env, "GMGN_KLINE_GATE", _d.gmgn_kline_gate),
+        gmgn_kline_max_drawdown=get_float(env, "GMGN_KLINE_MAX_DRAWDOWN", _d.gmgn_kline_max_drawdown),
+        gmgn_wallet_refresh_h=get_float(env, "GMGN_WALLET_REFRESH_H", _d.gmgn_wallet_refresh_h),
     )

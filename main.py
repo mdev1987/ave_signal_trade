@@ -613,6 +613,18 @@ async def _run_watch(s: cfg.Settings) -> int:
         except Exception:
             log.exception("soltracker init failed — disabled")
 
+    # GMGN (optional): token security, wallet scoring, smart money feed
+    _gmgn_key = (s.gmgn_api_key or "").strip()
+    gmgn = None
+    if _gmgn_key:
+        try:
+            from gmgn import GMGNClient
+            gmgn = GMGNClient(api_key=_gmgn_key, base_url=s.gmgn_base_url)
+            log.info("gmgn: enabled (security=%s, track=%s, kline=%s)",
+                     s.gmgn_security_gate, s.gmgn_track_feed, s.gmgn_kline_gate)
+        except Exception:
+            log.exception("gmgn init failed — disabled")
+
     # Data-driven wallet quality: weight each KOL by real win rate + PnL so the
     # consensus score reflects conviction, not just head-count.
     weights, default_weight = build_weights(
@@ -667,38 +679,68 @@ async def _run_watch(s: cfg.Settings) -> int:
         _kol_task.add_done_callback(_log_task_result)
         log.info("kol_trade_poll: started (interval=%.0fs)", s.soltracker_kol_poll_s)
 
+    # GMGN smart money/KOL feed (optional, 3rd signal source)
+    _gmgn_feed_task = None
+    if gmgn and s.gmgn_track_feed:
+        _gmgn_feed_task = asyncio.create_task(
+            w.gmgn_track_poll(gmgn, s.gmgn_track_poll_s))
+        _gmgn_feed_task.add_done_callback(_log_task_result)
+        log.info("gmgn_track_poll: started (interval=%.0fs)", s.gmgn_track_poll_s)
+
     # SolanaTracker wallet score refresh (periodic)
     async def _wallet_refresh_loop() -> None:
-        """Refresh wallet weights from SolanaTracker every N hours."""
+        """Refresh wallet weights from SolanaTracker/GMGN every N hours."""
         while not stop.is_set():
+            refresh_h = s.gmgn_wallet_refresh_h if gmgn else s.soltracker_wallet_refresh_h
             try:
-                await asyncio.wait_for(stop.wait(),
-                                       timeout=s.soltracker_wallet_refresh_h * 3600)
+                await asyncio.wait_for(stop.wait(), timeout=refresh_h * 3600)
             except TimeoutError:
                 pass
             if stop.is_set():
                 break
-            if not soltracker:
-                continue
-            try:
-                from wallet_weights import build_weights_from_soltracker
-                new_weights, new_default = await build_weights_from_soltracker(
-                    soltracker, w.wallets,
-                    floor_win=s.wallet_weight_floor_win,
-                    full_win=s.wallet_weight_full_win,
-                    pnl_tier1=s.wallet_pnl_tier1, pnl_tier2=s.wallet_pnl_tier2,
-                    tier1_mult=s.wallet_weight_tier1_mult,
-                    tier2_mult=s.wallet_weight_tier2_mult,
-                    default_weight=s.wallet_default_weight,
-                    max_weight=s.wallet_weight_max,
-                )
-                if new_weights:
-                    w.weights = new_weights
-                    w.default_weight = new_default
-                    log.info("wallet weights refreshed from soltracker: %d scored",
-                             sum(1 for v in new_weights.values() if v > 0))
-            except Exception:
-                log.exception("wallet refresh failed")
+            # GMGN wallet scoring (preferred: single batch call)
+            if gmgn:
+                try:
+                    from wallet_weights import build_weights_from_gmgn
+                    new_weights, new_default = await build_weights_from_gmgn(
+                        gmgn, w.wallets,
+                        floor_win=s.wallet_weight_floor_win,
+                        full_win=s.wallet_weight_full_win,
+                        pnl_tier1=s.wallet_pnl_tier1, pnl_tier2=s.wallet_pnl_tier2,
+                        tier1_mult=s.wallet_weight_tier1_mult,
+                        tier2_mult=s.wallet_weight_tier2_mult,
+                        default_weight=s.wallet_default_weight,
+                        max_weight=s.wallet_weight_max,
+                    )
+                    if new_weights:
+                        w.weights = new_weights
+                        w.default_weight = new_default
+                        log.info("wallet weights refreshed from gmgn: %d scored",
+                                 sum(1 for v in new_weights.values() if v > 0))
+                        continue
+                except Exception:
+                    log.exception("gmgn wallet refresh failed")
+            # SolanaTracker fallback
+            if soltracker:
+                try:
+                    from wallet_weights import build_weights_from_soltracker
+                    new_weights, new_default = await build_weights_from_soltracker(
+                        soltracker, w.wallets,
+                        floor_win=s.wallet_weight_floor_win,
+                        full_win=s.wallet_weight_full_win,
+                        pnl_tier1=s.wallet_pnl_tier1, pnl_tier2=s.wallet_pnl_tier2,
+                        tier1_mult=s.wallet_weight_tier1_mult,
+                        tier2_mult=s.wallet_weight_tier2_mult,
+                        default_weight=s.wallet_default_weight,
+                        max_weight=s.wallet_weight_max,
+                    )
+                    if new_weights:
+                        w.weights = new_weights
+                        w.default_weight = new_default
+                        log.info("wallet weights refreshed from soltracker: %d scored",
+                                 sum(1 for v in new_weights.values() if v > 0))
+                except Exception:
+                    log.exception("wallet refresh failed")
 
     if soltracker:
         _refresh_task = asyncio.create_task(_wallet_refresh_loop())
@@ -817,6 +859,55 @@ async def _run_watch(s: cfg.Settings) -> int:
                         return
                 except Exception:
                     log.debug("soltracker risk check failed for %s", ca[:10])
+            # GMGN token security gate (fail-open): richer Solana-native safety
+            # data than DBotX — catches honeypots, tax rugs, sniper-heavy launches.
+            if gmgn and s.gmgn_security_gate:
+                try:
+                    sec = await gmgn.token_security(ca)
+                    if sec:
+                        # Hard stops
+                        renounced_mint = sec.get("renounced_mint")
+                        renounced_freeze = sec.get("renounced_freeze_account")
+                        if renounced_mint is False or renounced_freeze is False:
+                            reason = "skip:unsafe(gmgn:mint/freeze not renounced)"
+                            if _skip_log.get(ca, 0) < time.time() - 300:
+                                _skip_log[ca] = time.time()
+                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                            return
+                        rug_ratio = sec.get("rug_ratio") or 0
+                        if rug_ratio > s.gmgn_rug_ratio_max:
+                            reason = f"skip:unsafe(gmgn:rug_ratio={rug_ratio:.2f})"
+                            if _skip_log.get(ca, 0) < time.time() - 300:
+                                _skip_log[ca] = time.time()
+                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                            return
+                        sniper_count = sec.get("sniper_count") or 0
+                        if sniper_count > s.gmgn_sniper_max:
+                            reason = f"skip:unsafe(gmgn:snipers={sniper_count})"
+                            if _skip_log.get(ca, 0) < time.time() - 300:
+                                _skip_log[ca] = time.time()
+                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                            return
+                        buy_tax = sec.get("buy_tax") or 0
+                        sell_tax = sec.get("sell_tax") or 0
+                        if buy_tax > 0.10 or sell_tax > 0.10:
+                            reason = f"skip:unsafe(gmgn:tax={buy_tax:.0%}/{sell_tax:.0%})"
+                            if _skip_log.get(ca, 0) < time.time() - 300:
+                                _skip_log[ca] = time.time()
+                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                            return
+                        top10 = sec.get("top_10_holder_rate") or 0
+                        if top10 > s.dbotx_top10_max:
+                            reason = f"skip:unsafe(gmgn:top10={top10:.0%})"
+                            if _skip_log.get(ca, 0) < time.time() - 300:
+                                _skip_log[ca] = time.time()
+                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                            return
+                        logs.journal("open_gmgn_security_ok", ca=ca, symbol=sym,
+                                     rug_ratio=rug_ratio, snipers=sniper_count,
+                                     top10=top10)
+                except Exception:
+                    log.debug("gmgn security check failed for %s", ca[:10])
             # Rug/safety gate (DBotX, fail-open): reject tokens that still hold a
             # mint or freeze authority, or are dangerously top-10 concentrated.
             # A 403 / missing key degrades to "allow" so an outage never blocks.
@@ -869,11 +960,46 @@ async def _run_watch(s: cfg.Settings) -> int:
             # green on all horizons) get a bonus; reversing/late ones (PINU:
             # +825% h24 but -56% h1) get a discount. Avoids entering tops.
             mkt_bonus = (align - 2) * s.mtf_align_bonus
+            # GMGN smart_wallets bonus: tokens with smart money conviction get a
+            # score boost; tokens with zero smart money get a penalty.
+            gmgn_bonus = 0.0
+            if gmgn and s.gmgn_holdings_gate:
+                try:
+                    info = await gmgn.token_info(ca)
+                    if info:
+                        wts = info.get("wallet_tags_stat") or {}
+                        smart_n = wts.get("smart_wallets") or 0
+                        if smart_n >= 3:
+                            gmgn_bonus = 0.3
+                        elif smart_n == 0:
+                            gmgn_bonus = -0.3
+                except Exception:
+                    log.debug("gmgn token_info failed for %s", ca[:10])
+            # GMGN kline pattern gate (fail-open): reject catching-a-knife
+            # patterns where drawdown from recent high is too deep.
+            if gmgn and s.gmgn_kline_gate:
+                try:
+                    candles = await gmgn.get_kline(ca, resolution="15m", limit=50)
+                    if candles and len(candles) >= 10:
+                        closes = [float(c.get("close") or c.get("c") or 0)
+                                  for c in candles if c.get("close") or c.get("c")]
+                        if closes:
+                            peak = max(closes)
+                            current = closes[-1]
+                            drawdown = (peak - current) / peak if peak > 0 else 0
+                            if drawdown > s.gmgn_kline_max_drawdown:
+                                reason = f"skip:kline_drawdown({drawdown:.0%}>{s.gmgn_kline_max_drawdown:.0%})"
+                                if _skip_log.get(ca, 0) < time.time() - 300:
+                                    _skip_log[ca] = time.time()
+                                    log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                                return
+                except Exception:
+                    log.debug("gmgn kline check failed for %s", ca[:10])
             # Pair quality is a MULTIPLIER on the market score, not a veto: a weak
             # pair (AgmLJ+kEFiA) is down-weighted but may still trade when the
             # market confirms hard — so we don't overfit to a 6-trade sample.
             pmult, pnote = pair_multiplier(pair_perf, wallets)
-            effective = (score + mkt_bonus) * pmult
+            effective = (score + mkt_bonus + gmgn_bonus) * pmult
             # Weak pair -> require strong confirmation: every AVAILABLE timeframe
             # positive (m5>0 & h1>0 at minimum) before it may open at all.
             if pmult < 1.0 and not all((pc.get(k) or 0) > 0 for k in avail):
