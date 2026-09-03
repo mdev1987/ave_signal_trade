@@ -10,18 +10,74 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
-from gmgn_sdk import GMGNClient as _SyncClient  # noqa: E402
+import httpx
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Cloudflare bypass: use ai-cloudscraper to solve the JS challenge once,
+# then feed the clearance cookies into the SDK's httpx.Client.
+# ---------------------------------------------------------------------------
+
+_cf_cookies: dict[str, str] = {}
+_cf_expiry: float = 0.0
+_CF_TTL = 1800  # re-solve every 30 min
+
+
+def _get_cf_cookies() -> dict[str, str]:
+    """Return cached Cloudflare clearance cookies, refreshing if expired."""
+    global _cf_expiry  # noqa: PLW0603
+    now = time.time()
+    if _cf_cookies and now < _cf_expiry:
+        return _cf_cookies
+    try:
+        import cloudscraper
+
+        scraper = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "linux", "mobile": False},
+        )
+        # Hit a lightweight GMGN endpoint to obtain cf_clearance
+        resp = scraper.get("https://gmgn.ai/defi/quotation/v1/tokens/sol")
+        if resp.status_code == 200:
+            _cf_cookies.update(dict(scraper.cookies))
+            _cf_expiry = now + _CF_TTL
+            log.info("gmgn: cloudflare clearance obtained (%d cookies)", len(_cf_cookies))
+        else:
+            log.warning("gmgn: cloudscraper got status %d", resp.status_code)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("gmgn: cloudscraper bypass failed: %s", exc)
+    return _cf_cookies
+
+
+def _build_httpx_client() -> httpx.Client:
+    """Build an httpx.Client pre-loaded with Cloudflare clearance cookies."""
+    cookies = _get_cf_cookies()
+    return httpx.Client(
+        timeout=30.0,
+        cookies=cookies,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+        },
+    )
 
 
 class GMGNClient:
     """Async wrapper around ``gmgn_sdk.GMGNClient``."""
 
     def __init__(self, api_key: str, private_key: str = "") -> None:
-        self._client = _SyncClient(api_key=api_key, private_key=private_key)
+        from gmgn_sdk import GMGNClient as _SyncClient
+
+        self._client = _SyncClient(
+            api_key=api_key,
+            private_key=private_key,
+            http_client=_build_httpx_client(),
+        )
         self._closed = False
 
     async def close(self) -> None:
@@ -99,4 +155,4 @@ class GMGNClient:
 
     # ------------------------------------------------------------ health
     def health(self) -> dict:
-        return {"connected": not self._closed, "sdk": "gmgn-sdk"}
+        return {"connected": not self._closed, "sdk": "gmgn-sdk", "cf_cookies": len(_cf_cookies)}
