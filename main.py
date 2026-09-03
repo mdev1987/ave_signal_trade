@@ -621,8 +621,11 @@ async def _run_watch(s: cfg.Settings) -> int:
     if _gmgn_key:
         try:
             from gmgn import GMGNClient
-            gmgn = GMGNClient(api_key=_gmgn_key, base_url=s.gmgn_base_url)
-            log.info("gmgn: enabled (security=%s, track=%s, kline=%s)",
+            gmgn = GMGNClient(
+                api_key=_gmgn_key,
+                private_key=s.gmgn_private_key,
+            )
+            log.info("gmgn: enabled (security=%s, feed=%s, kline=%s)",
                      s.gmgn_security_gate, s.gmgn_track_feed, s.gmgn_kline_gate)
         except Exception:
             log.exception("gmgn init failed — disabled")
@@ -673,11 +676,12 @@ async def _run_watch(s: cfg.Settings) -> int:
     pump_task = asyncio.create_task(pump_stream.run())
     pump_task.add_done_callback(_log_task_result)
 
-    # GMGN feed (smart money + KOL trades via gmgn-cli polling)
+    # GMGN feed (smart money + KOL trades via SDK polling)
     gmgn_feed = None
-    if s.gmgn_ws_feed:
+    if gmgn and s.gmgn_track_feed:
         try:
             gmgn_feed = GmgnFeed(
+                gmgn=gmgn,
                 on_buy=_on_pump_buy,
                 wallets=w.wallets,
                 poll_s=s.gmgn_track_poll_s,
@@ -697,14 +701,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             w.kol_trade_poll(soltracker, s.soltracker_kol_poll_s))
         _kol_task.add_done_callback(_log_task_result)
         log.info("kol_trade_poll: started (interval=%.0fs)", s.soltracker_kol_poll_s)
-
-    # GMGN smart money/KOL feed (optional, 3rd signal source)
-    _gmgn_feed_task = None
-    if gmgn and s.gmgn_track_feed:
-        _gmgn_feed_task = asyncio.create_task(
-            w.gmgn_track_poll(gmgn, s.gmgn_track_poll_s))
-        _gmgn_feed_task.add_done_callback(_log_task_result)
-        log.info("gmgn_track_poll: started (interval=%.0fs)", s.gmgn_track_poll_s)
 
     # SolanaTracker wallet score refresh (periodic)
     async def _wallet_refresh_loop() -> None:

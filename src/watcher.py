@@ -590,9 +590,7 @@ class SmartWalletWatcher:
         """Poll GMGN smartmoney + kol trades and forward tracked buys to _process_buy.
 
         Deduplicates by (wallet, ca, ts) and filters to only our tracked
-        wallets + unseen CAs. This is a FALLBACK for when the GMGN WebSocket
-        feed (gmgn_ws.py) is unavailable. GMGN WS is preferred for real-time
-        data with lower latency.
+        wallets + unseen CAs. Fallback when the primary gmgn_feed is unavailable.
         """
         if not gmgn:
             return

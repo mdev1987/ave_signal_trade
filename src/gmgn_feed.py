@@ -1,24 +1,23 @@
-"""GMGN feed — smart money + KOL trades via gmgn-cli polling.
+"""GMGN feed — smart money + KOL trades via SDK polling.
 
-Replaces the broken gmgnapi WebSocket (403 on connect). Uses
-``gmgn-cli track smartmoney`` and ``gmgn-cli track kol`` via subprocess
-every ``poll_s`` seconds. Deduplicates by (wallet, ca, ts) and forwards
-tracked wallet buys to the consensus pipeline.
+Uses ``gmgn_sdk`` via the async wrapper in ``gmgn.py`` to fetch recent
+smart money and KOL trades every ``poll_s`` seconds.  Deduplicates by
+(wallet, ca, ts) and forwards tracked wallet buys to the consensus pipeline.
 
 Also fires on ALL smart money / KOL buys (not just tracked wallets) so the
 consensus engine sees fresh activity from any tagged wallet.
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import time
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
+
+if TYPE_CHECKING:
+    from gmgn import GMGNClient
 
 log = logging.getLogger(__name__)
 
-# Cooldown: don't re-report the same (wallet, ca, ts) within this window
 _DEDUP_MAX = 10_000
 
 
@@ -27,7 +26,7 @@ class GmgnFeed:
 
     Lifecycle::
 
-        feed = GmgnFeed(...)
+        feed = GmgnFeed(gmgn, ...)
         task = asyncio.create_task(feed.run())
         # ...
         stats = feed.health()
@@ -36,16 +35,18 @@ class GmgnFeed:
 
     def __init__(
         self,
+        gmgn: GMGNClient,
         on_buy: Callable[[str, str, str, float, float], Awaitable[None]],
         wallets: set[str],
-        poll_s: float = 15.0,
+        poll_s: float = 30.0,
         min_usd: float = 50.0,
     ) -> None:
+        self._gmgn = gmgn
         self._on_buy = on_buy
         self._wallets = wallets
         self._poll_s = poll_s
         self._min_usd = min_usd
-        self._stop = asyncio.Event()
+        self._stop = __import__("asyncio").Event()
         self._seen: set[tuple[str, str, float]] = set()
 
         # Health
@@ -59,35 +60,36 @@ class GmgnFeed:
     async def run(self) -> None:
         """Main polling loop. Runs until ``stop()``."""
         self._started_at = time.time()
-        log.info("gmgn feed: started (interval=%.0fs, wallets=%d)", self._poll_s, len(self._wallets))
+        log.info(
+            "gmgn feed: started (interval=%.0fs, wallets=%d)",
+            self._poll_s,
+            len(self._wallets),
+        )
 
         while not self._stop.is_set():
             try:
                 await self._poll()
-            except asyncio.CancelledError:
+            except __import__("asyncio").CancelledError:
                 raise
             except Exception:  # noqa: BLE001
                 self._error_count += 1
                 log.exception("gmgn feed: poll failed")
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self._poll_s)
-            except asyncio.TimeoutError:
+                await __import__("asyncio").wait_for(
+                    self._stop.wait(), timeout=self._poll_s
+                )
+            except __import__("asyncio").TimeoutError:
                 pass
 
     async def _poll(self) -> None:
-        # Fetch smart money + KOL trades in parallel
-        sm_task = asyncio.create_task(_run_cli("smartmoney", 100))
-        kol_task = asyncio.create_task(_run_cli("kol", 100))
-
-        sm_raw, kol_raw = await asyncio.gather(sm_task, kol_task)
-
-        sm_list = _parse(sm_raw)
-        kol_list = _parse(kol_raw)
+        sm_list, kol_list = await __import__("asyncio").gather(
+            self._gmgn.get_smartmoney_trades(limit=100),
+            self._gmgn.get_kol_trades(limit=100),
+        )
 
         self._smartmoney_count += len(sm_list)
         self._kol_count += len(kol_list)
 
-        # Process all trades
         for tr in sm_list + kol_list:
             await self._process_trade(tr)
 
@@ -109,7 +111,7 @@ class GmgnFeed:
             return
         self._seen.add(key)
         if len(self._seen) > _DEDUP_MAX:
-            old = sorted(self._seen, key=lambda x: x[2])[:_DEDUP_MAX // 2]
+            old = sorted(self._seen, key=lambda x: x[2])[: _DEDUP_MAX // 2]
             for k in old:
                 self._seen.discard(k)
 
@@ -122,10 +124,18 @@ class GmgnFeed:
         is_tracked = wallet in self._wallets
         if is_tracked:
             self._tracked_count += 1
-            log.info("gmgn feed: TRACKED %s bought %s ($%.2f) [%s]", wallet[:8], ca[:8], usd, sym)
+            log.info(
+                "gmgn feed: TRACKED %s bought %s ($%.2f) [%s]",
+                wallet[:8],
+                ca[:8],
+                usd,
+                sym,
+            )
 
         try:
-            await self._on_buy(wallet, ca, sym, usd, float(tr.get("token_amount") or 0))
+            await self._on_buy(
+                wallet, ca, sym, usd, float(tr.get("token_amount") or 0)
+            )
         except Exception:
             log.exception("gmgn feed: on_buy failed for %s %s", wallet[:8], ca[:8])
 
@@ -143,28 +153,3 @@ class GmgnFeed:
 
     def stop(self) -> None:
         self._stop.set()
-
-
-async def _run_cli(subcmd: str, limit: int = 100) -> str:
-    """Run gmgn-cli track <subcmd> and return raw stdout."""
-    proc = await asyncio.create_subprocess_exec(
-        "gmgn-cli", "track", subcmd,
-        "--chain", "sol",
-        "--limit", str(limit),
-        "--raw",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-    if proc.returncode != 0:
-        raise RuntimeError(f"gmgn-cli track {subcmd} failed: {stderr.decode()[:200]}")
-    return stdout.decode()
-
-
-def _parse(raw: str) -> list[dict]:
-    """Parse gmgn-cli JSON output into a list of trade dicts."""
-    try:
-        obj = json.loads(raw)
-        return obj.get("list") or []
-    except Exception:
-        return []
