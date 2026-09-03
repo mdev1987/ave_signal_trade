@@ -40,6 +40,7 @@ from pair_perf import (load as load_pair_perf, save as save_pair_perf,  # noqa: 
                        update as update_pair_perf, pair_multiplier)
 from notifier import TelegramNotifier  # noqa: E402
 from pump_stream import PumpApiStream  # noqa: E402
+from gmgn_ws import GmGnWsFeed  # noqa: E402
 from tatum_notify import TatumNotifications  # noqa: E402
 from watcher import SmartWalletWatcher  # noqa: E402
 from wallet_discovery import WalletDiscovery  # noqa: E402
@@ -671,6 +672,30 @@ async def _run_watch(s: cfg.Settings) -> int:
     pump_task = asyncio.create_task(pump_stream.run())
     pump_task.add_done_callback(_log_task_result)
 
+    # GMGN WebSocket feed (primary — replaces PumpAPI + GMGN HTTP polling)
+    gmgn_ws_feed = None
+    if _gmgn_key and s.gmgn_ws_feed:
+        try:
+            exchanges = [x.strip() for x in s.gmgn_ws_exchanges.split(",") if x.strip()] or None
+            gmgn_ws_feed = GmGnWsFeed(
+                api_key=_gmgn_key,
+                on_buy=_on_pump_buy,  # same handler — feeds into consensus
+                wallets=w.wallets,
+                http=w._http,
+                min_market_cap=s.gmgn_ws_min_mc,
+                min_liquidity=s.gmgn_ws_min_liq,
+                exchanges=exchanges,
+                max_risk_score=s.gmgn_ws_max_risk,
+            )
+            _gmgn_ws_task = asyncio.create_task(gmgn_ws_feed.run())
+            _gmgn_ws_task.add_done_callback(_log_task_result)
+            log.info("gmgn ws feed: started (filter=%s)",
+                     "on" if (s.gmgn_ws_min_mc or s.gmgn_ws_min_liq or
+                             s.gmgn_ws_exchanges or s.gmgn_ws_max_risk) else "off")
+        except Exception:
+            log.exception("gmgn ws feed init failed — falling back to pumpapi")
+            gmgn_ws_feed = None
+
     # SolanaTracker KOL trade feed (optional, needs Advanced tier)
     _kol_task = None
     if soltracker and s.soltracker_kol_feed:
@@ -1056,7 +1081,9 @@ async def _run_watch(s: cfg.Settings) -> int:
             snap = book.snapshot(len(w.wallets), alerts["n"],
                                  w.consensus_fired, time.time() - started,
                                  {"tatum": bool(w.tatum_push),
-                                  "dexscreener": True})
+                                  "dexscreener": True,
+                                  "gmgn_ws": gmgn_ws_feed.health()["connected"] if gmgn_ws_feed else False,
+                                  "pumpapi": True})
             log.info("status: %s", build_status(snap))
 
     # tatum push (optional) ----------------------------------------------
@@ -1101,7 +1128,9 @@ async def _run_watch(s: cfg.Settings) -> int:
             log.exception("tatum registration failed — polling fallback only")
 
     log.info("bot started: %s", build_status(book.snapshot(
-        len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True})))
+        len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True,
+                                    "gmgn_ws": gmgn_ws_feed.health()["connected"] if gmgn_ws_feed else False,
+                                    "pumpapi": True})))
     if notifier is not None:
         asyncio.create_task(notifier.send_startup(
             summary=f"watching {len(w.wallets)} wallets · "
@@ -1184,6 +1213,8 @@ async def _run_watch(s: cfg.Settings) -> int:
         except Exception:
             log.exception("send_stopped failed")
         status_task.cancel()
+        if gmgn_ws_feed is not None:
+            gmgn_ws_feed.stop()
         pump_stream.stop()
         pump_task.cancel()
         await w.stop()

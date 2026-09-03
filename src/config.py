@@ -188,6 +188,12 @@ class Settings:
     gmgn_kline_gate: bool = True         # enable kline pattern gate
     gmgn_kline_max_drawdown: float = 0.60  # reject if drawdown > this from kline
     gmgn_wallet_refresh_h: float = 4.0   # hours between GMGN wallet score refresh
+    # --- GMGN WebSocket feed (replaces PumpAPI + GMGN HTTP poll) ---
+    gmgn_ws_feed: bool = True            # enable GMGN WebSocket as primary feed
+    gmgn_ws_min_mc: float = 0.0          # min market cap filter for new pools (0=off)
+    gmgn_ws_min_liq: float = 0.0         # min liquidity filter for new pools (0=off)
+    gmgn_ws_exchanges: str = ""          # comma-separated exchanges whitelist (empty=all)
+    gmgn_ws_max_risk: float = 0.0        # max risk score filter (0=off)
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -274,4 +280,9 @@ def load_settings(path: str = ".env") -> Settings:
         gmgn_kline_gate=get_bool(env, "GMGN_KLINE_GATE", _d.gmgn_kline_gate),
         gmgn_kline_max_drawdown=get_float(env, "GMGN_KLINE_MAX_DRAWDOWN", _d.gmgn_kline_max_drawdown),
         gmgn_wallet_refresh_h=get_float(env, "GMGN_WALLET_REFRESH_H", _d.gmgn_wallet_refresh_h),
+        gmgn_ws_feed=get_bool(env, "GMGN_WS_FEED", _d.gmgn_ws_feed),
+        gmgn_ws_min_mc=get_float(env, "GMGN_WS_MIN_MC", _d.gmgn_ws_min_mc),
+        gmgn_ws_min_liq=get_float(env, "GMGN_WS_MIN_LIQ", _d.gmgn_ws_min_liq),
+        gmgn_ws_exchanges=get(env, "GMGN_WS_EXCHANGES", _d.gmgn_ws_exchanges),
+        gmgn_ws_max_risk=get_float(env, "GMGN_WS_MAX_RISK", _d.gmgn_ws_max_risk),
     )
