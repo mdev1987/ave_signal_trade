@@ -51,3 +51,7 @@ runwisp.toml
 .runwisp/
 .freebuff
 *.bak
+.agents/
+.claude/
+.agents/skills/gmgn-token
+skills-lock.json

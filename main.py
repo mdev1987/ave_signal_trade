@@ -40,7 +40,7 @@ from pair_perf import (load as load_pair_perf, save as save_pair_perf,  # noqa: 
                        update as update_pair_perf, pair_multiplier)
 from notifier import TelegramNotifier  # noqa: E402
 from pump_stream import PumpApiStream  # noqa: E402
-from gmgn_ws import GmGnWsFeed  # noqa: E402
+from gmgn_feed import GmgnFeed  # noqa: E402
 from tatum_notify import TatumNotifications  # noqa: E402
 from watcher import SmartWalletWatcher  # noqa: E402
 from wallet_discovery import WalletDiscovery  # noqa: E402
@@ -461,7 +461,8 @@ class ShadowBook:
                 if mult is None and not exit_reason:
                     continue  # can't price, not dead yet — leave open
                 peak_mult = pos.get("peak_mult", mult)
-                exit_reason = None
+                if not is_dead:
+                    exit_reason = None  # reset; dead_liquidity already set above
                 # ---- early adverse filter (one-shot at early_filter_window_s):
                 # Track worst/best excursion during the early window, then
                 # evaluate once.  If the position drew down >early_filter_dd
@@ -672,29 +673,22 @@ async def _run_watch(s: cfg.Settings) -> int:
     pump_task = asyncio.create_task(pump_stream.run())
     pump_task.add_done_callback(_log_task_result)
 
-    # GMGN WebSocket feed (primary — replaces PumpAPI + GMGN HTTP polling)
-    gmgn_ws_feed = None
-    if _gmgn_key and s.gmgn_ws_feed:
+    # GMGN feed (smart money + KOL trades via gmgn-cli polling)
+    gmgn_feed = None
+    if s.gmgn_ws_feed:
         try:
-            exchanges = [x.strip() for x in s.gmgn_ws_exchanges.split(",") if x.strip()] or None
-            gmgn_ws_feed = GmGnWsFeed(
-                api_key=_gmgn_key,
-                on_buy=_on_pump_buy,  # same handler — feeds into consensus
+            gmgn_feed = GmgnFeed(
+                on_buy=_on_pump_buy,
                 wallets=w.wallets,
-                http=w._http,
-                min_market_cap=s.gmgn_ws_min_mc,
-                min_liquidity=s.gmgn_ws_min_liq,
-                exchanges=exchanges,
-                max_risk_score=s.gmgn_ws_max_risk,
+                poll_s=s.gmgn_track_poll_s,
+                min_usd=s.watch_min_buy_usd,
             )
-            _gmgn_ws_task = asyncio.create_task(gmgn_ws_feed.run())
-            _gmgn_ws_task.add_done_callback(_log_task_result)
-            log.info("gmgn ws feed: started (filter=%s)",
-                     "on" if (s.gmgn_ws_min_mc or s.gmgn_ws_min_liq or
-                             s.gmgn_ws_exchanges or s.gmgn_ws_max_risk) else "off")
+            _gmgn_feed_task = asyncio.create_task(gmgn_feed.run())
+            _gmgn_feed_task.add_done_callback(_log_task_result)
+            log.info("gmgn feed: started (interval=%.0fs)", s.gmgn_track_poll_s)
         except Exception:
-            log.exception("gmgn ws feed init failed — falling back to pumpapi")
-            gmgn_ws_feed = None
+            log.exception("gmgn feed init failed")
+            gmgn_feed = None
 
     # SolanaTracker KOL trade feed (optional, needs Advanced tier)
     _kol_task = None
@@ -1082,7 +1076,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                                  w.consensus_fired, time.time() - started,
                                  {"tatum": bool(w.tatum_push),
                                   "dexscreener": True,
-                                  "gmgn_ws": gmgn_ws_feed.health()["connected"] if gmgn_ws_feed else False,
+                                  "gmgn": gmgn_feed.health()["connected"] if gmgn_feed else False,
                                   "pumpapi": True})
             log.info("status: %s", build_status(snap))
 
@@ -1129,7 +1123,7 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     log.info("bot started: %s", build_status(book.snapshot(
         len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True,
-                                    "gmgn_ws": gmgn_ws_feed.health()["connected"] if gmgn_ws_feed else False,
+                                    "gmgn": gmgn_feed.health()["connected"] if gmgn_feed else False,
                                     "pumpapi": True})))
     if notifier is not None:
         asyncio.create_task(notifier.send_startup(
@@ -1213,8 +1207,8 @@ async def _run_watch(s: cfg.Settings) -> int:
         except Exception:
             log.exception("send_stopped failed")
         status_task.cancel()
-        if gmgn_ws_feed is not None:
-            gmgn_ws_feed.stop()
+        if gmgn_feed is not None:
+            gmgn_feed.stop()
         pump_stream.stop()
         pump_task.cancel()
         await w.stop()
