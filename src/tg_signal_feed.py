@@ -222,7 +222,13 @@ class TgSignalFeed:
                     pass
 
     async def _listen(self) -> None:
-        """Connect to Telegram and poll for new messages."""
+        """Poll for new messages via iter_messages.
+
+        Telethon v1.44.0 event handlers don't fire reliably in a threaded/
+        background-task context.  iter_messages with ``min_id`` gives us
+        sub-5-second latency — essentially real-time for a channel that
+        posts every few seconds.
+        """
         from telethon import TelegramClient
 
         client = TelegramClient(
@@ -231,17 +237,17 @@ class TgSignalFeed:
             self._api_hash,
         )
         await client.start(phone=self._phone)
-        log.info("tg signal feed: connected to Telegram, polling @%s", self._channel)
+        log.info("tg signal feed: connected, polling @%s", self._channel)
 
         entity = await client.get_entity(self._channel)
 
-        # Find the latest message ID to start polling from
+        # Start from the latest message so we don't re-process history
         last_msg_id = 0
         async for msg in client.iter_messages(entity, limit=1):
             last_msg_id = msg.id
         log.info("tg signal feed: starting from msg_id=%d", last_msg_id)
 
-        poll_interval = 5.0  # seconds between polls
+        poll_interval = 3.0
 
         while not self._stop.is_set():
             try:
