@@ -66,31 +66,38 @@ def parse_tg_signal(text: str) -> dict | None:
         return None
     ca = ca_match.group(0)
 
-    # Extract token name: look for $TOKEN_NAME pattern
+    # Extract token name: look for $TOKEN_NAME(NAME) or $TOKEN pattern
+    # Must appear BEFORE the CA (contract address is 32-44 base58 chars)
     name = ""
     sym = ""
-    name_match = re.search(r"\$([A-Za-z0-9_]+)\s*\(([^)]+)\)", text)
+    ca_pos = ca_match.start()
+    # Try $Symbol(Name) pattern before the CA
+    name_match = re.search(r"\$([A-Za-z0-9_]+)\s*\(([^)]+)\)", text[:ca_pos])
     if name_match:
         sym = name_match.group(1)
         name = name_match.group(2)
     else:
-        name_match = re.search(r"\$([A-Za-z0-9_]+)", text)
+        # Try $SYMBOL pattern before the CA
+        name_match = re.search(r"\$([A-Za-z0-9_]{2,})", text[:ca_pos])
         if name_match:
             sym = name_match.group(1)
 
+    # Strip Telegram markdown formatting
+    clean = text.replace("**", "").replace("*", "").replace("`", "")
+
     # Extract metrics
     mc = 0.0
-    mc_match = _MCPCT_RE.search(text)
+    mc_match = _MCPCT_RE.search(clean)
     if mc_match:
         mc = _parse_value(mc_match.group(1))
 
     liq = 0.0
-    liq_match = _LIQ_RE.search(text)
+    liq_match = _LIQ_RE.search(clean)
     if liq_match:
         liq = _parse_value(liq_match.group(1))
 
     holders = 0
-    h_match = _HOLDER_RE.search(text)
+    h_match = _HOLDER_RE.search(clean)
     if h_match:
         holders = int(h_match.group(1).replace(",", ""))
 
@@ -215,8 +222,8 @@ class TgSignalFeed:
                     pass
 
     async def _listen(self) -> None:
-        """Connect to Telegram and listen for messages."""
-        from telethon import TelegramClient, events
+        """Connect to Telegram and poll for new messages."""
+        from telethon import TelegramClient
 
         client = TelegramClient(
             self._session_name,
@@ -224,23 +231,42 @@ class TgSignalFeed:
             self._api_hash,
         )
         await client.start(phone=self._phone)
-        log.info("tg signal feed: connected to Telegram")
+        log.info("tg signal feed: connected to Telegram, polling @%s", self._channel)
 
-        @client.on(events.NewMessage(chats=self._channel))
-        async def handler(event):
-            if self._stop.is_set():
-                return
+        entity = await client.get_entity(self._channel)
+
+        # Find the latest message ID to start polling from
+        last_msg_id = 0
+        async for msg in client.iter_messages(entity, limit=1):
+            last_msg_id = msg.id
+        log.info("tg signal feed: starting from msg_id=%d", last_msg_id)
+
+        poll_interval = 5.0  # seconds between polls
+
+        while not self._stop.is_set():
             try:
-                await self._handle_message(event.message.text or "")
+                new_count = 0
+                async for msg in client.iter_messages(entity, min_id=last_msg_id):
+                    new_count += 1
+                    text = msg.text or ""
+                    last_msg_id = max(last_msg_id, msg.id)
+                    try:
+                        await self._handle_message(text)
+                    except Exception:  # noqa: BLE001
+                        self._errors += 1
+                        log.exception("tg signal feed: handle failed")
+                if new_count > 0:
+                    log.debug("tg signal feed: processed %d new messages", new_count)
             except Exception:  # noqa: BLE001
                 self._errors += 1
-                log.exception("tg signal feed: handle failed")
+                log.exception("tg signal feed: poll failed — retrying in 10s")
+                await asyncio.sleep(10)
+                continue
 
-        log.info("tg signal feed: listening to @%s", self._channel)
-
-        # Run until stop
-        while not self._stop.is_set():
-            await asyncio.sleep(1)
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=poll_interval)
+            except asyncio.TimeoutError:
+                pass
 
         await client.disconnect()
 
@@ -261,8 +287,8 @@ class TgSignalFeed:
         self._seen[ca] = now
         self._prune_seen(now)
 
-        # Quality gates
-        if signal["mc"] > 0 and signal["mc"] < self._min_mc:
+        # Quality gates — reject unknown (0) or below minimum
+        if signal["mc"] <= 0 or signal["mc"] < self._min_mc:
             self._signals_filtered += 1
             log.debug(
                 "tg signal: filtered %s (mc=%.0f < %.0f)",
@@ -272,7 +298,7 @@ class TgSignalFeed:
             )
             return
 
-        if signal["liq"] > 0 and signal["liq"] < self._min_liq:
+        if signal["liq"] <= 0 or signal["liq"] < self._min_liq:
             self._signals_filtered += 1
             log.debug(
                 "tg signal: filtered %s (liq=%.0f < %.0f)",
@@ -282,7 +308,7 @@ class TgSignalFeed:
             )
             return
 
-        if signal["holders"] > 0 and signal["holders"] < self._min_holders:
+        if signal["holders"] <= 0 or signal["holders"] < self._min_holders:
             self._signals_filtered += 1
             log.debug(
                 "tg signal: filtered %s (holders=%d < %d)",
