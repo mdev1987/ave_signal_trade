@@ -1,47 +1,62 @@
-# Smart-Watch — smart-money follower for Solana
+# Smart-Watch — Solana trading bot
 
-Tracks **quality-filtered smart-money wallets** — KOLs plus top Solana
-traders from the SolanaTracker PnL V2 leaderboard — and alerts the moment
-any of them buys something new. Every alert opens a **shadow paper
-position** that rides a trailing stop, so the strategy proves (or disproves)
-itself with real numbers before you ever risk a cent.
+Two modes:
+
+1. **TG-first** (`tg-trade`) — Listens to @gmgnsignals Telegram channel in real-time, filters signals, buys via Jupiter, tracks positions with trailing stops.
+2. **Watch** (`watch`) — Tracks KOL/smart-money wallets, opens positions on consensus buys.
+
+## Architecture (TG-first)
 
 ```
-DeBot tier/rank --> Moralis Solana swaps (launch-window buyers)
-        |                     |
-        +------ smart_money_wallets.json
-                               |
-   Tatum push webhooks <-------+--> 45s Shyft poll fallback
-         |                                 |
-         v                                 v
-   Telegram alerts --> shadow paper book (trailing stop + TP ladder)
-
-SolanaTracker (optional):
-  ├── Live wallet scoring (every 4h refresh)
-  ├── Token risk score gate (fail-open pre-filter)
-  ├── KOL trade feed polling (every 30s)
-  └── Sniper detection filter
+@GMGNsignals (Telegram)
+      |
+      v
+TgSignalFeed (Telethon real-time events)
+      |
+      v
+parse_tg_signal() — extract CA, MC, liq, holders
+      |
+      v
+Quality gates — reject if MC < $5K, liq < $1K, holders < 10
+      |
+      v
+DexScreener — fetch live price, liquidity, 1h change
+      |
+      v
+Secondary gates — reject if dumping (-15% h1)
+      |
+      v
+JupiterSwap — quote + execute buy (paper or live)
+      |
+      v
+PositionManager — track prices, enforce exits
+      |
+      ├── Hard stop: -25% from entry
+      ├── Trailing stop: -35% from peak
+      ├── TP ladder: +30% / +80% / +200%
+      └── Max hold: 24h
 ```
 
 ## Project structure
 
 ```
-main.py                  # entry point: watch / status / sim / wallet-new
+main.py                  # entry point: watch / tg-trade / sim / wallet-new / status
+main_tg.py               # TG-first trader (PositionManager, signal handler)
 src/
   config.py              # .env parser + Settings dataclass
-  watcher.py             # smart-wallet watcher (consensus scoring)
-  pair_perf.py           # adaptive pair-quality multiplier
-  wallet_weights.py      # wallet-quality weights (Bayesian confidence)
+  tg_signal_feed.py      # Telegram @gmgnsignals listener (real-time events)
   dexscreener.py         # DexScreener REST oracle
-  dbotx.py               # DBotX fail-open rug filter
   jupiter_swap.py        # Jupiter Swap V2 client
   notifier.py            # Telegram notifications
-  pump_stream.py         # pumpapi.io WebSocket firehose
-  wallet_discovery.py    # batch wallet discovery
+  watcher.py             # smart-wallet watcher (watch mode)
+  wallet_weights.py      # wallet-quality weights (watch mode)
+  pair_perf.py           # adaptive pair-quality multiplier (watch mode)
+  dbotx.py               # DBotX fail-open rug filter (watch mode)
+  pump_stream.py         # pumpapi.io WebSocket firehose (watch mode)
+  tatum_notify.py        # Tatum push subscriptions (watch mode)
+  wallet_discovery.py    # batch wallet discovery (watch mode)
+  soltracker.py          # SolanaTracker API client (watch mode)
   logs.py                # logging + journal (JSONL)
-  tatum_notify.py        # Tatum push subscriptions
-  debot.py               # DeBot.ai community-signal client
-  soltracker.py          # SolanaTracker API client (risk, KOL feed, wallets)
 scripts/
   discover_wallets.py    # expand watchlist from SolanaTracker leaderboard
   wallet_perf.py         # rank wallets by PnL / win rate
@@ -60,96 +75,42 @@ tests/
 
 | Command | What it does |
 |---|---|
-| `uv run main.py watch` | run the 24/7 watcher (alerts + shadow book + status cards) |
-| `uv run main.py tatum-setup` | register push subscriptions for all tracked wallets |
-| `uv run main.py status` | print the status card on demand |
-| `uv run main.py sim <CA> [--size X]` | Jupiter round-trip quote check (paper) |
-| `uv run main.py sim <CA> --size 0.05 --live --yes` | execute real buy+sell on the throwaway wallet |
-| `uv run main.py wallet-new` / `wallet-show` | create/inspect throwaway trading wallet |
-| `uv run scripts/wallet_perf.py` | rank every tracked wallet by PnL / win rate |
-| `uv run scripts/discover_wallets.py` | expand the watchlist from SolanaTracker leaderboard |
-| `uv run scripts/seed_pair_perf.py` | seed `pair_performance.json` from past journal entries |
-
-## Strategy
-
-### Weighted consensus
-
-Each wallet is weighted by its **real trading performance** — win rate + total
-PnL from SolanaTracker. When several wallets buy the same token, their weights
-are summed:
-
-- **weight 0** — low-win-rate noise wallets (<40% win) are pruned entirely
-- **weight 1.0-1.5** — proven winners (>=60% win, >$1M PnL) count the most
-- A token **fires** only when the summed weight of **>=2 distinct wallets**
-  reaches `CONSENSUS_WEIGHT_THRESHOLD` (1.5). `REQUIRE_STRONG_WALLET=true`
-  enforces at least one proven winner, so two mediocre wallets can never
-  manufacture a signal.
-
-### Open gate pipeline
-
-Every consensus signal passes through a multi-stage gate before opening a
-shadow position:
-
-1. **Per-wallet cap** — skip if >= `PER_WALLET_MAX_POSITIONS` open positions
-   already share a wallet (kills correlated stacks)
-2. **Liquidity check** — minimum pool liquidity in USD
-3. **Momentum filters** — 1h uptrend required (`OPEN_MIN_H1_PCT`), no 5m
-   dumps (`OPEN_MAX_M5_DUMP_PCT`)
-4. **Multi-timeframe alignment** — trend-shaped tokens (all 4 TFs agree)
-   get `MTF_ALIGN_BONUS` added to their score
-5. **Pair-quality multiplier** — adaptive per-wallet-pair multiplier based
-   on rolling trade history. Known-losing pairs (e.g. AgmLJ+kEFiA) get
-   0.5x; unknown pairs stay at 1.0
-6. **SolanaTracker risk gate** — fail-open pre-filter checking token risk
-   score (1-10 scale). Tokens above `SOLTRACKER_RISK_MAX_SCORE` (7) rejected
-7. **DBotX safety** — fail-open rug filter checking mint/freeze authority
-   and top-10 holder concentration
-8. **SolanaTracker sniper filter** — fail-open check rejecting tokens where
-   too many first-buyers are known snipers (bot accounts)
-9. **Jupiter impact guard** — skip if buy-side slippage exceeds
-   `OPEN_MAX_IMPACT_PCT`
-
-### Shadow book exit logic
-
-- **TP ladder** — scale-out at +30% / +80% / +200% (configurable)
-- **Trailing stop** — after peak >= 1.3x, exit on 35% retrace from peak
-- **Hard stop** — -25% from entry
-- **Early adverse filter** — one-shot at 30s: reject if drawdown >20% AND gain <5%
-- **Timeout** — force-close after 24h
-
-## Running 24/7 (OxMgr)
-
-```bash
-oxmgr apply ./oxfile.toml        # supervised, auto-restart, health-checked
-oxmgr status watcher             # or: oxmgr logs watcher -f
-```
-
-Health check restarts the app if `bot_logs/watcher.log` goes stale >6 min.
+| `uv run main.py tg-trade` | TG-first trader (real-time signals + position tracking) |
+| `uv run main.py watch` | KOL consensus watcher (wallet tracking + shadow book) |
+| `uv run main.py sim <CA>` | Jupiter round-trip quote check (paper) |
+| `uv run main.py sim <CA> --live --yes` | Execute real buy+sell on throwaway wallet |
+| `uv run main.py wallet-new` | Create throwaway trading wallet |
+| `uv run main.py wallet-show` | Show throwaway address/balance |
+| `uv run main.py status` | Print status card |
+| `uv run main.py tatum-setup` | Register push subscriptions (watch mode) |
+| `uv run scripts/wallet_perf.py` | Rank wallets by PnL / win rate |
 
 ## Configuration
 
 Everything lives in `.env` (template: `.env.example`). Key groups:
 
-- **Telegram**: `BOT_TOKEN`, `CHAT_ID`
-- **Data providers**: `HELIUS_API_KEYS`, `SHYFT_API_KEY`, `TATUM_API_KEY`
-- **SolanaTracker**: `SOLTRACKER_API_KEY`, `SOLTRACKER_KOL_FEED`,
-  `SOLTRACKER_RISK_GATE`, `SOLTRACKER_RISK_MAX_SCORE`, `SOLTRACKER_SNIPER_FILTER`,
-  `SOLTRACKER_SNIPER_MAX_PCT`, `SOLTRACKER_WALLET_REFRESH_H`
-- **Wallet weighting**: `WALLET_WEIGHT_FLOOR_WIN`, `WALLET_WEIGHT_FULL_WIN`,
-  `CONSENSUS_WEIGHT_THRESHOLD`, `REQUIRE_STRONG_WALLET`
-- **Shadow book**: `SIZE_SOL`, `TP_LADDER`, `TRAIL_*`, `HARD_STOP_PCT`,
-  `MAX_OPEN_POSITIONS`, `PER_WALLET_MAX_POSITIONS`
-- **Open gates**: `OPEN_MIN_LIQ_USD`, `OPEN_MAX_IMPACT_PCT`, `OPEN_MIN_H1_PCT`,
-  `OPEN_MAX_M5_DUMP_PCT`, `MTF_ALIGN_BONUS`
-- **Pair quality**: `PAIR_PERF_FILE`, `scripts/seed_pair_perf.py`
-- **DBotX safety**: `DBOTX_API_KEY`, `DBOTX_SAFETY`, `DBOTX_TOP10_MAX`
-- **Early adverse filter**: `EARLY_FILTER_WINDOW_S`, `EARLY_FILTER_DD_PCT`, `EARLY_FILTER_GAIN_PCT`
+- **Telegram signal feed**: `TG_API_ID`, `TG_API_HASH`, `TG_PHONE`, `TG_SESSION_NAME`, `TG_MIN_MC`, `TG_MIN_LIQ`, `TG_MIN_HOLDERS`
+- **Position management**: `SIZE_SOL`, `TP_LADDER`, `TRAIL_RETRACE_PCT`, `HARD_STOP_PCT`, `MAX_HOLD_H`
+- **Trading mode**: `DRY_RUN=true` (paper) / `DRY_RUN=false` (live)
+- **Jupiter**: `JUPITER_API_KEY`, `JUPITER_SLIPPAGE_BPS`, `JUPITER_MAX_IMPACT_PCT`
+- **Data providers**: `DEXSCREENER_BASE_URL`, `DEXSCREENER_RPM`, `HELIUS_API_KEYS`
+- **Wallet weighting** (watch mode): `CONSENSUS_WEIGHT_THRESHOLD`, `REQUIRE_STRONG_WALLET`
+- **Shadow book** (watch mode): `MAX_OPEN_POSITIONS`, `PER_WALLET_MAX_POSITIONS`
 
-## State & logs
+## State files
 
-- `shadow_book.json` — virtual positions/closed trades (the scorecard)
-- `watcher_state.json` — per-wallet last-seen signatures
-- `bot_logs/watcher.log` — runtime log
-- `bot_logs/journal.jsonl` — structured event journal (JSONL)
-- `pair_performance.json` — adaptive pair-quality multiplier store
+- `tg_positions.json` — open positions (TG-first mode)
+- `tg_closed.json` — closed trade history
+- `shadow_book.json` — virtual positions/closed trades (watch mode)
+- `watcher_state.json` — per-wallet last-seen signatures (watch mode)
 - `wallet_performance.json` — wallet PnL/win-rate data
+- `pair_performance.json` — adaptive pair-quality multiplier store
+- `bot_logs/bot.log` — runtime log
+- `bot_logs/journal.jsonl` — structured event journal (JSONL)
+
+## Running 24/7 (OxMgr)
+
+```bash
+oxmgr apply ./oxfile.toml        # supervised, auto-restart, health-checked
+oxmgr status track-wallet        # or: oxmgr logs track-wallet -f
+```

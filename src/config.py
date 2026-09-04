@@ -89,6 +89,7 @@ class Settings:
     bot_token: str = ""
     chat_id: str = ""
     # strategy
+    dry_run: bool = True
     size_sol: float = 0.05
     # Take-profit ladder (backtest-validated). Each (mult, frac) banks `frac`
     # of the ORIGINAL position size at the level's multiple (virtual, paper).
@@ -195,6 +196,7 @@ def load_settings(path: str = ".env") -> Settings:
     return Settings(
         bot_token=get(env, "BOT_TOKEN", _d.bot_token),
         chat_id=get(env, "CHAT_ID", _d.chat_id),
+        dry_run=get_bool(env, "DRY_RUN", _d.dry_run),
         size_sol=get_float(env, "SIZE_SOL", _d.size_sol),
         tp_ladder=parse_ladder(env, "TP_LADDER", "1.3:0.4,1.8:0.3,3.0:0.3"),
         trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", _d.trail_retrace_pct),

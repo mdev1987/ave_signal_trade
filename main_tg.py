@@ -301,7 +301,7 @@ async def _run() -> int:
     ds = DexScreenerClient(
         base_url=s.dexscreener_base_url, rpm=s.dexscreener_rpm,
     )
-    jupiter = JupiterSwap(dry_run=True)
+    jupiter = JupiterSwap(dry_run=s.dry_run)
 
     pm = PositionManager(
         ds=ds, jupiter=jupiter, notifier=notifier,

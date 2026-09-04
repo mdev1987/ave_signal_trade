@@ -23,6 +23,17 @@ gainers_discovery.json
 fone_discovery.json
 dexscreener_top_gainer.md
 KOL.md
+tg_positions.json
+tg_closed.json
+
+# ---- research artifacts ----
+channel_ca_data.json
+channel_candidates.json
+channel_ranking.json
+channel_ranking_final.json
+channel_signals.json
+tgdata_config.ini
+skills-lock.json
 
 # ---- python / tooling ----
 __pycache__/

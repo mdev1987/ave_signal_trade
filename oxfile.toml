@@ -2,7 +2,7 @@ version = 1
 
 [[apps]]
 name = "track-wallet"
-command = "/usr/bin/env uv run main.py watch"
+command = "/usr/bin/env uv run main.py tg-trade"
 cwd = "/home/mdev/Programming/ave_signal_trade"
 restart_policy = "always"
 max_restarts = 1000
@@ -10,7 +10,7 @@ crash_restart_limit = 0
 restart_delay_secs = 5
 stop_signal = "SIGTERM"
 stop_timeout_secs = 20
-health_cmd = "/usr/bin/find /home/mdev/Programming/ave_signal_trade/bot_logs/watcher.log -mmin -6"
+health_cmd = "/usr/bin/find /home/mdev/Programming/ave_signal_trade/bot_logs/bot.log -mmin -6"
 health_interval_secs = 60
 health_timeout_secs = 5
 health_max_failures = 3
