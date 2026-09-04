@@ -176,18 +176,16 @@ class Settings:
     soltracker_sniper_filter: bool = False  # enable sniper detection filter
     soltracker_sniper_max_pct: float = 30.0 # max % of snipers among first-buyers
     soltracker_wallet_refresh_h: float = 4.0  # hours between wallet score refresh
-    # --- GMGN API (gmgn-sdk) ---
-    gmgn_api_key: str = ""              # SDK reads GMGN_API_KEY from env if empty
-    gmgn_private_key: str = ""          # for critical-auth methods (swap, strategy)
-    gmgn_track_feed: bool = True        # enable GMGN smartmoney/KOL feed
-    gmgn_track_poll_s: float = 30.0     # poll interval for GMGN feed
-    gmgn_security_gate: bool = True     # enable GMGN token security gate
-    gmgn_rug_ratio_max: float = 0.30    # reject tokens with rug_ratio > this
-    gmgn_sniper_max: int = 20           # reject if sniper_count > this
-    gmgn_holdings_gate: bool = True     # enable smart_wallets count bonus/penalty
-    gmgn_kline_gate: bool = True        # enable kline pattern gate
-    gmgn_kline_max_drawdown: float = 0.60  # reject if drawdown > this from kline
-    gmgn_wallet_refresh_h: float = 4.0  # hours between GMGN wallet score refresh
+    # --- Telegram signal feed (@gmgnsignals) ---
+    tg_signal_enabled: bool = True       # enable TG signal feed
+    tg_signal_channel: str = "gmgnsignals"  # Telegram channel to listen to
+    tg_api_id: int = 0                   # Telegram API ID
+    tg_api_hash: str = ""                # Telegram API hash
+    tg_phone: str = ""                   # Telegram phone number
+    tg_session_name: str = "tg_signal"   # Telethon session file name
+    tg_min_mc: float = 5_000.0           # min market cap to forward signal
+    tg_min_liq: float = 1_000.0          # min liquidity to forward signal
+    tg_min_holders: int = 10             # min holder count to forward signal
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -263,15 +261,13 @@ def load_settings(path: str = ".env") -> Settings:
         soltracker_sniper_filter=get_bool(env, "SOLTRACKER_SNIPER_FILTER", _d.soltracker_sniper_filter),
         soltracker_sniper_max_pct=get_float(env, "SOLTRACKER_SNIPER_MAX_PCT", _d.soltracker_sniper_max_pct),
         soltracker_wallet_refresh_h=get_float(env, "SOLTRACKER_WALLET_REFRESH_H", _d.soltracker_wallet_refresh_h),
-        gmgn_api_key=get(env, "GMGN_API_KEY", _d.gmgn_api_key),
-        gmgn_private_key=get(env, "GMGN_PRIVATE_KEY", _d.gmgn_private_key),
-        gmgn_track_feed=get_bool(env, "GMGN_TRACK_FEED", _d.gmgn_track_feed),
-        gmgn_track_poll_s=get_float(env, "GMGN_TRACK_POLL_S", _d.gmgn_track_poll_s),
-        gmgn_security_gate=get_bool(env, "GMGN_SECURITY_GATE", _d.gmgn_security_gate),
-        gmgn_rug_ratio_max=get_float(env, "GMGN_RUG_RATIO_MAX", _d.gmgn_rug_ratio_max),
-        gmgn_sniper_max=get_int(env, "GMGN_SNIPER_MAX", _d.gmgn_sniper_max),
-        gmgn_holdings_gate=get_bool(env, "GMGN_HOLDINGS_GATE", _d.gmgn_holdings_gate),
-        gmgn_kline_gate=get_bool(env, "GMGN_KLINE_GATE", _d.gmgn_kline_gate),
-        gmgn_kline_max_drawdown=get_float(env, "GMGN_KLINE_MAX_DRAWDOWN", _d.gmgn_kline_max_drawdown),
-        gmgn_wallet_refresh_h=get_float(env, "GMGN_WALLET_REFRESH_H", _d.gmgn_wallet_refresh_h),
+        tg_signal_enabled=get_bool(env, "TG_SIGNAL_ENABLED", _d.tg_signal_enabled),
+        tg_signal_channel=get(env, "TG_SIGNAL_CHANNEL", _d.tg_signal_channel),
+        tg_api_id=get_int(env, "TG_API_ID", _d.tg_api_id),
+        tg_api_hash=get(env, "TG_API_HASH", _d.tg_api_hash),
+        tg_phone=get(env, "TG_PHONE", _d.tg_phone),
+        tg_session_name=get(env, "TG_SESSION_NAME", _d.tg_session_name),
+        tg_min_mc=get_float(env, "TG_MIN_MC", _d.tg_min_mc),
+        tg_min_liq=get_float(env, "TG_MIN_LIQ", _d.tg_min_liq),
+        tg_min_holders=get_int(env, "TG_MIN_HOLDERS", _d.tg_min_holders),
     )
