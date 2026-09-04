@@ -118,21 +118,32 @@ class PositionManager:
         buy_amount = int(size * 1e9)  # WSOL has 9 decimals
         quote = await self.jupiter.quote(ca, buy_amount, force=True)
 
+        if not quote or not quote.success:
+            log.warning("skip %s — buy quote failed: %s", ca[:8], quote.reason if quote else "exception")
+            return False
+        if quote.output_amount <= 0:
+            log.warning("skip %s — buy quote returned 0 tokens", ca[:8])
+            return False
+
+        # Use DexScreener price as entry (already in USD, accurate)
         actual_price = entry_price
-        token_amount = 0
-        if quote and quote.success:
-            token_amount = quote.output_amount
-            if token_amount > 0:
-                actual_price = (size * 1e9) / token_amount / 1e9
-            if self.jupiter.live:
-                # Live mode: execute the order
-                res = await self.jupiter.execute_order(quote.order)
-                if not res.success:
-                    log.warning("buy exec failed for %s: %s", ca[:8], res.error)
-                    return False
-                token_amount = res.output_amount
-            else:
-                log.info("paper mode — tracking position without executing")
+        token_amount = quote.output_amount
+
+        if self.jupiter.live:
+            # Validate sell-side is quotable before buying
+            sell_quote = await self.jupiter.quote_sell(ca, token_amount)
+            if not sell_quote or not sell_quote.success:
+                log.warning("skip %s — sell-side quote failed (%s)", ca[:8], sell_quote.reason if sell_quote else "no route")
+                return False
+
+            # Execute the buy
+            res = await self.jupiter.execute_order(quote.order)
+            if not res.success:
+                log.warning("buy exec failed for %s: %s", ca[:8], res.error)
+                return False
+            token_amount = res.output_amount
+        else:
+            log.info("paper mode — tracking position without executing")
 
         self.open[ca] = {
             "sym": sym,
@@ -168,12 +179,14 @@ class PositionManager:
         for ca, pos in list(self.open.items()):
             try:
                 snap = await self.ds.token_pairs("solana", ca)
-                if snap and snap.get("pairs"):
-                    pair = snap["pairs"][0]
-                    price = pair.get("priceUsd") or 0
+                if snap and snap.get("price_usd"):
+                    price = float(snap["price_usd"])
                     if price > 0:
+                        old = pos["last_price"]
                         pos["last_price"] = price
                         pos["peak_price"] = max(pos["peak_price"], price)
+                        if old != price:
+                            log.debug("price %s: %.10f -> %.10f", pos["sym"], old, price)
             except Exception:
                 pass
 
@@ -234,6 +247,11 @@ class PositionManager:
         if token_amount > 0:
             try:
                 if self.jupiter.live:
+                    # Validate sell-side quote exists before executing
+                    sell_quote = await self.jupiter.quote_sell(ca, token_amount)
+                    if not sell_quote or not sell_quote.success:
+                        log.warning("sell-side quote failed for %s (%s) — position held", ca[:8], sell_quote.reason if sell_quote else "no route")
+                        return
                     await self.jupiter.sell(ca, token_amount)
                 else:
                     log.info("paper mode — tracking exit without executing")
