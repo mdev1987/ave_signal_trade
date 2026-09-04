@@ -222,59 +222,75 @@ class TgSignalFeed:
                     pass
 
     async def _listen(self) -> None:
-        """Poll for new messages via iter_messages.
+        """Real-time event listener using Telethon's update loop.
 
-        Telethon v1.44.0 event handlers don't fire reliably in a threaded/
-        background-task context.  iter_messages with ``min_id`` gives us
-        sub-5-second latency — essentially real-time for a channel that
-        posts every few seconds.
+        This only works when TG is the **main** event loop (not a background
+        task).  ``run_until_disconnected()`` drives the internal update pump
+        that dispatches events to handlers.
         """
-        from telethon import TelegramClient
+        from telethon import TelegramClient, events
 
         client = TelegramClient(
             self._session_name,
             self._api_id,
             self._api_hash,
         )
-        await client.start(phone=self._phone)
-        log.info("tg signal feed: connected, polling @%s", self._channel)
 
-        entity = await client.get_entity(self._channel)
-
-        # Start from the latest message so we don't re-process history
-        last_msg_id = 0
-        async for msg in client.iter_messages(entity, limit=1):
-            last_msg_id = msg.id
-        log.info("tg signal feed: starting from msg_id=%d", last_msg_id)
-
-        poll_interval = 3.0
-
-        while not self._stop.is_set():
+        @client.on(events.NewMessage)
+        async def _handler(event):
+            if self._stop.is_set():
+                return
+            chat_id = event.chat_id
+            # -100 prefix = supergroup/channel; only process our target channel
+            if chat_id != -1002202241417:
+                return
+            text = event.message.text or ""
+            if not text:
+                return
             try:
-                new_count = 0
-                async for msg in client.iter_messages(entity, min_id=last_msg_id):
-                    new_count += 1
-                    text = msg.text or ""
-                    last_msg_id = max(last_msg_id, msg.id)
-                    try:
-                        await self._handle_message(text)
-                    except Exception:  # noqa: BLE001
-                        self._errors += 1
-                        log.exception("tg signal feed: handle failed")
-                if new_count > 0:
-                    log.debug("tg signal feed: processed %d new messages", new_count)
+                await self._handle_message(text)
             except Exception:  # noqa: BLE001
                 self._errors += 1
-                log.exception("tg signal feed: poll failed — retrying in 10s")
-                await asyncio.sleep(10)
-                continue
+                log.exception("tg signal feed: handle failed")
 
+        await client.start(phone=self._phone)
+        log.info("tg signal feed: connected, listening to @%s (real-time)", self._channel)
+
+        # run_until_disconnected blocks until the client disconnects or stop()
+        # We poll _stop periodically so we can exit cleanly
+        async def _run():
+            while not self._stop.is_set():
+                if not client.is_connected():
+                    break
+                await asyncio.sleep(1)
+
+        # Start the update receiver + our stop-checker concurrently.
+        # run_until_disconnected may throw on connection reset — catch it
+        # so it doesn't propagate and kill the parent event loop.
+        async def _safe_listen():
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=poll_interval)
-            except asyncio.TimeoutError:
+                await client.run_until_disconnected()
+            except Exception:  # noqa: BLE001
+                log.warning("tg signal feed: run_until_disconnected raised — will reconnect")
+
+        done, pending = await asyncio.wait(
+            [
+                asyncio.create_task(_safe_listen()),
+                asyncio.create_task(_run()),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
                 pass
 
-        await client.disconnect()
+        try:
+            await client.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
 
     async def _handle_message(self, text: str) -> None:
         """Parse a message and forward qualifying signals."""

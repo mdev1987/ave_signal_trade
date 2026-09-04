@@ -1324,7 +1324,14 @@ def build_parser() -> argparse.ArgumentParser:
     wn.set_defaults(func=cmd_wallet_new)
     ws = sub.add_parser("wallet-show", help="throwaway address/balance")
     ws.set_defaults(func=cmd_wallet_show)
+    tg = sub.add_parser("tg-trade", help="TG-first signal trader")
+    tg.set_defaults(func=cmd_tg_trade)
     return ap
+
+
+def cmd_tg_trade(args) -> int:
+    from main_tg import main as tg_main  # noqa: PLC0415
+    return tg_main()
 
 
 if __name__ == "__main__":
