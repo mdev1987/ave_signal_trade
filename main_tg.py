@@ -11,6 +11,7 @@ Pipeline:
     → track position: poll DexScreener price
     → sell on: hard stop / take profit / trailing stop / max hold time
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -102,7 +103,12 @@ class PositionManager:
         return self.size_sol * 0.75
 
     async def open_position(
-        self, ca: str, sym: str, entry_price: float, mc: float, liq: float,
+        self,
+        ca: str,
+        sym: str,
+        entry_price: float,
+        mc: float,
+        liq: float,
     ) -> bool:
         """Buy into a position. Returns True if opened."""
         if ca in self.open:
@@ -119,7 +125,9 @@ class PositionManager:
         quote = await self.jupiter.quote(ca, buy_amount, force=True)
 
         if not quote or not quote.success:
-            log.warning("skip %s — buy quote failed: %s", ca[:8], quote.reason if quote else "exception")
+            log.warning(
+                "skip %s — buy quote failed: %s", ca[:8], quote.reason if quote else "exception"
+            )
             return False
         if quote.output_amount <= 0:
             log.warning("skip %s — buy quote returned 0 tokens", ca[:8])
@@ -133,7 +141,11 @@ class PositionManager:
             # Validate sell-side is quotable before buying
             sell_quote = await self.jupiter.quote_sell(ca, token_amount)
             if not sell_quote or not sell_quote.success:
-                log.warning("skip %s — sell-side quote failed (%s)", ca[:8], sell_quote.reason if sell_quote else "no route")
+                log.warning(
+                    "skip %s — sell-side quote failed (%s)",
+                    ca[:8],
+                    sell_quote.reason if sell_quote else "no route",
+                )
                 return False
 
             # Execute the buy
@@ -217,7 +229,7 @@ class PositionManager:
 
             # Max hold time
             elif hold_s > self.max_hold_s:
-                reason = f"max_hold({hold_s/60:.0f}m)"
+                reason = f"max_hold({hold_s / 60:.0f}m)"
 
             # Take profit ladder
             else:
@@ -240,7 +252,9 @@ class PositionManager:
         pnl_pct = (current / entry - 1.0) * 100.0 if entry > 0 else 0
         pnl_sol = size * pnl_pct / 100.0
 
-        log.info("SELL %s (%s) reason=%s pnl=%.1f%% (%.4f SOL)", ca[:8], sym, reason, pnl_pct, pnl_sol)
+        log.info(
+            "SELL %s (%s) reason=%s pnl=%.1f%% (%.4f SOL)", ca[:8], sym, reason, pnl_pct, pnl_sol
+        )
 
         # Execute sell
         token_amount = pos.get("token_amount", 0)
@@ -250,7 +264,11 @@ class PositionManager:
                     # Validate sell-side quote exists before executing
                     sell_quote = await self.jupiter.quote_sell(ca, token_amount)
                     if not sell_quote or not sell_quote.success:
-                        log.warning("sell-side quote failed for %s (%s) — position held", ca[:8], sell_quote.reason if sell_quote else "no route")
+                        log.warning(
+                            "sell-side quote failed for %s (%s) — position held",
+                            ca[:8],
+                            sell_quote.reason if sell_quote else "no route",
+                        )
                         return
                     await self.jupiter.sell(ca, token_amount)
                 else:
@@ -260,10 +278,16 @@ class PositionManager:
 
         # Record closed trade
         trade = {
-            "ca": ca, "sym": sym, "entry": entry, "exit": current,
-            "pnl_sol": pnl_sol, "pnl_pct": pnl_pct,
-            "size_sol": size, "hold_s": time.time() - pos["ts"],
-            "reason": reason, "ts": time.time(),
+            "ca": ca,
+            "sym": sym,
+            "entry": entry,
+            "exit": current,
+            "pnl_sol": pnl_sol,
+            "pnl_pct": pnl_pct,
+            "size_sol": size,
+            "hold_s": time.time() - pos["ts"],
+            "reason": reason,
+            "ts": time.time(),
         }
         self.closed.append(trade)
         _save_closed(self.closed)
@@ -277,11 +301,11 @@ class PositionManager:
         del self.open[ca]
         _save_positions(self.open)
 
-        icon = "🟢" if pnl_sol >= 0 else "🔴"
+        icon = "✅" if pnl_sol >= 0 else "❌"
         await self.notifier._send(
             f"{icon} **SELL** {sym} ({reason})\n"
             f"▸ PnL: `{pnl_pct:+.1f}%` (`{pnl_sol:+.4f} SOL`)\n"
-            f"▸ Held: `{trade['hold_s']/60:.1f}m`\n"
+            f"▸ Held: `{trade['hold_s'] / 60:.1f}m`\n"
             f"▸ Open positions: {self.n_open}"
         )
 
@@ -301,10 +325,7 @@ class PositionManager:
             current = pos["last_price"]
             pnl = (current / entry - 1.0) * 100 if entry > 0 else 0
             hold = (time.time() - pos["ts"]) / 60
-            lines.append(
-                f"  `{pos['sym']}` {ca[:8]} "
-                f"{pnl:+.1f}% · {hold:.0f}m"
-            )
+            lines.append(f"  `{pos['sym']}` {ca[:8]} {pnl:+.1f}% · {hold:.0f}m")
         return "\n".join(lines)
 
 
@@ -317,12 +338,15 @@ async def _run() -> int:
 
     notifier = TelegramNotifier()
     ds = DexScreenerClient(
-        base_url=s.dexscreener_base_url, rpm=s.dexscreener_rpm,
+        base_url=s.dexscreener_base_url,
+        rpm=s.dexscreener_rpm,
     )
     jupiter = JupiterSwap(dry_run=s.dry_run)
 
     pm = PositionManager(
-        ds=ds, jupiter=jupiter, notifier=notifier,
+        ds=ds,
+        jupiter=jupiter,
+        notifier=notifier,
         size_sol=s.size_sol,
         hard_stop_pct=s.hard_stop_pct,
         tp_ladder=s.tp_ladder,
@@ -372,7 +396,12 @@ async def _run() -> int:
 
         log.info(
             "signal %s (%s) mc=$%.0f liq=$%.0f price=$%.8f h1=%+.1f%% — BUYING",
-            ca[:8], sym, mc, liq, price, h1,
+            ca[:8],
+            sym,
+            mc,
+            liq,
+            price,
+            h1,
         )
 
         await pm.open_position(ca, sym, price, mc, liq)
@@ -423,11 +452,16 @@ async def _run() -> int:
             f"▸ Positions: {pm.n_open}"
         )
 
+        last_refresh = 0.0
+        refresh_interval = 30.0  # refresh prices every 30s, not every tick
+
         while not stop.is_set():
             await asyncio.sleep(pm.poll_s)
-            log.debug("main loop tick — stop=%s tg_alive=%s",
-                      stop.is_set(),
-                      tg_task.done() if tg_task else "?")
+            log.debug(
+                "main loop tick — stop=%s tg_alive=%s",
+                stop.is_set(),
+                tg_task.done() if tg_task else "?",
+            )
             if tg_task and tg_task.done() and not stop.is_set():
                 log.warning("tg feed task exited unexpectedly — restarting")
                 tg_feed = TgSignalFeed(
@@ -444,7 +478,10 @@ async def _run() -> int:
                 tg_task = asyncio.create_task(tg_feed.run())
                 tg_task.add_done_callback(_log_task_result)
             try:
-                await pm.refresh_prices()
+                now = time.time()
+                if now - last_refresh >= refresh_interval:
+                    await pm.refresh_prices()
+                    last_refresh = now
                 await pm.check_exits()
             except Exception:
                 log.exception("position management error")
