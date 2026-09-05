@@ -40,6 +40,7 @@ ICONS = {
     "skip": "⚠️",
     "alert": "⚠️",
     "stop": "🏁",
+    "crash": "💥",
 }
 
 
@@ -275,13 +276,14 @@ class TelegramNotifier:
         source: str | None = None,
         wallets: list[str] | None = None,
     ) -> None:
-        """Position closed card (tp / sl / trail / timeout / liq_collapse)."""
+        """Position closed card (tp / sl / trail / timeout / liq_collapse / crash)."""
         label, r_icon = {
             "tp": ("TAKE PROFIT", "🎯"),
             "sl": ("STOP LOSS", "🛑"),
             "trail": ("TRAILING STOP", "🔻"),
             "timeout": ("TIMEOUT", "⏱️"),
             "liq_collapse": ("LIQ COLLAPSE", "🚨"),
+            "crash": ("RAPID CRASH", "💥"),
         }.get(reason, (reason.upper(), ICONS["close"]))
         win = pnl_sol > 0
         pnl_icon = "✅" if win else "❌"

@@ -236,13 +236,17 @@ class TgSignalFeed:
             self._api_hash,
         )
 
+        # Resolve channel username to chat_id dynamically
+        # Telegram channels use -100 prefix: entity.id=2202241417 -> chat_id=-1002202241417
+        resolved_chat_id = None
+
         @client.on(events.NewMessage)
         async def _handler(event):
             if self._stop.is_set():
                 return
             chat_id = event.chat_id
-            # -100 prefix = supergroup/channel; only process our target channel
-            if chat_id != -1002202241417:
+            # Match by resolved chat_id or by channel username
+            if resolved_chat_id and chat_id != resolved_chat_id:
                 return
             text = event.message.text or ""
             if not text:
@@ -254,6 +258,40 @@ class TgSignalFeed:
                 log.exception("tg signal feed: handle failed")
 
         await client.start(phone=self._phone)
+
+        # Resolve channel to chat_id
+        try:
+            entity = await client.get_entity(self._channel)
+            # For channels/supergroups, Telethon uses -100 prefix
+            raw_id = entity.id
+            if hasattr(entity, 'megagroup') or hasattr(entity, 'broadcast'):
+                # It's a channel/supergroup - add -100 prefix
+                resolved_chat_id = int(f"-100{raw_id}")
+            else:
+                resolved_chat_id = raw_id
+            log.info(
+                "tg signal feed: resolved @%s -> entity.id=%s chat_id=%s",
+                self._channel, raw_id, resolved_chat_id,
+            )
+        except Exception:
+            # Fallback: try with @ prefix
+            try:
+                entity = await client.get_entity(f"@{self._channel}")
+                raw_id = entity.id
+                if hasattr(entity, 'megagroup') or hasattr(entity, 'broadcast'):
+                    resolved_chat_id = int(f"-100{raw_id}")
+                else:
+                    resolved_chat_id = raw_id
+                log.info(
+                    "tg signal feed: resolved @%s -> entity.id=%s chat_id=%s",
+                    self._channel, raw_id, resolved_chat_id,
+                )
+            except Exception:
+                log.warning(
+                    "tg signal feed: could not resolve @%s — listening to all channels",
+                    self._channel,
+                )
+
         log.info("tg signal feed: connected, listening to @%s (real-time)", self._channel)
 
         # run_until_disconnected blocks until the client disconnects or stop()
@@ -356,12 +394,14 @@ class TgSignalFeed:
         try:
             # Use MC as the USD value proxy; fallback to 0
             usd = signal["mc"] if signal["mc"] > 0 else 0.0
+            # Pass liquidity from TG signal for use in entry gates
             await self._on_signal(
                 ca,
                 signal["symbol"],
                 usd,
                 3.0,  # high score — channel IS the consensus
                 ["tg_signal"],
+                tg_liq=signal["liq"],  # liquidity from TG message
             )
         except Exception:
             log.exception("tg signal: on_signal failed for %s", ca[:8])
