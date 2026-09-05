@@ -52,6 +52,27 @@ def _parse_value(val: str) -> float:
         return 0.0
 
 
+def get_topic_id(message) -> int | None:
+    """Extract forum topic ID from a Telethon Message object.
+
+    Returns the topic root message ID (e.g. 4437216) or None if the message
+    is not in a forum topic.
+    """
+    reply_to = getattr(message, "reply_to", None)
+    if reply_to is None:
+        return None
+    # Telethon uses MessageReplyHeader for forum replies
+    if not hasattr(reply_to, "forum_topic") or not reply_to.forum_topic:
+        return None
+    # reply_to_msg_id is the topic root message ID
+    if getattr(reply_to, "reply_to_msg_id", None):
+        return int(reply_to.reply_to_msg_id)
+    # Fallback to reply_to_top_id
+    if getattr(reply_to, "reply_to_top_id", None):
+        return int(reply_to.reply_to_top_id)
+    return None
+
+
 def parse_tg_signal(text: str) -> dict | None:
     """Parse a @gmgnsignals message into a token signal dict.
 
@@ -175,6 +196,7 @@ class TgSignalFeed:
         min_liq: float = 1_000.0,
         min_holders: int = 10,
         dedup_ttl_s: float = 3600.0,
+        allowed_topic_ids: set[int] | None = None,
     ) -> None:
         self._on_signal = on_signal
         self._channel = channel
@@ -186,6 +208,7 @@ class TgSignalFeed:
         self._min_liq = min_liq
         self._min_holders = min_holders
         self._dedup_ttl_s = dedup_ttl_s
+        self._allowed_topic_ids = allowed_topic_ids
         self._stop = asyncio.Event()
         self._seen: dict[str, float] = {}  # ca -> first_seen_ts
 
@@ -251,8 +274,14 @@ class TgSignalFeed:
             text = event.message.text or ""
             if not text:
                 return
+            # Extract forum topic ID
+            topic_id = get_topic_id(event.message)
+            # Filter by allowed topics (if configured)
+            if self._allowed_topic_ids is not None:
+                if topic_id is None or topic_id not in self._allowed_topic_ids:
+                    return
             try:
-                await self._handle_message(text)
+                await self._handle_message(text, topic_id=topic_id)
             except Exception:  # noqa: BLE001
                 self._errors += 1
                 log.exception("tg signal feed: handle failed")
@@ -330,12 +359,14 @@ class TgSignalFeed:
         except Exception:  # noqa: BLE001
             pass
 
-    async def _handle_message(self, text: str) -> None:
+    async def _handle_message(self, text: str, topic_id: int | None = None) -> None:
         """Parse a message and forward qualifying signals."""
         self._messages_received += 1
         signal = parse_tg_signal(text)
         if not signal:
             return
+
+        signal["topic_id"] = topic_id
 
         self._signals_parsed += 1
         ca = signal["ca"]
@@ -382,13 +413,14 @@ class TgSignalFeed:
         self._signals_forwarded += 1
 
         log.info(
-            "tg signal: %s %s mc=$%.0f liq=$%.0f holders=%d 1h=%+.1f%%",
+            "tg signal: %s %s mc=$%.0f liq=$%.0f holders=%d 1h=%+.1f%% topic=%s",
             signal["symbol"] or "?",
             ca[:8],
             signal["mc"],
             signal["liq"],
             signal["holders"],
             signal["pc_1h"],
+            topic_id or "none",
         )
 
         try:

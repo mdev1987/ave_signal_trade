@@ -735,6 +735,12 @@ async def _run_watch(s: cfg.Settings) -> int:
     tg_feed = None
     if s.tg_signal_enabled and s.tg_api_id and s.tg_api_hash:
         try:
+            # Parse topic IDs from config (comma-separated string -> set of ints)
+            _topic_ids = None
+            if s.tg_signal_topic_ids:
+                _topic_ids = {int(x.strip()) for x in s.tg_signal_topic_ids.split(",") if x.strip()}
+                log.info("tg signal feed: topic filter enabled — %d topics: %s",
+                         len(_topic_ids), sorted(_topic_ids))
             tg_feed = TgSignalFeed(
                 on_signal=_on_tg_signal,
                 channel=s.tg_signal_channel,
@@ -745,6 +751,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                 min_mc=s.tg_min_mc,
                 min_liq=s.tg_min_liq,
                 min_holders=s.tg_min_holders,
+                allowed_topic_ids=_topic_ids,
             )
             _tg_feed_task = asyncio.create_task(tg_feed.run())
             _tg_feed_task.add_done_callback(_log_task_result)

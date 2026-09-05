@@ -187,6 +187,7 @@ class Settings:
     tg_min_mc: float = 5_000.0           # min market cap to forward signal
     tg_min_liq: float = 1_000.0          # min liquidity to forward signal
     tg_min_holders: int = 10             # min holder count to forward signal
+    tg_signal_topic_ids: str = ""        # comma-separated forum topic IDs to monitor (empty=all)
     # --- RugCheck (solana rug detection) ---
     rug_check_api_key: str = ""          # RugCheck API key (free tier works)
     rug_check_base_url: str = "https://api.rugcheck.xyz"
@@ -277,6 +278,7 @@ def load_settings(path: str = ".env") -> Settings:
         tg_min_mc=get_float(env, "TG_MIN_MC", _d.tg_min_mc),
         tg_min_liq=get_float(env, "TG_MIN_LIQ", _d.tg_min_liq),
         tg_min_holders=get_int(env, "TG_MIN_HOLDERS", _d.tg_min_holders),
+        tg_signal_topic_ids=get(env, "TG_SIGNAL_TOPIC_IDS", _d.tg_signal_topic_ids),
         rug_check_api_key=get(env, "RUG_CHECK_API_KEY", _d.rug_check_api_key),
         rug_check_base_url=get(env, "RUG_CHECK_BASE_URL", _d.rug_check_base_url),
         rug_check_max_score=get_int(env, "RUG_CHECK_MAX_SCORE", _d.rug_check_max_score),
