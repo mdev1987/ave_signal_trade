@@ -165,7 +165,7 @@ class TgSignalFeed:
 
     def __init__(
         self,
-        on_signal: Callable[[str, str, str, float, list[str]], Awaitable[None]],
+        on_signal: Callable[[dict], Awaitable[None]],
         channel: str = "gmgnsignals",
         api_id: int = 0,
         api_hash: str = "",
@@ -392,17 +392,7 @@ class TgSignalFeed:
         )
 
         try:
-            # Use MC as the USD value proxy; fallback to 0
-            usd = signal["mc"] if signal["mc"] > 0 else 0.0
-            # Pass liquidity from TG signal for use in entry gates
-            await self._on_signal(
-                ca,
-                signal["symbol"],
-                usd,
-                3.0,  # high score — channel IS the consensus
-                ["tg_signal"],
-                tg_liq=signal["liq"],  # liquidity from TG message
-            )
+            await self._on_signal(signal)
         except Exception:
             log.exception("tg signal: on_signal failed for %s", ca[:8])
 

@@ -678,11 +678,65 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     # Telegram signal feed (@gmgnsignals): real-time token alerts from GMGN's
     # Telegram channel.  The channel IS the consensus — no wallet-tracking needed.
+    # TG signals bypass wallet consensus and go directly to the open gate with
+    # score=3.0, since GMGN has already aggregated smart money data.
+    async def _on_tg_signal(sig: dict) -> None:
+        ca = sig["ca"]
+        sym = sig.get("symbol") or "?"
+        mc = sig.get("mc", 0.0)
+        liq = sig.get("liq", 0.0)
+        holders = sig.get("holders", 0)
+        status_pct = sig.get("status_pct", 0.0)
+        dev_hold_from = sig.get("dev_hold_from", 0.0)
+        dev_hold_to = sig.get("dev_hold_to", 0.0)
+        signal_type = sig.get("signal_type", "unknown")
+        pc_1h = sig.get("pc_1h", 0.0)
+
+        # TG-specific quality gates using parsed data
+        # 1. Reject dev_sold signals (dev dumping = rug incoming)
+        if signal_type == "dev_sold":
+            log.info("tg skip %s (%s): dev_sold signal", ca[:8], sym)
+            return
+
+        # 2. Reject if dev holding > 5% after sell (still significant bag)
+        if dev_hold_to > 5.0:
+            log.info("tg skip %s (%s): dev_hold_to=%.1f%% > 5%%", ca[:8], sym, dev_hold_to)
+            return
+
+        # 3. Reject if status_pct > 80% (token near completion, late entry)
+        if status_pct > 80.0:
+            log.info("tg skip %s (%s): status=%.0f%% > 80%%", ca[:8], sym, status_pct)
+            return
+
+        # 4. Minimum MC threshold (use TG-level filter, but double check)
+        if mc < s.tg_min_mc:
+            log.info("tg skip %s (%s): mc=$%.0f < $%.0f", ca[:8], sym, mc, s.tg_min_mc)
+            return
+
+        # 5. Minimum liquidity threshold
+        if liq < s.tg_min_liq:
+            log.info("tg skip %s (%s): liq=$%.0f < $%.0f", ca[:8], sym, liq, s.tg_min_liq)
+            return
+
+        # 6. Minimum holders
+        if holders < s.tg_min_holders:
+            log.info("tg skip %s (%s): holders=%d < %d", ca[:8], sym, holders, s.tg_min_holders)
+            return
+
+        # All TG quality gates passed — route to open gate
+        # The channel IS the consensus, so score=3.0 (well above threshold)
+        log.info("tg OPEN %s (%s) mc=$%.0f liq=$%.0f holders=%d 1h=%+.1f%% type=%s",
+                 ca[:8], sym, mc, liq, holders, pc_1h, signal_type)
+        try:
+            await _on_smart_buy(ca, sym, mc, 3.0, ["tg_signal"], tg_liq=liq)
+        except Exception:
+            log.exception("tg _on_smart_buy failed for %s", ca[:8])
+
     tg_feed = None
     if s.tg_signal_enabled and s.tg_api_id and s.tg_api_hash:
         try:
             tg_feed = TgSignalFeed(
-                on_signal=_on_pump_buy,
+                on_signal=_on_tg_signal,
                 channel=s.tg_signal_channel,
                 api_id=s.tg_api_id,
                 api_hash=s.tg_api_hash,
@@ -793,7 +847,7 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     _skip_log = {}
 
-    async def _on_smart_buy(ca, sym, usd, score, wallets=None):
+    async def _on_smart_buy(ca, sym, usd, score, wallets=None, tg_liq=0.0):
         last_detection_ts["t"] = time.time()
         n = len(wallets or [])
         # Concentration guard: cap how many open positions may share any one
@@ -812,7 +866,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             # (weight >= 1) is enough; two mid winners sum to ~1; noise wallets
             # (weight ~0) can never manufacture a signal on their own.
             reason = f"skip:score<{s.consensus_weight_threshold}"
-        elif n < s.open_min_wallets:
+        elif n < s.open_min_wallets and wallets != ["tg_signal"]:
+            # TG signals bypass min_wallets — the channel IS the consensus
             reason = f"skip:min_wallets<{s.open_min_wallets}"
         elif overlap >= s.per_wallet_max_positions:
             reason = f"skip:per_wallet_cap>={s.per_wallet_max_positions}"
@@ -860,16 +915,30 @@ async def _run_watch(s: cfg.Settings) -> int:
             # Rug/safety gate (DBotX, fail-open): reject tokens that still hold a
             # mint or freeze authority, or are dangerously top-10 concentrated.
             # A 403 / missing key degrades to "allow" so an outage never blocks.
+            # NOTE: Pump.fun tokens legitimately have mint authority until graduation.
+            # We only block mint/freeze if liquidity is LOW (< $5k) — indicating
+            # the token hasn't graduated and is likely a rug risk.
             if s.dbotx_safety:
                 pair_addr = (snap or {}).get("pair_address") or ca
                 info = await dbx.pair_safety("solana", pair_addr)
                 if info.get("available"):
-                    if info["mint_authority"] or info["freeze_authority"]:
-                        reason = "skip:unsafe(mint/freeze authority)"
+                    _liq = (snap or {}).get("liq") or 0
+                    # Use TG-reported liquidity as fallback for fresh pump.fun tokens
+                    # not yet indexed by DexScreener (liq=0 from DexScreener)
+                    if _liq < 100 and tg_liq > 0:
+                        _liq = tg_liq
+                    _mint_freeze = info["mint_authority"] or info["freeze_authority"]
+                    # Block mint/freeze only if liquidity is below threshold
+                    # (pump.fun pre-graduation tokens are high-risk)
+                    if _mint_freeze and _liq < 5000:
+                        reason = f"skip:unsafe(mint/freeze,liq=${_liq:.0f})"
                         if _skip_log.get(ca, 0) < time.time() - 300:
                             _skip_log[ca] = time.time()
                             log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
                         return
+                    elif _mint_freeze:
+                        log.info("dbotx WARN %s (%s): mint/freeze but liq=$%.0f > $5k — allowing",
+                                 ca[:10], sym, _liq)
                     if info["top10"] > s.dbotx_top10_max:
                         reason = f"skip:unsafe(top10={info['top10']:.0%})"
                         if _skip_log.get(ca, 0) < time.time() - 300:
@@ -942,7 +1011,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                              pmult=pmult, align=align, price_change=pc)
                 await book.open_position(ca, sym, usd, usd, n, wallets=wallets)
                 return
-            elif (snap.get("liq") or 0) < s.open_min_liq_usd:
+            elif (snap.get("liq") or tg_liq or 0) < s.open_min_liq_usd:
                 reason = "skip:low_liq"
             elif (pc.get("h1") or 0) < s.open_min_h1_pct:
                 reason = f"skip:no_momentum(h1={pc.get('h1')})"
