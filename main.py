@@ -869,7 +869,8 @@ async def _run_watch(s: cfg.Settings) -> int:
         elif n < s.open_min_wallets and wallets != ["tg_signal"]:
             # TG signals bypass min_wallets — the channel IS the consensus
             reason = f"skip:min_wallets<{s.open_min_wallets}"
-        elif overlap >= s.per_wallet_max_positions:
+        elif overlap >= s.per_wallet_max_positions and wallets != ["tg_signal"]:
+            # TG signals bypass per_wallet_cap — each signal is a different token
             reason = f"skip:per_wallet_cap>={s.per_wallet_max_positions}"
         elif usd < s.watch_min_buy_usd:
             reason = "skip:below_min_buy"
