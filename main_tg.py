@@ -269,7 +269,16 @@ class PositionManager:
                 return False
             token_amount = res.output_amount
         else:
+            sell_quote = await self.jupiter.quote_sell(ca, token_amount)
+            if not sell_quote or not sell_quote.success:
+                log.warning(
+                    "skip %s — paper buy sell-side quote failed (%s)",
+                    ca[:8],
+                    sell_quote.reason if sell_quote else "no route",
+                )
+                return False
             log.info("paper mode — tracking position without executing")
+            self.jupiter.paper_deduct(size)
 
         # Get balance after buy
         balance_after = await self.jupiter.balance_sol()
@@ -440,7 +449,15 @@ class PositionManager:
                 log.exception("partial sell failed for %s", ca[:8])
                 return
         else:
+            sell_quote = await self.jupiter.quote_sell(ca, sell_tokens)
+            if not sell_quote or not sell_quote.success:
+                log.warning(
+                    "paper partial sell quote failed for %s (%s) — holding",
+                    ca[:8], sell_quote.reason if sell_quote else "no route",
+                )
+                return
             log.info("paper mode — tracking partial exit without executing")
+            self.jupiter.paper_credit(pnl_sol)
 
         # Update position state
         new_tp_sold = min(tp_sold + sell_frac, 1.0)
@@ -525,7 +542,16 @@ class PositionManager:
                         return
                     await self.jupiter.sell(ca, token_amount)
                 else:
+                    sell_quote = await self.jupiter.quote_sell(ca, token_amount)
+                    if not sell_quote or not sell_quote.success:
+                        log.warning(
+                            "paper sell quote failed for %s (%s) — position held",
+                            ca[:8],
+                            sell_quote.reason if sell_quote else "no route",
+                        )
+                        return
                     log.info("paper mode — tracking exit without executing")
+                    self.jupiter.paper_credit(size * remaining_frac + pnl_sol)
             except Exception:
                 log.exception("sell failed for %s", ca[:8])
 

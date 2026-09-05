@@ -265,6 +265,15 @@ class JupiterSwap:
         # passes the real taker pubkey so Jupiter assembles an executable tx.
         self._paper_quoting = not self.live
 
+        # Paper-mode simulated SOL balance — tracks buys/sells in paper mode
+        # so notifications show realistic before/after balance.
+        if not self.live:
+            self._paper_balance_sol: float = float(config.get(
+                env, "START_BALANCE_SOL", "2.0",
+            ))
+        else:
+            self._paper_balance_sol = 0.0
+
         self._client = httpx.AsyncClient(timeout=20.0)
 
         # -- quote gate state -------------------------------------------------
@@ -416,9 +425,9 @@ class JupiterSwap:
         raise JupiterError(f"rpc {method}: all RPC keys rate-limited (429)")
 
     async def balance_sol(self) -> float | None:
-        """Return the live wallet's SOL balance, or None on any failure."""
+        """Return the wallet's SOL balance (live) or paper balance (paper mode)."""
         if self._keypair is None:
-            return None
+            return self._paper_balance_sol
         try:
             result = await self._rpc("getBalance", [str(self._keypair.pubkey())])
             bal = float(result.get("value", 0)) / 1e9
@@ -427,6 +436,16 @@ class JupiterSwap:
         except Exception as e:  # noqa: BLE001
             log.warning("balance_sol failed: %s", e)
             return None
+
+    def paper_deduct(self, sol: float) -> None:
+        """Deduct from paper balance on simulated buy."""
+        if not self.live:
+            self._paper_balance_sol -= sol
+
+    def paper_credit(self, sol: float) -> None:
+        """Credit paper balance on simulated sell."""
+        if not self.live:
+            self._paper_balance_sol += sol
 
     async def token_decimals(self, mint: str) -> int | None:
         """Return the token's decimal count via RPC (live entry pricing).
