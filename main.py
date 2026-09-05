@@ -898,6 +898,7 @@ async def _run_watch(s: cfg.Settings) -> int:
             if score >= 2.5 and last_score < 2.0:
                 log.info("open_spacing override %s (%s) score=%.2f > last %.2f",
                          ca[:10], sym, score, last_score)
+                reason = None  # override — will proceed to open
             else:
                 reason = "skip:open_spacing"
         else:
@@ -1035,7 +1036,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                 return
             return
         now = time.time()
-        if _skip_log.get(ca, 0) < now - 300:
+        if reason and _skip_log.get(ca, 0) < now - 300:
             _skip_log[ca] = now
             log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
 
