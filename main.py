@@ -33,6 +33,7 @@ import config as cfg  # noqa: E402
 import logs  # noqa: E402
 from dexscreener import DexScreenerClient  # noqa: E402
 from dbotx import DBotXClient  # noqa: E402
+from rugcheck import RugCheckClient  # noqa: E402
 from jupiter_swap import JupiterSwap  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 from logs import setup_logging  # noqa: E402
@@ -599,6 +600,20 @@ async def _run_watch(s: cfg.Settings) -> int:
     # Fail-open rug/safety filter (DBotX). Degrades to allow on any error.
     dbx = DBotXClient(api_key=s.dbotx_api_key, base_url=s.dbotx_base_url)
 
+    # RugCheck safety filter (fail-open: errors = allow)
+    rugcheck = None
+    if s.rug_check_api_key:
+        rugcheck = RugCheckClient(
+            api_key=s.rug_check_api_key,
+            base_url=s.rug_check_base_url,
+            max_score=s.rug_check_max_score,
+            reject_danger=s.rug_check_reject_danger,
+        )
+        log.info("rugcheck: enabled (max_score=%d, reject_danger=%s)",
+                 s.rug_check_max_score, s.rug_check_reject_danger)
+    else:
+        log.info("rugcheck: disabled (no API key)")
+
     # SolanaTracker (optional): live wallet scoring, risk gate, KOL feed
     _st_key = (s.soltracker_api_key or "").strip()
     soltracker = None
@@ -886,6 +901,15 @@ async def _run_watch(s: cfg.Settings) -> int:
                             return
                 except Exception:
                     log.debug("soltracker sniper check failed for %s", ca[:10])
+            # RugCheck safety gate (fail-open): reject rug/high-risk tokens
+            if rugcheck is not None:
+                rc = await rugcheck.check(ca)
+                if not rugcheck.is_safe(rc):
+                    reason = f"skip:rugcheck({rc.summary() if rc else 'error'})"
+                    if _skip_log.get(ca, 0) < time.time() - 300:
+                        _skip_log[ca] = time.time()
+                        log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                    return
             pc = (snap or {}).get("price_change") or {}
             tfs = ("m5", "h1", "h6", "h24")
             avail = [k for k in tfs if pc.get(k) is not None]

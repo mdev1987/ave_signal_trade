@@ -187,6 +187,11 @@ class Settings:
     tg_min_mc: float = 5_000.0           # min market cap to forward signal
     tg_min_liq: float = 1_000.0          # min liquidity to forward signal
     tg_min_holders: int = 10             # min holder count to forward signal
+    # --- RugCheck (solana rug detection) ---
+    rug_check_api_key: str = ""          # RugCheck API key (free tier works)
+    rug_check_base_url: str = "https://api.rugcheck.xyz"
+    rug_check_max_score: int = 30        # reject tokens with score > this (0-100)
+    rug_check_reject_danger: bool = True # reject if any risk has level=danger
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -272,4 +277,8 @@ def load_settings(path: str = ".env") -> Settings:
         tg_min_mc=get_float(env, "TG_MIN_MC", _d.tg_min_mc),
         tg_min_liq=get_float(env, "TG_MIN_LIQ", _d.tg_min_liq),
         tg_min_holders=get_int(env, "TG_MIN_HOLDERS", _d.tg_min_holders),
+        rug_check_api_key=get(env, "RUG_CHECK_API_KEY", _d.rug_check_api_key),
+        rug_check_base_url=get(env, "RUG_CHECK_BASE_URL", _d.rug_check_base_url),
+        rug_check_max_score=get_int(env, "RUG_CHECK_MAX_SCORE", _d.rug_check_max_score),
+        rug_check_reject_danger=get_bool(env, "RUG_CHECK_REJECT_DANGER", _d.rug_check_reject_danger),
     )

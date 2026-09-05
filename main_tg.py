@@ -31,6 +31,7 @@ from jupiter_swap import JupiterSwap  # noqa: E402
 from logs import setup_logging, journal  # noqa: E402
 from notifier import TelegramNotifier  # noqa: E402
 from tg_signal_feed import TgSignalFeed  # noqa: E402
+from rugcheck import RugCheckClient  # noqa: E402
 
 # Optional: DexPaprika for enhanced token validation
 _DEXPAPRIKA_AVAILABLE = False
@@ -667,6 +668,20 @@ async def _run() -> int:
     )
     jupiter = JupiterSwap(dry_run=s.dry_run)
 
+    # RugCheck safety filter (fail-open: errors = allow)
+    rugcheck_client = None
+    if s.rug_check_api_key:
+        rugcheck_client = RugCheckClient(
+            api_key=s.rug_check_api_key,
+            base_url=s.rug_check_base_url,
+            max_score=s.rug_check_max_score,
+            reject_danger=s.rug_check_reject_danger,
+        )
+        log.info("rugcheck: enabled (max_score=%d, reject_danger=%s)",
+                 s.rug_check_max_score, s.rug_check_reject_danger)
+    else:
+        log.info("rugcheck: disabled (no API key)")
+
     pm = PositionManager(
         ds=ds,
         jupiter=jupiter,
@@ -759,6 +774,15 @@ async def _run() -> int:
             is_rug, rug_reason = _check_rug_signals(snap, dp_data)
             if is_rug:
                 log.warning("signal %s (%s) DEXPAPRIKA rug detected: %s — skip", ca[:8], sym, rug_reason)
+                health["signals_filtered"] += 1
+                return
+
+        # RugCheck safety gate (fail-open: errors = allow)
+        if rugcheck_client is not None:
+            rc_result = await rugcheck_client.check(ca)
+            if not rugcheck_client.is_safe(rc_result):
+                reason = rc_result.summary() if rc_result else "error"
+                log.warning("signal %s (%s) RUGCHECK rejected: %s — skip", ca[:8], sym, reason)
                 health["signals_filtered"] += 1
                 return
 
