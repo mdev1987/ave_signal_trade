@@ -666,10 +666,10 @@ async def _run_watch(s: cfg.Settings) -> int:
     jupiter = JupiterSwap(dry_run=True)
     # Live KOL-buy stream (pumpapi.io): accurate USD pricing for fresh pumps,
     # feeding the same consensus/open pipeline as the Shyft polling fallback.
-    async def _on_pump_buy(wallet, ca, sym, usd, amount):
+    async def _on_pump_buy(wallet, ca, sym, usd, amount, tg_liq=0.0, **kw):
         await w._process_buy(wallet, {
             "ca": ca, "amount": amount, "usd": usd,
-            "symbol": sym, "ts": time.time(),
+            "symbol": sym, "ts": time.time(), "tg_liq": tg_liq,
         })
     pump_stream = PumpApiStream(
         wallets=w.wallets, on_buy=_on_pump_buy, http=w._http)
