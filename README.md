@@ -23,7 +23,10 @@ Quality gates — reject if MC < $5K, liq < $1K, holders < 10
 DexScreener — fetch live price, liquidity, 1h change
       |
       v
-Secondary gates — reject if dumping (-15% h1)
+DexPaprika — cross-validate rug signals (sell ratio, dead tokens)
+      |
+      v
+Secondary gates — reject if dumping (-15% h1), no volume
       |
       v
 JupiterSwap — quote + execute buy (paper or live)
@@ -32,9 +35,19 @@ JupiterSwap — quote + execute buy (paper or live)
 PositionManager — track prices, enforce exits
       |
       ├── Hard stop: -25% from entry
-      ├── Trailing stop: -35% from peak
-      ├── TP ladder: +30% / +80% / +200%
+      ├── Trailing stop: -25% from peak (activates at 1.4x)
+      ├── Rapid crash: >40% drop in <2min → force exit
+      ├── Breakeven lock: after 1st TP, stop moves to entry
+      ├── TP ladder: +30% (40%) / +80% (30%) / +200% (30%)
+      ├── Stale price: force exit if no update in 5min
       └── Max hold: 24h
+```
+
+## Running
+
+```bash
+uv run main.py tg-trade              # TG-first trader (foreground)
+uv run main.py watch                 # KOL consensus watcher (foreground)
 ```
 
 ## Project structure
@@ -47,7 +60,7 @@ src/
   tg_signal_feed.py      # Telegram @gmgnsignals listener (real-time events)
   dexscreener.py         # DexScreener REST oracle
   jupiter_swap.py        # Jupiter Swap V2 client
-  notifier.py            # Telegram notifications
+  notifier.py            # Telegram notifications (rich trade cards)
   watcher.py             # smart-wallet watcher (watch mode)
   wallet_weights.py      # wallet-quality weights (watch mode)
   pair_perf.py           # adaptive pair-quality multiplier (watch mode)
@@ -112,5 +125,6 @@ Everything lives in `.env` (template: `.env.example`). Key groups:
 
 ```bash
 oxmgr apply ./oxfile.toml        # supervised, auto-restart, health-checked
-oxmgr status track-wallet        # or: oxmgr logs track-wallet -f
+oxmgr status tg-trade            # or: oxmgr logs tg-trade -f
+oxmgr status track-wallet        # watch mode
 ```

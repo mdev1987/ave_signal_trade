@@ -1,7 +1,6 @@
 """TG-first trader — listen to @gmgnsignals, filter, trade.
 
-    uv run python main_tg.py          # run in foreground
-    uv run main.py tg-trade           # same via main.py entry
+    uv run main.py tg-trade            # run via main.py entry point
 
 Pipeline:
   TG signal feed (@gmgnsignals)

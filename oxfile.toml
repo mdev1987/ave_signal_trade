@@ -17,7 +17,7 @@ health_max_failures = 3
 
 [[apps]]
 name = "tg-trade"
-command = "/usr/bin/env uv run python main_tg.py"
+command = "/usr/bin/env uv run main.py tg-trade"
 cwd = "/home/mdev/Programming/ave_signal_trade"
 restart_policy = "always"
 max_restarts = 1000
