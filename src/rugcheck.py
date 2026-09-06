@@ -139,7 +139,7 @@ class RugCheckClient:
             # Top holder analysis from the full report
             top_holders = data.get("topHolders", [])
             if top_holders and total_liq > 0:
-                top_holder_pct = top_holders[0].get("pct", 0) * 100 if top_holders else 0
+                top_holder_pct = top_holders[0].get("pct", 0) if top_holders else 0
                 insider_count = sum(
                     1 for h in top_holders
                     if h.get("insider", False)

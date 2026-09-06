@@ -197,7 +197,7 @@ class Settings:
     helius_api_keys: str = ""             # comma-separated Helius API keys
     helius_rpc_url: str = "https://mainnet.helius-rpc.com"
     helius_rugger_block: bool = True      # block trades when deployer is known rugger
-    helius_max_top10_pct: float = 30.0    # reject if top-10 holders own > this %
+    helius_max_top10_pct: float = 40.0    # reject if top-10 holders own > this %
     # --- DexPaprika (pool analysis, buy/sell ratio, whale detection) ---
     dexpaprika_enabled: bool = True       # enable DexPaprika pool health checks
     dexpaprika_min_buysell: float = 0.3   # min buy/sell ratio 1h (reject if < this)
