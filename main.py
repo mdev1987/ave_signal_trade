@@ -1002,14 +1002,24 @@ async def _run_watch(s: cfg.Settings) -> int:
                 except Exception:
                     log.debug("soltracker sniper check failed for %s", ca[:10])
             # RugCheck safety gate (fail-open): reject rug/high-risk tokens
+            # Skip DANGER filter (mint/freeze) for tokens with MC > threshold
+            # to avoid false positives on established DeFi tokens (e.g. JLP)
             if rugcheck is not None:
                 rc = await rugcheck.check(ca)
                 if not rugcheck.is_safe(rc):
-                    reason = f"skip:rugcheck({rc.summary() if rc else 'error'})"
-                    if _skip_log.get(ca, 0) < time.time() - 300:
-                        _skip_log[ca] = time.time()
-                        log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-                    return
+                    mc = (snap or {}).get("mcap") or 0
+                    # DANGER on mint/freeze only blocks low-MC tokens
+                    has_danger = rc.has_danger if rc else False
+                    only_danger = has_danger and rc.score_normalised <= s.rug_check_max_score and not rc.rugged
+                    if only_danger and mc > s.rug_check_min_mc_for_danger:
+                        log.info("rugcheck DANGER ignored %s (%s): mc=$%.0f > $%.0f",
+                                 ca[:10], sym, mc, s.rug_check_min_mc_for_danger)
+                    else:
+                        reason = f"skip:rugcheck({rc.summary() if rc else 'error'})"
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
             # Helius: deployer rugger check + top-10 holder concentration
             if helius is not None and s.helius_rugger_block:
                 try:
