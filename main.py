@@ -1039,8 +1039,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                             _skip_log[ca] = time.time()
                             log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
                         return
-                except Exception:
-                    log.debug("helius safety check failed for %s", ca[:10])
+                except Exception as exc:
+                    log.warning("helius safety check failed for %s: %s", ca[:10], exc)
             # DexPaprika: pool buy/sell ratio + whale detection
             if dexpaprika is not None and s.dexpaprika_enabled:
                 try:
@@ -1064,8 +1064,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                                     _skip_log[ca] = time.time()
                                     log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
                                 return
-                except Exception:
-                    log.debug("dexpaprika check failed for %s", ca[:10])
+                except Exception as exc:
+                    log.warning("dexpaprika check failed for %s: %s", ca[:10], exc)
             pc = (snap or {}).get("price_change") or {}
             tfs = ("m5", "h1", "h6", "h24")
             avail = [k for k in tfs if pc.get(k) is not None]
