@@ -193,6 +193,15 @@ class Settings:
     rug_check_base_url: str = "https://api.rugcheck.xyz"
     rug_check_max_score: int = 30        # reject tokens with score > this (0-100)
     rug_check_reject_danger: bool = True # reject if any risk has level=danger
+    # --- Helius (DAS + Wallet Identity + RPC) ---
+    helius_api_keys: str = ""             # comma-separated Helius API keys
+    helius_rpc_url: str = "https://mainnet.helius-rpc.com"
+    helius_rugger_block: bool = True      # block trades when deployer is known rugger
+    helius_max_top10_pct: float = 30.0    # reject if top-10 holders own > this %
+    # --- DexPaprika (pool analysis, buy/sell ratio, whale detection) ---
+    dexpaprika_enabled: bool = True       # enable DexPaprika pool health checks
+    dexpaprika_min_buysell: float = 0.3   # min buy/sell ratio 1h (reject if < this)
+    dexpaprika_max_whale_sells: int = 3   # reject if whale sells > this in 1h
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -283,4 +292,11 @@ def load_settings(path: str = ".env") -> Settings:
         rug_check_base_url=get(env, "RUG_CHECK_BASE_URL", _d.rug_check_base_url),
         rug_check_max_score=get_int(env, "RUG_CHECK_MAX_SCORE", _d.rug_check_max_score),
         rug_check_reject_danger=get_bool(env, "RUG_CHECK_REJECT_DANGER", _d.rug_check_reject_danger),
+        helius_api_keys=get(env, "HELIUS_API_KEYS", _d.helius_api_keys),
+        helius_rpc_url=get(env, "HELIUS_RPC_URL", _d.helius_rpc_url),
+        helius_rugger_block=get_bool(env, "HELIUS_RUGGER_BLOCK", _d.helius_rugger_block),
+        helius_max_top10_pct=get_float(env, "HELIUS_MAX_TOP10_PCT", _d.helius_max_top10_pct),
+        dexpaprika_enabled=get_bool(env, "DEXPAPRIKA_ENABLED", _d.dexpaprika_enabled),
+        dexpaprika_min_buysell=get_float(env, "DEXPAPRIKA_MIN_BUYSELL", _d.dexpaprika_min_buysell),
+        dexpaprika_max_whale_sells=get_int(env, "DEXPAPRIKA_MAX_WHALE_SELLS", _d.dexpaprika_max_whale_sells),
     )

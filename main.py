@@ -632,6 +632,28 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     # Data-driven wallet quality: weight each KOL by real win rate + PnL so the
     # consensus score reflects conviction, not just head-count.
+
+    # Helius unified client (DAS + Wallet Identity) — uses existing API keys
+    helius = None
+    try:
+        from helius_client import HeliusClient
+        _h_keys = [k.strip() for k in s.helius_api_keys.split(",") if k.strip()]
+        if _h_keys:
+            helius = HeliusClient(api_keys=_h_keys, rpc_url=s.helius_rpc_url)
+            log.info("helius: enabled (keys=%d)", len(_h_keys))
+        else:
+            log.info("helius: disabled (no API keys)")
+    except Exception:
+        log.exception("helius init failed — disabled")
+
+    # DexPaprika client (pool analysis, buy/sell ratios, whale detection)
+    dexpaprika = None
+    try:
+        from dexpaprika import DexPaprikaClient
+        dexpaprika = DexPaprikaClient()
+        log.info("dexpaprika: enabled")
+    except Exception:
+        log.exception("dexpaprika init failed — disabled")
     weights, default_weight = build_weights(
         s.wallet_perf_path,
         floor_win=s.wallet_weight_floor_win,
@@ -988,6 +1010,52 @@ async def _run_watch(s: cfg.Settings) -> int:
                         _skip_log[ca] = time.time()
                         log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
                     return
+            # Helius: deployer rugger check + top-10 holder concentration
+            if helius is not None and s.helius_rugger_block:
+                try:
+                    safety = await helius.token_safety(ca)
+                    if not safety.get("safe", True):
+                        ident = safety.get("deployer_identity", {})
+                        cats = [c.lower() for c in (ident.get("categories") or [])]
+                        reason = f"skip:deployer_rugger({cats})"
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
+                    top10_pct = safety.get("top10_pct", 0)
+                    if top10_pct > s.helius_max_top10_pct:
+                        reason = f"skip:top10_concentration({top10_pct:.1f}%>{s.helius_max_top10_pct}%)"
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
+                except Exception:
+                    log.debug("helius safety check failed for %s", ca[:10])
+            # DexPaprika: pool buy/sell ratio + whale detection
+            if dexpaprika is not None and s.dexpaprika_enabled:
+                try:
+                    # Find the pool for this token on solana
+                    pools = await dexpaprika.get_token_pools("solana", ca, limit=1)
+                    if pools:
+                        pool_id = pools[0].get("id", "")
+                        if pool_id:
+                            health = await dexpaprika.pool_health("solana", pool_id)
+                            bs_ratio = health.get("buy_sell_1h", 1.0)
+                            whale_sells = health.get("whale_sells", 0)
+                            if bs_ratio < s.dexpaprika_min_buysell:
+                                reason = f"skip:selling_pressure(bs={bs_ratio:.2f}<{s.dexpaprika_min_buysell})"
+                                if _skip_log.get(ca, 0) < time.time() - 300:
+                                    _skip_log[ca] = time.time()
+                                    log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                                return
+                            if whale_sells > s.dexpaprika_max_whale_sells:
+                                reason = f"skip:whale_dump({whale_sells}>{s.dexpaprika_max_whale_sells})"
+                                if _skip_log.get(ca, 0) < time.time() - 300:
+                                    _skip_log[ca] = time.time()
+                                    log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                                return
+                except Exception:
+                    log.debug("dexpaprika check failed for %s", ca[:10])
             pc = (snap or {}).get("price_change") or {}
             tfs = ("m5", "h1", "h6", "h24")
             avail = [k for k in tfs if pc.get(k) is not None]
@@ -1197,6 +1265,12 @@ async def _run_watch(s: cfg.Settings) -> int:
         await runner.cleanup()
         await ds.close()
         await dbx.close()
+        if rugcheck is not None:
+            await rugcheck.close()
+        if helius is not None:
+            await helius.close()
+        if dexpaprika is not None:
+            await dexpaprika.close()
         await jupiter.close()
     return 0
 

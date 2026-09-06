@@ -105,7 +105,9 @@ class RugCheckClient:
                     await asyncio.sleep(wait)
                 self._last_request_ts = time.monotonic()
 
-            url = f"{self._base}/v1/tokens/{mint}/report/summary"
+            # Use full report endpoint for mint/freeze authority, top holders, insiders
+            # The /summary endpoint returns None for these fields
+            url = f"{self._base}/v1/tokens/{mint}/report"
             params = {}
             if self._api_key:
                 params["key"] = self._api_key
@@ -129,12 +131,22 @@ class RugCheckClient:
             rugged = data.get("rugged", False)
             lp_locked = data.get("lpLockedPct", 0)
 
-            # Extract detailed fields from the full report if available
-            mint_auth = None
-            freeze_auth = None
-            top_holder_pct = 0.0
-            insider_count = 0
+            # Full report fields — these are populated in /report but NOT in /summary
+            mint_auth = data.get("mintAuthority")
+            freeze_auth = data.get("freezeAuthority")
             total_liq = data.get("totalMarketLiquidity", 0)
+
+            # Top holder analysis from the full report
+            top_holders = data.get("topHolders", [])
+            if top_holders and total_liq > 0:
+                top_holder_pct = top_holders[0].get("pct", 0) * 100 if top_holders else 0
+                insider_count = sum(
+                    1 for h in top_holders
+                    if h.get("insider", False)
+                )
+            else:
+                top_holder_pct = 0.0
+                insider_count = 0
 
             result = RugCheckResult(
                 mint=mint,
