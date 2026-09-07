@@ -98,6 +98,7 @@ class MadeOnSolSignals:
 
         Feeds into process_buy() so KOL buys contribute to consensus.
         """
+        backoff = KOL_FEED_INTERVAL
         while not self._stop.is_set():
             try:
                 feed = self.client.kol_feed(limit=50, action="buy")
@@ -139,11 +140,17 @@ class MadeOnSolSignals:
                     k: v for k, v in self._last_feed_ts.items()
                     if now - v < 3600
                 }
+                backoff = KOL_FEED_INTERVAL  # reset on success
 
             except Exception as exc:
-                log.warning("madeonsol kol feed poll failed: %s", exc)
+                if "429" in str(exc):
+                    backoff = min(backoff * 2, 600)  # double up to 10min
+                    log.warning("madeonsol kol feed 429, backing off %.0fs", backoff)
+                else:
+                    log.warning("madeonsol kol feed poll failed: %s", exc)
+                    backoff = KOL_FEED_INTERVAL
 
-            await asyncio.sleep(KOL_FEED_INTERVAL)
+            await asyncio.sleep(backoff)
 
     async def _poll_first_touches(self) -> None:
         """Poll first-touch events (earliest KOL buy on a token).
@@ -151,6 +158,7 @@ class MadeOnSolSignals:
         First-touch is a high-conviction signal: feed directly into
         smart_buy to bypass consensus (the first KOL IS the consensus).
         """
+        backoff = FIRST_TOUCH_INTERVAL
         while not self._stop.is_set():
             try:
                 events = self.client.rest.first_touches(limit=20)
@@ -174,10 +182,17 @@ class MadeOnSolSignals:
                     if self.smart_buy:
                         await self.smart_buy(ca, sym, 0.0, 3.0, [wallet])
 
-            except Exception as exc:
-                log.warning("madeonsol first touch poll failed: %s", exc)
+                backoff = FIRST_TOUCH_INTERVAL  # reset on success
 
-            await asyncio.sleep(FIRST_TOUCH_INTERVAL)
+            except Exception as exc:
+                if "429" in str(exc):
+                    backoff = min(backoff * 2, 600)
+                    log.warning("madeonsol first touch 429, backing off %.0fs", backoff)
+                else:
+                    log.warning("madeonsol first touch poll failed: %s", exc)
+                    backoff = FIRST_TOUCH_INTERVAL
+
+            await asyncio.sleep(backoff)
 
     async def _poll_sniper_alerts(self) -> None:
         """Poll sniper alerts (pre-confirmation deploy detection).

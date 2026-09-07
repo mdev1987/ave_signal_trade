@@ -10,6 +10,11 @@ Architecture:
   - Auto-reconnects on disconnect with exponential backoff
   - Ping/pong health checks every 30s
   - Falls back gracefully if connection fails
+
+Fallback for free-tier plans:
+  - If ``transactionSubscribe`` is not available (plan restriction),
+    falls back to ``logsSubscribe`` on Token Program + HTTP RPC fetch
+    to reconstruct full transactions.
 """
 
 from __future__ import annotations
@@ -23,6 +28,11 @@ from typing import Callable, Awaitable
 import websockets
 import websockets.exceptions
 
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 SOL = "So11111111111111111111111111111111111111112"
@@ -33,6 +43,7 @@ _RECONNECT_MIN = 2.0
 _RECONNECT_MAX = 60.0
 _PING_INTERVAL = 30.0
 _SUBSCRIBE_BATCH = 100  # max wallets per subscribe message (Helius limit)
+_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 
 
 def parse_helius_tx(wallet: str, msg: dict) -> dict | None:
@@ -136,12 +147,14 @@ class HeliusWS:
         api_key: str,
         wallets: list[str],
         on_buy: Callable[[str, dict], Awaitable[None]] | None = None,
-        endpoint: str = "wss://mainnet.helius-rpc.com",
+        endpoint: str = "wss://beta.helius-rpc.com",
+        rpc_url: str | None = None,
     ) -> None:
         self.api_key = api_key
         self.wallets = wallets
         self.on_buy = on_buy
         self._endpoint = endpoint
+        self._rpc_url = rpc_url or f"https://mainnet.helius-rpc.com/?api-key={api_key}"
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._connected = False
@@ -149,6 +162,7 @@ class HeliusWS:
         self._reconnect_count = 0
         self._total_buys = 0
         self._total_msgs = 0
+        self._use_logs_subscribe = False  # fallback if transactionSubscribe unavailable
 
     @property
     def connected(self) -> bool:
@@ -200,7 +214,51 @@ class HeliusWS:
             self._reconnect_count = 0
             logger.info("helius ws connected")
 
-            # Subscribe in batches (Helius may limit account_include size)
+            if self._use_logs_subscribe:
+                await self._subscribe_logs(ws)
+            else:
+                ok = await self._subscribe_transaction(ws)
+                if not ok:
+                    logger.info("helius ws: transactionSubscribe unavailable, falling back to logsSubscribe")
+                    self._use_logs_subscribe = True
+                    await self._subscribe_logs(ws)
+
+            # Message loop
+            async for raw in ws:
+                if self._stop.is_set():
+                    break
+                self._total_msgs += 1
+                self._last_msg_ts = time.time()
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+
+                # Skip subscription confirmations
+                if "result" in msg and "id" in msg:
+                    continue
+
+                # Handle errors from subscription
+                if "error" in msg:
+                    err = msg["error"]
+                    code = err.get("code", 0)
+                    if code == -32001:
+                        logger.warning("helius ws: transactionSubscribe not available (free tier), switching to logsSubscribe")
+                        self._use_logs_subscribe = True
+                        await self._subscribe_logs(ws)
+                        continue
+                    logger.warning("helius ws subscription error: %s", err)
+                    continue
+
+                # Process transaction notification
+                if self._use_logs_subscribe:
+                    await self._handle_logs_message(msg)
+                else:
+                    await self._handle_message(msg)
+
+    async def _subscribe_transaction(self, ws) -> bool:
+        """Subscribe via transactionSubscribe. Returns True if subscribed."""
+        try:
             for i in range(0, len(self.wallets), _SUBSCRIBE_BATCH):
                 batch = self.wallets[i:i + _SUBSCRIBE_BATCH]
                 sub = {
@@ -227,23 +285,30 @@ class HeliusWS:
                             (len(self.wallets) + _SUBSCRIBE_BATCH - 1) // _SUBSCRIBE_BATCH,
                             len(batch))
 
-            # Message loop
-            async for raw in ws:
-                if self._stop.is_set():
-                    break
-                self._total_msgs += 1
-                self._last_msg_ts = time.time()
-                try:
-                    msg = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
+            # Check first response for plan error
+            resp = await asyncio.wait_for(ws.recv(), timeout=10)
+            data = json.loads(resp)
+            if "error" in data:
+                return False
+            logger.info("helius ws transactionSubscribe confirmed")
+            return True
+        except asyncio.TimeoutError:
+            return False
 
-                # Skip subscription confirmations
-                if "result" in msg and "id" in msg:
-                    continue
-
-                # Process transaction notification
-                await self._handle_message(msg)
+    async def _subscribe_logs(self, ws) -> None:
+        """Subscribe via logsSubscribe on Token Program (free-tier compatible)."""
+        sub = {
+            "jsonrpc": "2.0",
+            "id": 999,
+            "method": "logsSubscribe",
+            "params": [
+                {"mentions": [_TOKEN_PROGRAM]},
+                {"commitment": "confirmed"},
+            ],
+        }
+        await ws.send(json.dumps(sub))
+        logger.info("helius ws subscribed to logsSubscribe (Token Program, %d wallets tracked)",
+                     len(self.wallets))
 
     async def _handle_message(self, msg: dict) -> None:
         """Process a single transaction notification from Helius WS."""
@@ -278,6 +343,75 @@ class HeliusWS:
                     await self.on_buy(wallet, buy)
                 except Exception:
                     logger.exception("helius ws on_buy callback failed for %s", wallet[:10])
+
+    async def _handle_logs_message(self, msg: dict) -> None:
+        """Process a logsSubscribe notification.
+
+        Extracts the signature and checks if any tracked wallet is mentioned.
+        If so, fetches the full transaction via HTTP RPC for buy parsing.
+        """
+        params = msg.get("params") or {}
+        result = params.get("result") or {}
+        value = result.get("value") or {}
+
+        sig = value.get("signature", "")
+        err = value.get("err")
+        logs = value.get("logs") or []
+
+        if not sig or err is not None:
+            return
+
+        # Fast check: do any of our wallet addresses appear in the logs?
+        wallet_set = set(self.wallets)
+        found_wallet = None
+        for log_line in logs:
+            for w in wallet_set:
+                if w in log_line:
+                    found_wallet = w
+                    break
+            if found_wallet:
+                break
+
+        if not found_wallet:
+            return
+
+        # Fetch full transaction via HTTP RPC
+        buy = await self._fetch_and_parse_tx(sig, found_wallet)
+        if buy:
+            self._total_buys += 1
+            try:
+                await self.on_buy(found_wallet, buy)
+            except Exception:
+                logger.exception("helius ws on_buy callback failed for %s", found_wallet[:10])
+
+    async def _fetch_and_parse_tx(self, signature: str, wallet: str) -> dict | None:
+        """Fetch a full transaction via HTTP RPC and parse it for buy events."""
+        if aiohttp is None:
+            logger.debug("aiohttp not installed, skipping HTTP fetch for %s", signature[:16])
+            return None
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": [
+                signature,
+                {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0, "transactionDetails": "full"},
+            ],
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self._rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    tx_data = data.get("result")
+                    if not tx_data:
+                        return None
+                    return parse_helius_tx(wallet, {"transaction": tx_data.get("transaction", {}), "blockTime": tx_data.get("blockTime")})
+        except Exception as exc:
+            logger.debug("helius ws HTTP fetch failed for %s: %s", signature[:16], exc)
+            return None
 
     async def stop(self) -> None:
         """Gracefully stop the WebSocket client."""

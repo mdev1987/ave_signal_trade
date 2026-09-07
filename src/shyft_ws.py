@@ -162,15 +162,22 @@ class ShyftWS:
                 break
             except Exception as exc:
                 self._reconnect_count += 1
-                logger.warning("shyft ws disconnected (%s), reconnecting in %.0fs (attempt %d)",
-                               exc, backoff, self._reconnect_count)
+                # If server 429s on connection, back off much longer (10 min)
+                if "429" in str(exc):
+                    backoff = min(max(backoff * 3, 300), 600)
+                    logger.warning("shyft ws 429 rate limited, backing off %.0fs (attempt %d)",
+                                   backoff, self._reconnect_count)
+                else:
+                    logger.warning("shyft ws disconnected (%s), reconnecting in %.0fs (attempt %d)",
+                                   exc, backoff, self._reconnect_count)
                 self._connected = False
                 try:
                     await asyncio.wait_for(self._stop.wait(), timeout=backoff)
                     break
                 except TimeoutError:
                     pass
-                backoff = min(backoff * 1.5, _RECONNECT_MAX)
+                if "429" not in str(exc):
+                    backoff = min(backoff * 1.5, _RECONNECT_MAX)
 
     async def _connect_and_stream(self) -> None:
         """Connect to Shyft WS, subscribe to Token Program, process messages."""
