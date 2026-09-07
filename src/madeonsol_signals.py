@@ -181,11 +181,13 @@ class MadeOnSolSignals:
 
     async def _poll_sniper_alerts(self) -> None:
         """Poll sniper alerts (pre-confirmation deploy detection).
-
-        Elite deployer launches = high-conviction signal. Feed directly
-        into smart_buy with the deployer as the sole wallet.
+        Requires PRO tier. Backs off on 403.
         """
+        pro_only = False
         while not self._stop.is_set():
+            if pro_only:
+                await asyncio.sleep(3600)  # sleep 1h if PRO required
+                continue
             try:
                 feed = self.client.rest.sniper_recent(limit=10, deployer_tier="elite")
                 deploys = feed.get("deploys", []) if feed else []
@@ -210,13 +212,21 @@ class MadeOnSolSignals:
                         await self.smart_buy(ca, sym, 0.0, 2.5, [deployer])
 
             except Exception as exc:
-                log.warning("madeonsol sniper poll failed: %s", exc)
+                if "403" in str(exc):
+                    log.info("madeonsol sniper: PRO tier required, backing off")
+                    pro_only = True
+                else:
+                    log.warning("madeonsol sniper poll failed: %s", exc)
 
             await asyncio.sleep(SNIPER_INTERVAL)
 
     async def _poll_surges(self) -> None:
-        """Poll token surges (momentum fires)."""
+        """Poll token surges (momentum fires). Requires PRO tier."""
+        pro_only = False
         while not self._stop.is_set():
+            if pro_only:
+                await asyncio.sleep(3600)
+                continue
             try:
                 data = self.client.rest.tokens_surges(kind="surge", limit=10)
                 for s in (data.get("surges", []) if data else []):
@@ -232,13 +242,21 @@ class MadeOnSolSignals:
                              ca[:10], tier, mc)
 
             except Exception as exc:
-                log.warning("madeonsol surges poll failed: %s", exc)
+                if "403" in str(exc):
+                    log.info("madeonsol surges: PRO tier required, backing off")
+                    pro_only = True
+                else:
+                    log.warning("madeonsol surges poll failed: %s", exc)
 
             await asyncio.sleep(SURGES_INTERVAL)
 
     async def _poll_almost_bonded(self) -> None:
-        """Poll almost-bonded pump.fun tokens (pre-graduation)."""
+        """Poll almost-bonded pump.fun tokens (pre-graduation). Requires PRO."""
+        pro_only = False
         while not self._stop.is_set():
+            if pro_only:
+                await asyncio.sleep(3600)
+                continue
             try:
                 data = self.client.rest.almost_bonded(
                     min_progress=90, sort="velocity_desc", limit=10
@@ -256,15 +274,24 @@ class MadeOnSolSignals:
                              ca[:10], progress, velocity)
 
             except Exception as exc:
+                if "403" in str(exc):
+                    log.info("madeonsol almost-bonded: PRO tier required, backing off")
+                    pro_only = True
+                else:
+                    log.warning("madeonsol almost-bonded poll failed: %s", exc)
                 log.warning("madeonsol almost-bonded poll failed: %s", exc)
 
             await asyncio.sleep(ALMOST_BONDED_INTERVAL)
 
     async def _discover_alpha_wallets(self) -> None:
         """Periodically discover new alpha wallets from leaderboard."""
+        pro_only = False
         while not self._stop.is_set():
+            if pro_only:
+                await asyncio.sleep(3600)
+                continue
             try:
-                data = self.client.rest.alpha_leaderboard(period="7d", sort="win_rate", limit=20)
+                data = self.client.rest.alpha_leaderboard(period="7d", sort="win_rate")
                 wallets = data.get("wallets", []) if data else []
                 new_count = 0
                 for w in wallets:
@@ -278,6 +305,10 @@ class MadeOnSolSignals:
                     log.info("madeonsol: discovered %d new alpha wallets", new_count)
 
             except Exception as exc:
-                log.warning("madeonsol alpha discovery failed: %s", exc)
+                if "403" in str(exc):
+                    log.info("madeonsol alpha leaderboard: PRO tier required, backing off")
+                    pro_only = True
+                else:
+                    log.warning("madeonsol alpha discovery failed: %s", exc)
 
             await asyncio.sleep(ALPHA_DISCOVER_INTERVAL)
