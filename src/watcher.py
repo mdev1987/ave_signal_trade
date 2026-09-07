@@ -290,6 +290,8 @@ class SmartWalletWatcher:
 
     # ---------------------------------------------------------------- shyft
     async def _fetch_txs(self, wallet: str, since_ts: float) -> list[dict]:
+        if not self.shyft_key:
+            return []
         # Per-wallet 429 cooldown — skip wallets that recently 429'd
         now_mono = time.monotonic()
         cooldown_until = self._wallet_cooldown.get(wallet, 0.0)

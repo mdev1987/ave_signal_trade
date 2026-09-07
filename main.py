@@ -613,9 +613,7 @@ async def _run_watch(s: cfg.Settings) -> int:
     env = cfg.load_env()
     shyft_key = (cfg.get(env, "SHYFT_API_KEY") or "").strip()
     if not shyft_key:
-        log.critical("SHYFT_API_KEY missing — watcher cannot poll wallets. "
-                     "Copy the key from .env.bak (or your VPS .env) and retry.")
-        return 2
+        log.warning("SHYFT_API_KEY missing — Shyft HTTP polling disabled (PumpAPI primary)")
     notifier = TelegramNotifier()
     ds = DexScreenerClient(base_url=s.dexscreener_base_url,
                            rpm=s.dexscreener_rpm)
