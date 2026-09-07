@@ -773,7 +773,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                 client=madeonsol.client,
                 process_buy=w._process_buy,
                 smart_buy=w.on_smart_buy,
-                wallet_set=set(w.wallets.keys()),
+                wallet_set=set(w.wallets),
                 seen_cas=set(),
             )
             asyncio.create_task(madeonsol_signals.run())
