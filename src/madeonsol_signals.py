@@ -196,9 +196,10 @@ class MadeOnSolSignals:
 
     async def _poll_sniper_alerts(self) -> None:
         """Poll sniper alerts (pre-confirmation deploy detection).
-        Requires PRO tier. Backs off on 403.
+        Requires PRO tier. Backs off on 403 or 429.
         """
         pro_only = False
+        backoff = SNIPER_INTERVAL
         while not self._stop.is_set():
             if pro_only:
                 await asyncio.sleep(3600)  # sleep 1h if PRO required
@@ -230,14 +231,18 @@ class MadeOnSolSignals:
                 if "403" in str(exc):
                     log.info("madeonsol sniper: PRO tier required, backing off")
                     pro_only = True
+                elif "429" in str(exc):
+                    backoff = min(backoff * 2, 600)
+                    log.warning("madeonsol sniper 429, backing off %.0fs", backoff)
                 else:
                     log.warning("madeonsol sniper poll failed: %s", exc)
 
-            await asyncio.sleep(SNIPER_INTERVAL)
+            await asyncio.sleep(backoff)
 
     async def _poll_surges(self) -> None:
         """Poll token surges (momentum fires). Requires PRO tier."""
         pro_only = False
+        backoff = SURGES_INTERVAL
         while not self._stop.is_set():
             if pro_only:
                 await asyncio.sleep(3600)
@@ -260,14 +265,18 @@ class MadeOnSolSignals:
                 if "403" in str(exc):
                     log.info("madeonsol surges: PRO tier required, backing off")
                     pro_only = True
+                elif "429" in str(exc):
+                    backoff = min(backoff * 2, 600)
+                    log.warning("madeonsol surges 429, backing off %.0fs", backoff)
                 else:
                     log.warning("madeonsol surges poll failed: %s", exc)
 
-            await asyncio.sleep(SURGES_INTERVAL)
+            await asyncio.sleep(backoff)
 
     async def _poll_almost_bonded(self) -> None:
         """Poll almost-bonded pump.fun tokens (pre-graduation). Requires PRO."""
         pro_only = False
+        backoff = ALMOST_BONDED_INTERVAL
         while not self._stop.is_set():
             if pro_only:
                 await asyncio.sleep(3600)
@@ -292,11 +301,13 @@ class MadeOnSolSignals:
                 if "403" in str(exc):
                     log.info("madeonsol almost-bonded: PRO tier required, backing off")
                     pro_only = True
+                elif "429" in str(exc):
+                    backoff = min(backoff * 2, 600)
+                    log.warning("madeonsol almost-bonded 429, backing off %.0fs", backoff)
                 else:
                     log.warning("madeonsol almost-bonded poll failed: %s", exc)
-                log.warning("madeonsol almost-bonded poll failed: %s", exc)
 
-            await asyncio.sleep(ALMOST_BONDED_INTERVAL)
+            await asyncio.sleep(backoff)
 
     async def _discover_alpha_wallets(self) -> None:
         """Periodically discover new alpha wallets from leaderboard."""
@@ -322,6 +333,9 @@ class MadeOnSolSignals:
             except Exception as exc:
                 if "403" in str(exc):
                     log.info("madeonsol alpha leaderboard: PRO tier required, backing off")
+                    pro_only = True
+                elif "429" in str(exc):
+                    log.warning("madeonsol alpha leaderboard 429, backing off 1h")
                     pro_only = True
                 else:
                     log.warning("madeonsol alpha discovery failed: %s", exc)

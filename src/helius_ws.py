@@ -259,7 +259,38 @@ class HeliusWS:
     async def _subscribe_transaction(self, ws) -> bool:
         """Subscribe via transactionSubscribe. Returns True if subscribed."""
         try:
-            for i in range(0, len(self.wallets), _SUBSCRIBE_BATCH):
+            # Send first batch and check if transactionSubscribe is available
+            batch = self.wallets[:_SUBSCRIBE_BATCH]
+            sub = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "transactionSubscribe",
+                "params": [
+                    {
+                        "accountInclude": batch,
+                        "vote": False,
+                        "failed": False,
+                    },
+                    {
+                        "commitment": "confirmed",
+                        "encoding": "jsonParsed",
+                        "transactionDetails": "full",
+                        "maxSupportedTransactionVersion": 0,
+                    },
+                ],
+            }
+            await ws.send(json.dumps(sub))
+            logger.info("helius ws testing transactionSubscribe (%d wallets)", len(batch))
+
+            # Check response for plan error
+            resp = await asyncio.wait_for(ws.recv(), timeout=10)
+            data = json.loads(resp)
+            if "error" in data:
+                return False
+
+            logger.info("helius ws transactionSubscribe available, subscribing remaining batches")
+            # Now subscribe remaining batches
+            for i in range(_SUBSCRIBE_BATCH, len(self.wallets), _SUBSCRIBE_BATCH):
                 batch = self.wallets[i:i + _SUBSCRIBE_BATCH]
                 sub = {
                     "jsonrpc": "2.0",
@@ -285,11 +316,6 @@ class HeliusWS:
                             (len(self.wallets) + _SUBSCRIBE_BATCH - 1) // _SUBSCRIBE_BATCH,
                             len(batch))
 
-            # Check first response for plan error
-            resp = await asyncio.wait_for(ws.recv(), timeout=10)
-            data = json.loads(resp)
-            if "error" in data:
-                return False
             logger.info("helius ws transactionSubscribe confirmed")
             return True
         except asyncio.TimeoutError:
