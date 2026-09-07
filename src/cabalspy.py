@@ -115,6 +115,7 @@ class CabalSpyClient:
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._connected = False
+        self._ws = None  # active WebSocket connection for live subscribe
         self._last_msg_ts = 0.0
         self._reconnect_count = 0
         self._total_signals = 0
@@ -173,6 +174,7 @@ class CabalSpyClient:
             close_timeout=5,
         ) as ws:
             self._connected = True
+            self._ws = ws
             self._reconnect_count = 0
             logger.info("cabalspy ws connected")
 
@@ -199,6 +201,9 @@ class CabalSpyClient:
 
                 # Route to appropriate handler
                 await self._handle_message(msg)
+
+        self._ws = None
+        self._connected = False
 
     async def _subscribe_streams(self, ws) -> None:
         """Subscribe to all configured streams."""
@@ -336,6 +341,23 @@ class CabalSpyClient:
                 sub["mode"] = self.bundle_mode
             subs.append(sub)
         return subs
+
+    async def subscribe_token_live(self, token: str, streams: list[str] | None = None) -> None:
+        """Dynamically subscribe to holder/bundle streams for a specific token.
+
+        Called after a signal fires or position opens to track holder exits
+        and bundle activity for that token. Uses the active WS connection.
+        """
+        if not self._ws or not self._connected:
+            logger.warning("cabalspy subscribe_token_live skipped — not connected")
+            return
+        subs = self.subscribe_token(token, streams)
+        for sub in subs:
+            try:
+                await self._ws.send(json.dumps(sub))
+                logger.info("cabalspy subscribed to %s for %s", sub["stream"], token[:12])
+            except Exception:
+                logger.exception("cabalspy subscribe %s failed", sub["stream"])
 
     async def stop(self) -> None:
         """Gracefully stop the WebSocket client."""

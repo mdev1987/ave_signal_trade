@@ -872,6 +872,13 @@ async def _run_watch(s: cfg.Settings) -> int:
                 log.info("cabalspy SIGNAL %s (%s) mc=$%.0f wallets=%d score=%.2f invested=%.2f SOL",
                          mint[:10], sym, mc_usd, qualifying_total, score, total_invested)
 
+                # Dynamically subscribe to holder + bundle streams for this token
+                if cabalspy_client:
+                    try:
+                        await cabalspy_client.subscribe_token_live(mint)
+                    except Exception:
+                        log.debug("cabalspy subscribe_token_live failed for %s", mint[:10])
+
                 # Route to open gate (same as PumpAPI consensus)
                 try:
                     await _on_smart_buy(mint, sym, mc_usd, score, wallet_addresses)
