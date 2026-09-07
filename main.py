@@ -1113,6 +1113,9 @@ async def _run_watch(s: cfg.Settings) -> int:
                              pmult=pmult, align=align, price_change=pc)
                 await book.open_position(ca, sym, usd, usd, n, wallets=wallets)
                 return
+            if reason and _skip_log.get(ca, 0) < time.time() - 300:
+                _skip_log[ca] = time.time()
+                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
             return
         now = time.time()
         if reason and _skip_log.get(ca, 0) < now - 300:
