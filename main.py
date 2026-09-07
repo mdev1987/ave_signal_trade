@@ -764,6 +764,23 @@ async def _run_watch(s: cfg.Settings) -> int:
         shyft_ws.start()
         log.info("shyft ws: started as fallback (wallets=%d)", len(w.wallets))
 
+    # MadeOnSol signals: KOL feed, first touches, sniper alerts, surges
+    madeonsol_signals = None
+    if madeonsol is not None and madeonsol.enabled:
+        try:
+            from madeonsol_signals import MadeOnSolSignals
+            madeonsol_signals = MadeOnSolSignals(
+                client=madeonsol.client,
+                process_buy=w._process_buy,
+                smart_buy=w.on_smart_buy,
+                wallet_set=set(w.wallets.keys()),
+                seen_cas=set(),
+            )
+            asyncio.create_task(madeonsol_signals.run())
+            log.info("madeonsol signals: started (kol_feed, first_touch, sniper, surges)")
+        except Exception:
+            log.exception("madeonsol signals init failed")
+
     # Telegram signal feed (@gmgnsignals): real-time token alerts from GMGN's
     # Telegram channel.  The channel IS the consensus — no wallet-tracking needed.
     # TG signals bypass wallet consensus and go directly to the open gate with
@@ -1260,7 +1277,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                                   "tg_signal": tg_feed.health()["connected"] if tg_feed else False,
                                   "pumpapi": pump_stream.connected,
                                   "helius_ws": helius_ok,
-                                  "shyft_ws": shyft_ok})
+                                  "shyft_ws": shyft_ok,
+                                  "madeonsol": madeonsol is not None and madeonsol.enabled})
             log.info("status: %s", build_status(snap))
             if helius_ws:
                 hs = helius_ws.stats
@@ -1271,6 +1289,11 @@ async def _run_watch(s: cfg.Settings) -> int:
                 ss = shyft_ws.stats
                 log.info("shyft ws: connected=%s msgs=%d reconnects=%d",
                          ss["connected"], ss["total_msgs"], ss["reconnects"])
+            if madeonsol_signals:
+                ms = madeonsol_signals.stats
+                log.info("madeonsol: kol_buys=%d first_touch=%d sniper=%d surges=%d",
+                         ms["kol_buys"], ms["first_touches"],
+                         ms["sniper_alerts"], ms["surges"])
             ps = pump_stream.stats
             log.info("pumpapi: connected=%s buys=%d reconnects=%d uptime=%ds",
                      ps["connected"], ps["total_buys"],
