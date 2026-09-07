@@ -65,4 +65,4 @@ runwisp.toml
 .agents/
 .claude/
 .agents/skills/gmgn-token
-skills-lock.json
+skills-lock.json.env
