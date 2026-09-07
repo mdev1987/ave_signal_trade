@@ -148,5 +148,5 @@ class DexScreenerClient:
                 return None
             return norm
         except Exception as e:  # noqa: BLE001
-            logger.warning("dexscreener token-pairs failed %s: %s", ca, e)
+            logger.warning("dexscreener token-pairs failed %s: %s %s", ca, type(e).__name__, e)
             return None

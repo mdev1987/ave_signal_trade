@@ -373,42 +373,12 @@ class HeliusWS:
     async def _handle_logs_message(self, msg: dict) -> None:
         """Process a logsSubscribe notification.
 
-        Extracts the signature and checks if any tracked wallet is mentioned.
-        If so, fetches the full transaction via HTTP RPC for buy parsing.
+        logsSubscribe returns program log messages, NOT wallet addresses.
+        We cannot reliably match tracked wallets from log lines alone.
+        This is a no-op on free tier — transactionSubscribe is required
+        for proper wallet filtering.
         """
-        params = msg.get("params") or {}
-        result = params.get("result") or {}
-        value = result.get("value") or {}
-
-        sig = value.get("signature", "")
-        err = value.get("err")
-        logs = value.get("logs") or []
-
-        if not sig or err is not None:
-            return
-
-        # Fast check: do any of our wallet addresses appear in the logs?
-        wallet_set = set(self.wallets)
-        found_wallet = None
-        for log_line in logs:
-            for w in wallet_set:
-                if w in log_line:
-                    found_wallet = w
-                    break
-            if found_wallet:
-                break
-
-        if not found_wallet:
-            return
-
-        # Fetch full transaction via HTTP RPC
-        buy = await self._fetch_and_parse_tx(sig, found_wallet)
-        if buy:
-            self._total_buys += 1
-            try:
-                await self.on_buy(found_wallet, buy)
-            except Exception:
-                logger.exception("helius ws on_buy callback failed for %s", found_wallet[:10])
+        pass  # logsSubscribe cannot filter by wallet; use transactionSubscribe
 
     async def _fetch_and_parse_tx(self, signature: str, wallet: str) -> dict | None:
         """Fetch a full transaction via HTTP RPC and parse it for buy events."""

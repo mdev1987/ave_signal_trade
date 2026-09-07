@@ -31,11 +31,22 @@ class MadeOnSolGate:
             log.warning("madeonsol: no API key, all checks disabled")
             return
         self.client = MadeOnSolClient(api_key=api_key)
+        self._last_call_ts = 0.0
+        self._min_interval = 5.0  # 5s between calls to respect free tier (200/day)
         log.info("madeonsol: client initialized (key=%s…)", api_key[:12])
 
     @property
     def enabled(self) -> bool:
         return self.client is not None
+
+    def _throttle(self) -> None:
+        """Sleep if needed to respect rate limit (5s minimum between calls)."""
+        now = time.monotonic()
+        elapsed = now - self._last_call_ts
+        if elapsed < self._min_interval:
+            import time as _time
+            _time.sleep(self._min_interval - elapsed)
+        self._last_call_ts = time.monotonic()
 
     async def check_risk(self, mint: str, max_score: int = 70) -> tuple[bool, str]:
         """Check token risk score. Returns (safe, reason).
@@ -44,6 +55,7 @@ class MadeOnSolGate:
         if not self.enabled:
             return True, ""
         try:
+            self._throttle()
             risk = self.client.rest.token_risk(mint)
             score = risk.get("risk_score", 0)
             band = risk.get("band", "unknown")
@@ -51,9 +63,9 @@ class MadeOnSolGate:
                 return False, f"madeonsol_risk({score}>{max_score},band={band})"
             return True, ""
         except Exception as exc:
-            # Free tier gets 403 on token_risk — fail-open
-            if "403" in str(exc):
-                log.debug("madeonsol risk: PRO required, skipping")
+            # Free tier gets 403 or 429 — fail-open
+            if "403" in str(exc) or "429" in str(exc):
+                log.debug("madeonsol risk: skipped (%s)", "429" if "429" in str(exc) else "PRO required")
                 return True, ""
             log.warning("madeonsol risk check failed for %s: %s", mint[:10], exc)
             return True, ""  # fail-open
@@ -63,6 +75,7 @@ class MadeOnSolGate:
         if not self.enabled:
             return True, ""
         try:
+            self._throttle()
             bq = self.client.rest.token_buyer_quality(mint)
             buyers = bq.get("buyers", [])
             scores = [b.get("score", 0) for b in buyers if b.get("score")]
@@ -72,6 +85,9 @@ class MadeOnSolGate:
                     return False, f"low_buyer_quality({avg:.0f}<{min_avg})"
             return True, ""
         except Exception as exc:
+            if "429" in str(exc):
+                log.debug("madeonsol buyer quality: 429, skipping")
+                return True, ""
             log.warning("madeonsol buyer quality failed for %s: %s", mint[:10], exc)
             return True, ""
 
@@ -82,14 +98,15 @@ class MadeOnSolGate:
         if not self.enabled:
             return None
         try:
+            self._throttle()
             signals = self.client.kol_coordination(min_kols=min_kols, period="24h")
             for sig in (signals.get("signals", []) if signals else []):
                 if sig.get("mint") == mint or sig.get("token_mint") == mint:
                     return sig
             return None
         except Exception as exc:
-            if "403" in str(exc):
-                log.debug("madeonsol coordination: PRO required, skipping")
+            if "403" in str(exc) or "429" in str(exc):
+                log.debug("madeonsol coordination: skipped (%s)", "429" if "429" in str(exc) else "PRO required")
             else:
                 log.warning("madeonsol coordination check failed: %s", exc)
             return None
