@@ -48,6 +48,7 @@ from tatum_notify import TatumNotifications  # noqa: E402
 from watcher import SmartWalletWatcher  # noqa: E402
 from wallet_discovery import WalletDiscovery  # noqa: E402
 from wallet_weights import build_weights  # noqa: E402
+from cabalspy import CabalSpyClient, HolderCache  # noqa: E402
 
 log = logging.getLogger("main")
 
@@ -711,6 +712,21 @@ async def _run_watch(s: cfg.Settings) -> int:
         except Exception:
             log.exception("vybe init failed — disabled")
 
+    # CabalSpy client (real-time KOL/SM/Whale data streams)
+    cabalspy = None
+    cabalspy_key = (cfg.get(env, "CABALSPY_API_KEY") or "").strip()
+    if cabalspy_key and s.cabalspy_enabled:
+        try:
+            # Parse signal thresholds from config
+            _entry_at = [int(x.strip()) for x in s.cabalspy_signal_entry_at.split(",") if x.strip()]
+            _exit_at = [int(x.strip()) for x in s.cabalspy_signal_exit_at.split(",") if x.strip()]
+            _tx_types = [x.strip() for x in s.cabalspy_tx_types.split(",") if x.strip()]
+
+            log.info("cabalspy: enabled (signal entry_at=%s, min_buy=%.1f, min_win_rate=%.0f)",
+                     _entry_at, s.cabalspy_signal_min_buy, s.cabalspy_signal_min_win_rate)
+        except Exception:
+            log.exception("cabalspy init failed — disabled")
+
     weights, default_weight = build_weights(
         s.wallet_perf_path,
         floor_win=s.wallet_weight_floor_win,
@@ -800,6 +816,151 @@ async def _run_watch(s: cfg.Settings) -> int:
             log.info("madeonsol signals: started (kol_feed, first_touch, sniper, surges)")
         except Exception:
             log.exception("madeonsol signals init failed")
+
+    # CabalSpy signal stream: server-side cluster detection
+    cabalspy_client = None
+    if cabalspy_key and s.cabalspy_enabled:
+        try:
+            _entry_at = [int(x.strip()) for x in s.cabalspy_signal_entry_at.split(",") if x.strip()]
+            _exit_at = [int(x.strip()) for x in s.cabalspy_signal_exit_at.split(",") if x.strip()]
+            _tx_types = [x.strip() for x in s.cabalspy_tx_types.split(",") if x.strip()]
+
+            # Holder cache for concentration checks
+            holder_cache = HolderCache()
+
+            # Bundle tracking for coordinated rug detection
+            _bundle_flags: dict[str, dict] = {}  # mint -> {detected_at, bundles}
+
+            # Holder cache for concentration checks
+            holder_cache = HolderCache()
+
+            # Bundle tracking for coordinated rug detection
+            _bundle_flags: dict[str, dict] = {}  # mint -> {detected_at, bundles}
+
+            # Feed signal data into holder cache too
+            async def _on_cabalspy_signal(msg: dict) -> None:
+                """Handle CabalSpy signal events (cluster entry/exit)."""
+                # Update holder cache from signal wallets
+                holder_cache.update_from_signal(msg)
+                data = msg.get("data", {})
+                signal_kind = data.get("signal_kind")
+                mint = data.get("mint")
+                token = data.get("token", {})
+
+                if not mint or signal_kind != "entry":
+                    return  # only process entry signals
+
+                sym = token.get("symbol") or "?"
+                mc_usd = token.get("market_cap_usd") or 0
+                cluster = data.get("cluster", {})
+                qualifying_total = cluster.get("qualifying_total") or 0
+                total_invested = cluster.get("total_invested") or 0
+                total_invested_usd = cluster.get("total_invested_usd") or 0
+
+                # Extract wallet list from signal
+                wallets_data = data.get("wallets", [])
+                wallet_addresses = [w.get("wallet") for w in wallets_data if w.get("wallet")]
+
+                # Compute weighted score from wallet win rates
+                score = 0.0
+                for w_data in wallets_data:
+                    win_rate = w_data.get("win_rate") or 0
+                    # Weight by win rate (0-100 -> 0-1.0)
+                    weight = min(1.0, max(0.0, win_rate / 100.0))
+                    score += weight
+
+                log.info("cabalspy SIGNAL %s (%s) mc=$%.0f wallets=%d score=%.2f invested=%.2f SOL",
+                         mint[:10], sym, mc_usd, qualifying_total, score, total_invested)
+
+                # Route to open gate (same as PumpAPI consensus)
+                try:
+                    await _on_smart_buy(mint, sym, mc_usd, score, wallet_addresses)
+                except Exception:
+                    log.exception("cabalspy _on_smart_buy failed for %s", mint[:10])
+
+            async def _on_cabalspy_tx(msg: dict) -> None:
+                """Handle CabalSpy TX events (individual wallet trades)."""
+                data = msg.get("data", {})
+                wallet = data.get("wallet")
+                tx = data.get("transaction", {})
+                token = data.get("token", {})
+                action = tx.get("action")
+
+                if not wallet or action != "buy":
+                    return  # only process buys
+
+                mint = token.get("mint")
+                sym = token.get("symbol") or "?"
+                value = data.get("value", {})
+                usd = value.get("amount_usd") or 0
+                sol_amount = value.get("amount") or 0
+
+                if not mint or usd < s.watch_min_buy_usd:
+                    return
+
+                log.debug("cabalspy TX %s buy %s $%.0f (%.2f SOL)",
+                          wallet[:8], mint[:8], usd, sol_amount)
+
+                # Route to process_buy (feeds consensus engine)
+                try:
+                    await w._process_buy(wallet, {
+                        "ca": mint, "amount": sol_amount, "usd": usd,
+                        "symbol": sym, "ts": time.time(),
+                    })
+                except Exception:
+                    log.exception("cabalspy _process_buy failed for %s", mint[:10])
+
+            async def _on_cabalspy_holder(msg: dict) -> None:
+                """Handle CabalSpy holder events (position tracking)."""
+                holder_cache.update_from_holder(msg)
+                mint = msg.get("data", {}).get("mint", "?")
+                event = msg.get("event", "?")
+                if event in ("init", "holder_update"):
+                    log.debug("cabalspy HOLDER %s %s holders=%d",
+                              mint[:10], event, len(holder_cache.get_holders(mint)))
+
+            async def _on_cabalspy_bundle(msg: dict) -> None:
+                """Handle CabalSpy bundle events (coordinated KOL bundles)."""
+                data = msg.get("data", {})
+                mint = data.get("mint")
+                if not mint:
+                    return
+                event = msg.get("event")
+                bundles = data.get("bundles", [])
+                if bundles:
+                    _bundle_flags[mint] = {
+                        "detected_at": time.time(),
+                        "bundles": bundles,
+                    }
+                    log.info("cabalspy BUNDLE %s %s bundles=%d total_sol=%.2f",
+                             mint[:10], event, len(bundles),
+                             sum(b.get("amount_sol", 0) for b in bundles))
+                    if s.cabalspy_bundle_block:
+                        log.warning("cabalspy BUNDLE BLOCKED %s — coordinated bundle detected",
+                                    mint[:10])
+
+            cabalspy_client = CabalSpyClient(
+                api_key=cabalspy_key,
+                on_signal=_on_cabalspy_signal,
+                on_tx=_on_cabalspy_tx,
+                on_holder=_on_cabalspy_holder,
+                on_bundle=_on_cabalspy_bundle,
+                signal_min_buy=s.cabalspy_signal_min_buy,
+                signal_entry_at=_entry_at,
+                signal_exit_at=_exit_at,
+                signal_min_win_rate=s.cabalspy_signal_min_win_rate,
+                signal_token=s.cabalspy_signal_token,
+                tx_types=_tx_types,
+                tx_token=s.cabalspy_tx_token,
+                holder_mode=s.cabalspy_holder_mode,
+                bundle_mode=s.cabalspy_bundle_mode,
+                count_token=s.cabalspy_count_token,
+            )
+            cabalspy_client.start()
+            log.info("cabalspy ws: started (signal + tx + holder + bundle streams)")
+        except Exception:
+            log.exception("cabalspy init failed — disabled")
+            cabalspy_client = None
 
     # Telegram signal feed (@gmgnsignals): real-time token alerts from GMGN's
     # Telegram channel.  The channel IS the consensus — no wallet-tracking needed.
@@ -1237,6 +1398,29 @@ async def _run_watch(s: cfg.Settings) -> int:
                         return
                 except Exception as exc:
                     log.warning("vybe check failed for %s: %s", ca[:10], exc)
+            # CabalSpy holder concentration check: if we have holder data from
+            # the signal stream, reject tokens where any single holder owns > max_pct.
+            if cabalspy_client is not None and cabalspy_client.connected:
+                try:
+                    safe, max_pct, c_reason = holder_cache.check_concentration(
+                        ca, s.cabalspy_holder_max_pct)
+                    if not safe:
+                        reason = f"skip:holder_concentration({c_reason})"
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
+                    # Bundle block: reject if coordinated bundle detected recently
+                    if s.cabalspy_bundle_block and ca in _bundle_flags:
+                        bundle_age = time.time() - _bundle_flags[ca].get("detected_at", 0)
+                        if bundle_age < 600:  # block for 10 minutes
+                            reason = f"skip:bundle_detected({bundle_age:.0f}s ago)"
+                            if _skip_log.get(ca, 0) < time.time() - 300:
+                                _skip_log[ca] = time.time()
+                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                            return
+                except Exception as exc:
+                    log.debug("cabalspy holder/bundle check failed for %s: %s", ca[:10], exc)
             pc = (snap or {}).get("price_change") or {}
             tfs = ("m5", "h1", "h6", "h24")
             avail = [k for k in tfs if pc.get(k) is not None]
@@ -1330,7 +1514,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                                   "helius_ws": helius_ok,
                                   "shyft_ws": shyft_ok,
                                   "madeonsol": madeonsol is not None and madeonsol.enabled,
-                                  "vybe": vybe is not None and vybe.enabled})
+                                  "vybe": vybe is not None and vybe.enabled,
+                                  "cabalspy": cabalspy_client is not None and cabalspy_client.connected})
             log.info("status: %s", build_status(snap))
             if helius_ws:
                 hs = helius_ws.stats
@@ -1350,6 +1535,11 @@ async def _run_watch(s: cfg.Settings) -> int:
             log.info("pumpapi: connected=%s buys=%d reconnects=%d uptime=%ds",
                      ps["connected"], ps["total_buys"],
                      ps["reconnects"], ps["uptime_s"])
+            if cabalspy_client:
+                cs = cabalspy_client.stats
+                log.info("cabalspy: connected=%s signals=%d txs=%d holders=%d bundles=%d reconnects=%d",
+                         cs["connected"], cs["total_signals"], cs["total_txs"],
+                         cs["total_holders"], cs["total_bundles"], cs["reconnects"])
 
     # tatum push (optional) ----------------------------------------------
     tatum_url = cfg.get(env, "WATCH_WEBHOOK_URL", "")
@@ -1495,6 +1685,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             await dexpaprika.close()
         if vybe is not None:
             await vybe.close()
+        if cabalspy_client is not None:
+            await cabalspy_client.stop()
         await jupiter.close()
     return 0
 

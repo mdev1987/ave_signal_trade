@@ -228,6 +228,23 @@ class Settings:
     vybe_min_liquidity_usd: float = 500.0   # min total USD liquidity to allow entry
     vybe_max_top_holder_pct: float = 50.0   # reject if top 5 holders own > this %
     vybe_min_buy_sell_ratio: float = 0.2    # reject if buy/sell ratio < this (1h)
+    # --- CabalSpy (real-time KOL/SM/Whale data streams) ---
+    cabalspy_api_key: str = ""              # CabalSpy API key
+    cabalspy_enabled: bool = True           # enable CabalSpy streams
+    cabalspy_signal_min_buy: float = 0.5    # min SOL per wallet to count in signal
+    cabalspy_signal_entry_at: str = "3,5"   # entry thresholds (comma-separated)
+    cabalspy_signal_exit_at: str = "1"      # exit thresholds (comma-separated)
+    cabalspy_signal_min_win_rate: float = 50.0  # min win rate to count
+    cabalspy_signal_token: str = "*"        # token filter for signal stream
+    cabalspy_tx_types: str = "kol,smart,whale"  # wallet types for tx stream
+    cabalspy_tx_token: str = "*"            # token filter for tx stream
+    cabalspy_holder_mode: str = "events"    # "full" or "events" (events = cheaper)
+    cabalspy_bundle_mode: str = "events"    # "full" or "events"
+    cabalspy_count_token: str = "*"         # token filter for count stream
+    # Holder concentration check (from CabalSpy holder stream)
+    cabalspy_holder_max_pct: float = 30.0   # reject if any single holder owns > this %
+    # Bundle detection (from CabalSpy bundle stream)
+    cabalspy_bundle_block: bool = True      # block trades when coordinated bundle detected
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -345,4 +362,18 @@ def load_settings(path: str = ".env") -> Settings:
         vybe_min_liquidity_usd=get_float(env, "VYBE_MIN_LIQ_USD", _d.vybe_min_liquidity_usd),
         vybe_max_top_holder_pct=get_float(env, "VYBE_MAX_TOP_HOLDER_PCT", _d.vybe_max_top_holder_pct),
         vybe_min_buy_sell_ratio=get_float(env, "VYBE_MIN_BUY_SELL_RATIO", _d.vybe_min_buy_sell_ratio),
+        cabalspy_api_key=get(env, "CABALSPY_API_KEY", _d.cabalspy_api_key),
+        cabalspy_enabled=get_bool(env, "CABALSPY_ENABLED", _d.cabalspy_enabled),
+        cabalspy_signal_min_buy=get_float(env, "CABALSPY_SIGNAL_MIN_BUY", _d.cabalspy_signal_min_buy),
+        cabalspy_signal_entry_at=get(env, "CABALSPY_SIGNAL_ENTRY_AT", _d.cabalspy_signal_entry_at),
+        cabalspy_signal_exit_at=get(env, "CABALSPY_SIGNAL_EXIT_AT", _d.cabalspy_signal_exit_at),
+        cabalspy_signal_min_win_rate=get_float(env, "CABALSPY_SIGNAL_MIN_WIN_RATE", _d.cabalspy_signal_min_win_rate),
+        cabalspy_signal_token=get(env, "CABALSPY_SIGNAL_TOKEN", _d.cabalspy_signal_token),
+        cabalspy_tx_types=get(env, "CABALSPY_TX_TYPES", _d.cabalspy_tx_types),
+        cabalspy_tx_token=get(env, "CABALSPY_TX_TOKEN", _d.cabalspy_tx_token),
+        cabalspy_holder_mode=get(env, "CABALSPY_HOLDER_MODE", _d.cabalspy_holder_mode),
+        cabalspy_bundle_mode=get(env, "CABALSPY_BUNDLE_MODE", _d.cabalspy_bundle_mode),
+        cabalspy_count_token=get(env, "CABALSPY_COUNT_TOKEN", _d.cabalspy_count_token),
+        cabalspy_holder_max_pct=get_float(env, "CABALSPY_HOLDER_MAX_PCT", _d.cabalspy_holder_max_pct),
+        cabalspy_bundle_block=get_bool(env, "CABALSPY_BUNDLE_BLOCK", _d.cabalspy_bundle_block),
     )
