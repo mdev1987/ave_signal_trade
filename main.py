@@ -140,7 +140,8 @@ class ShadowBook:
                   open_max_impact_pct: float = 4.0,
                  early_filter_window_s: float = 30.0,
                  early_filter_dd_pct: float = 20.0,
-                 early_filter_gain_pct: float = 5.0) -> None:
+                 early_filter_gain_pct: float = 5.0,
+                 reentry_cooldown_s: float = 3600.0) -> None:
         self.jupiter = jupiter
         self.notifier = notifier
         self.max_positions = int(max_positions)
@@ -155,7 +156,7 @@ class ShadowBook:
         # Take-profit ladder: list of (price_multiple, frac_of_original_size). If
         # None, fall back to the legacy single-TP behaviour (tp1_mult bank 50%).
         # Each level banks `frac` of the ORIGINAL position (not remaining).
-        self.tp_ladder = tp_ladder or [(tp1_mult, 0.5)]
+        self.tp_ladder = tp_ladder or [(1.5, 0.30, 0.15)]
         self.trail_enabled = bool(trail_enabled)
         self.on_trade_close = on_trade_close  # async/normal fn(wallets, win: bool, pnl: float)
         self.open_max_impact_pct = float(open_max_impact_pct)
@@ -167,6 +168,8 @@ class ShadowBook:
         self.balance_sol = float(start_balance_sol)
         self.open: dict[str, dict] = {}
         self.closed: list[dict] = []
+        self._cooldown: dict[str, float] = {}  # ca -> expiry timestamp
+        self.reentry_cooldown_s = float(reentry_cooldown_s)
         self._lock = asyncio.Lock()
         self._load()
 
@@ -350,6 +353,7 @@ class ShadowBook:
                 "wallets": list(wallets or []),
                 "tp_taken": [], "remaining": 1.0, "banked_pnl": 0.0,
                 "be_armed": False, "peak_mult": 1.0,
+                "tp_level": -1,  # index into tp_ladder (-1 = no TP yet)
                 "entry_mode": entry_mode,
                 # Early adverse filter state (one-shot at early_filter_window_s)
                 "early_min_mult": 1.0,  # worst excursion during early window
@@ -510,7 +514,7 @@ class ShadowBook:
                 # fired — it is terminal (matches the ablation semantics).
                 # Also skip when mult is None (dead token, can't price).
                 if exit_reason != "early_invalid" and mult is not None:
-                    for lvl, frac in self.tp_ladder:
+                    for lvl_i, (lvl, frac, trail_pct) in enumerate(self.tp_ladder):
                         if lvl in pos["tp_taken"]:
                             continue
                         if peak_mult >= lvl:
@@ -518,8 +522,9 @@ class ShadowBook:
                             pos["tp_taken"].append(lvl)
                             pos["banked_pnl"] += frac * pos["size_sol"] * (exec_at_level - 1.0)
                             pos["remaining"] = max(0.0, pos["remaining"] - frac)
+                            pos["tp_level"] = lvl_i  # track current level for trail
                             logs.journal("shadow_tp", ca=ca, symbol=pos["symbol"],
-                                         lvl=lvl, frac=frac,
+                                         lvl=lvl, frac=frac, trail_pct=trail_pct,
                                          exec_px=round(exec_at_level, 3))
                             if pos["remaining"] <= 1e-9:
                                 pos["remaining"] = 0.0
@@ -534,9 +539,20 @@ class ShadowBook:
                             stop_mult = max(stop_mult, 1.0 + self.be_buffer)
                         if self.hard_stop > 0 and mult <= stop_mult:
                             exit_reason = "sl"
-                        elif self.trail_enabled and peak_mult >= self.trail_start_mult and \
-                                mult <= peak_mult * (1 - self.retrace):
-                            exit_reason = "trail"
+                        elif self.trail_enabled:
+                            # Tiered trailing stop: use trail_pct from the
+                            # highest TP level that has fired. If no TP yet,
+                            # use the global retrace_pct as fallback.
+                            tp_level = pos.get("tp_level", -1)
+                            if tp_level >= 0:
+                                # Use the trail_pct from the LAST fired level
+                                trail_pct = self.tp_ladder[tp_level][2]
+                            else:
+                                trail_pct = self.retrace
+                            trail_start = self.trail_start_mult if tp_level < 0 else 1.0
+                            if peak_mult >= trail_start and \
+                                    mult <= peak_mult * (1 - trail_pct):
+                                exit_reason = "trail"
                 if exit_reason:
                     # For dead tokens (mult=None), remaining tokens are
                     # worthless: mult = 0.0.  Banked TP is already counted.
@@ -555,6 +571,8 @@ class ShadowBook:
                     bal_before = self.balance_sol
                     self.balance_sol += self.size_sol + pnl
                     del self.open[ca]
+                    # Time-based cooldown: allow re-entry after cooldown_s
+                    self._cooldown[ca] = time.time() + self.reentry_cooldown_s
                     logs.journal("shadow_close", **rec)
                     if self.on_trade_close is not None:
                         try:
@@ -894,7 +912,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                       open_max_impact_pct=s.open_max_impact_pct,
                       early_filter_window_s=s.early_filter_window_s,
                       early_filter_dd_pct=s.early_filter_dd_pct,
-                      early_filter_gain_pct=s.early_filter_gain_pct)
+                      early_filter_gain_pct=s.early_filter_gain_pct,
+                      reentry_cooldown_s=s.reentry_cooldown_s)
     await book.reconcile_balances()
 
     # shadow book opens automatically via on_smart_buy callback. During the
@@ -954,6 +973,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             reason = "skip:max_positions"
         elif book.balance_sol < book.size_sol:
             reason = "skip:insufficient_balance"
+        elif time.time() < book._cooldown.get(ca, 0):
+            reason = "skip:cooldown"
         elif any(c.get("ca") == ca for c in book.closed[-100:]):
             reason = "skip:recently_closed"
         elif time.time() - last_open["t"] < open_gap_s:

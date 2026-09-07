@@ -62,25 +62,31 @@ def get_csv_ints(env, key, default="") -> list[int]:
     return out
 
 
-def parse_ladder(env, key: str, default: str) -> list[tuple[float, float]]:
-    """Parse a take-profit ladder from env: "1.3:0.4,1.8:0.3,3.0:0.3".
-
-    Each pair is (price_multiple, fraction_of_original_position). Fractions
-    across levels should sum to ~1.0 (each level banks that fraction of the
-    original size, NOT the remaining size).
+def parse_ladder(env, key: str, default: str) -> list[tuple[float, float, float]]:
+    """Parse a take-profit ladder from env: "1.5:0.30:0.15,3.0:0.20:0.25,...".
+    Each triple is (price_multiple, fraction_of_original_position, trail_pct).
+    trail_pct = trailing stop from peak AFTER that level fires.
+    If old 2-col format "1.3:0.4,1.8:0.3" is used, trail defaults to 0.30.
     """
     raw = get(env, key, default) or default
-    out: list[tuple[float, float]] = []
+    out: list[tuple[float, float, float]] = []
     for piece in str(raw).split(","):
         piece = piece.strip()
-        if not piece or ":" not in piece:
+        if not piece:
+            continue
+        parts = piece.strip('"').strip("'").split(":")
+        if len(parts) < 2:
             continue
         try:
-            m, f = piece.strip('"').strip("'").split(":")
-            out.append((float(m), float(f)))
+            m = float(parts[0])
+            f = float(parts[1])
+            t = float(parts[2]) if len(parts) >= 3 else 0.30
+            out.append((m, f, t))
         except ValueError:
             continue
-    return out or [(1.3, 1.0)]
+    return out or [(1.5, 0.30, 0.15), (3.0, 0.20, 0.25), (5.0, 0.15, 0.30),
+                   (10.0, 0.10, 0.35), (20.0, 0.08, 0.40), (50.0, 0.05, 0.40),
+                   (100.0, 0.05, 0.45), (200.0, 0.04, 0.50), (500.0, 0.03, 0.55)]
 
 
 @dataclass(frozen=True)
@@ -95,17 +101,18 @@ class Settings:
     adaptive_sizing: bool = True        # scale position size by consensus quality
     size_sol_min: float = 0.025         # minimum size for weak consensus (score ~1.5)
     size_sol_max: float = 0.10          # maximum size for strong consensus (score ~3.0+)
-    # Take-profit ladder (backtest-validated). Each (mult, frac) banks `frac`
-    # of the ORIGINAL position size at the level's multiple (virtual, paper).
-    # Fractions across levels should sum to ~1.0. Once any TP fires, the stop
-    # locks to breakeven so a winner can never become a loser.
-    # Example: "1.3:0.4,1.8:0.3,3.0:0.3" banks 40%/30%/30% of original size.
-    tp_ladder: list = None             # filled by load_settings -> [(1.3, 1.0)]
+    # Take-profit ladder (moonshot-optimized). Each (mult, frac, trail_pct)
+    # banks `frac` of the ORIGINAL position at level's multiple (paper).
+    # trail_pct = trailing stop % from peak AFTER that level fires.
+    # Levels: small pumps bank early, wide ladder catches 200x+ moonshots.
+    # fractions should sum to ~1.0; remainder trails with final level's trail.
+    tp_ladder: list = None             # filled by load_settings
     tp1_mult: float = 1.30             # legacy single-TP fallback (bank 50%)
-    trail_retrace_pct: float = 0.35
-    trail_enabled: bool = False         # trailing stop OFF by default (full-spike exit wins)
-    trail_start_mult: float = 1.30     # only trail after a peak >= this
+    trail_retrace_pct: float = 0.35    # default trail (legacy, overridden by ladder)
+    trail_enabled: bool = True          # trailing stop ON — wide ladder catches 200x+
+    trail_start_mult: float = 1.50     # trail after peak >= 1.5x (after TP1 fires)
     hard_stop_pct: float = 0.25        # hard stop (tightened from 0.30; gaps still slip, see review)
+    reentry_cooldown_s: float = 3600.0  # allow re-entry after 1h (seconds)
     open_min_liq_usd: float = 1500.0    # skip only the thinnest tokens; smart wallets buy fresh <$5k pumps
     per_wallet_max_positions: int = 3   # cap open positions that share a wallet (kills AgmLJ/kEFiA correlation stack)
     open_max_impact_pct: float = 5.0    # skip open if Jupiter buy-side price impact > this (match Jupiter's own gate)
@@ -131,11 +138,9 @@ class Settings:
     wallet_default_weight: float = 0.5      # weight when perf data is missing
     wallet_weight_max: float = 2.0
     # Consensus fires only when the summed weight of distinct buying wallets
-    # clears this. 1.5 is a tradable middle ground: a strong wallet (>=1.0,
-    # i.e. >=60% win) plus any second tracked wallet (e.g. 1.25+0.5) clears it,
-    # so consensus forms far more often than the old 2.0 bar while still
-    # requiring a proven winner in the mix (see require_strong_wallet).
-    consensus_weight_threshold: float = 1.5
+    # clears this. 1.3 catches more 2-wallet consensus signals; a strong wallet
+    # (wt >= 1.0) plus any second tracked wallet (e.g. 0.5) clears it.
+    consensus_weight_threshold: float = 1.3
     require_strong_wallet: bool = True  # consensus must include >=1 wallet with wt >= 1.0
     open_min_wallets: int = 2          # minimum distinct qualified wallets to open
     be_buffer_pct: float = 0.0          # after 1st TP, raise stop to entry+this (breakeven lock)
@@ -223,12 +228,13 @@ def load_settings(path: str = ".env") -> Settings:
         adaptive_sizing=get_bool(env, "ADAPTIVE_SIZING", _d.adaptive_sizing),
         size_sol_min=get_float(env, "SIZE_SOL_MIN", _d.size_sol_min),
         size_sol_max=get_float(env, "SIZE_SOL_MAX", _d.size_sol_max),
-        tp_ladder=parse_ladder(env, "TP_LADDER", "1.3:0.4,1.8:0.3,3.0:0.3"),
+        tp_ladder=parse_ladder(env, "TP_LADDER", "1.5:0.30:0.15,3.0:0.20:0.25,5.0:0.15:0.30,10.0:0.10:0.35,20.0:0.08:0.40,50.0:0.05:0.40,100.0:0.05:0.45,200.0:0.04:0.50,500.0:0.03:0.55"),
         trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", _d.trail_retrace_pct),
         hard_stop_pct=get_float(env, "HARD_STOP_PCT", _d.hard_stop_pct),
         trail_enabled=get_bool(env, "TRAIL_ENABLED", _d.trail_enabled),
         trail_start_mult=get_float(env, "TRAIL_START_MULT", _d.trail_start_mult),
         tp1_mult=get_float(env, "TP1_MULT", _d.tp1_mult),
+        reentry_cooldown_s=get_float(env, "REENTRY_COOLDOWN_S", _d.reentry_cooldown_s),
         open_min_wallets=get_int(env, "OPEN_MIN_WALLETS", _d.open_min_wallets),
         open_min_liq_usd=get_float(env, "OPEN_MIN_LIQ_USD", _d.open_min_liq_usd),
         wallet_perf_path=get(env, "WALLET_PERF_PATH", _d.wallet_perf_path),
