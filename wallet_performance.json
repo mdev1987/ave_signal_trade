@@ -49,12 +49,12 @@
    "pumpfun-app",
    "sns"
   ],
-  "pnl_total": 1425126.07,
+  "pnl_total": 1425126.0444200002,
   "pnl_realized": 1428482.06,
   "pnl_unrealized": -3355.99,
   "roi": 35.48,
-  "trades": 37759,
-  "win_rate": 61.02,
+  "trades": 37763,
+  "win_rate": 61.01,
   "avg_hold_secs": 90144
  },
  {
@@ -254,11 +254,11 @@
   "tags": [
    "potential_bot"
   ],
-  "pnl_total": 4048687.5614300002,
+  "pnl_total": 4048687.5057900003,
   "pnl_realized": 14750259.3,
   "pnl_unrealized": -10701571.75,
   "roi": 382.41,
-  "trades": 762978,
+  "trades": 762986,
   "win_rate": 92.71,
   "avg_hold_secs": 410194
  },
@@ -271,11 +271,11 @@
    "kol",
    "axiom"
   ],
-  "pnl_total": 5721298.47,
+  "pnl_total": 5721298.47399,
   "pnl_realized": 5684064.9,
   "pnl_unrealized": 37233.57,
   "roi": 30.61,
-  "trades": 349323,
+  "trades": 349327,
   "win_rate": 54.96,
   "avg_hold_secs": 28355
  },
@@ -327,11 +327,11 @@
    "axiom",
    "pumpfun-app"
   ],
-  "pnl_total": 830659.45,
+  "pnl_total": 830659.45942,
   "pnl_realized": 821421.28,
   "pnl_unrealized": 9238.17,
   "roi": 9.58,
-  "trades": 111429,
+  "trades": 111433,
   "win_rate": 41.67,
   "avg_hold_secs": 109940
  },
@@ -576,11 +576,11 @@
    "kol",
    "axiom"
   ],
-  "pnl_total": 87514.71,
+  "pnl_total": 87514.68442,
   "pnl_realized": 94349.3,
   "pnl_unrealized": -6834.59,
   "roi": 2.87,
-  "trades": 64623,
+  "trades": 64627,
   "win_rate": 38.78,
   "avg_hold_secs": 107127
  },
@@ -1291,12 +1291,12 @@
    "pumpfun-app",
    "sns"
   ],
-  "pnl_total": 2529896.47,
+  "pnl_total": 2529896.47942,
   "pnl_realized": 2547404.09,
   "pnl_unrealized": -17507.63,
   "roi": 43.94,
-  "trades": 14612,
-  "win_rate": 52.31,
+  "trades": 14616,
+  "win_rate": 52.32,
   "avg_hold_secs": 249596
  },
  {
@@ -1419,12 +1419,12 @@
    "pumpfun-app",
    "sns"
   ],
-  "pnl_total": 1947591.3,
+  "pnl_total": 1947591.30942,
   "pnl_realized": 2136612.09,
   "pnl_unrealized": -189020.79,
   "roi": 4.93,
-  "trades": 35013,
-  "win_rate": 41.94,
+  "trades": 35017,
+  "win_rate": 41.95,
   "avg_hold_secs": 1206481
  },
  {
@@ -2582,11 +2582,11 @@
   "name": null,
   "type": null,
   "tags": [],
-  "pnl_total": 2387155.48836,
+  "pnl_total": 2387155.4583,
   "pnl_realized": 2439986.28,
   "pnl_unrealized": -52830.83,
   "roi": 2.11,
-  "trades": 1729167,
+  "trades": 1729171,
   "win_rate": 59.91,
   "avg_hold_secs": 48511
  },
@@ -4388,5 +4388,68 @@
   "trades": 12513,
   "win_rate": 40.68,
   "avg_hold_secs": 6843
+ },
+ {
+  "address": "CEUA7zVoDRqRYoeHTP58UHU6TR8yvtVbeLrX1dppqoXJ",
+  "ok": true,
+  "name": "CEUA7zVo",
+  "type": "kol",
+  "pnl_total": 0.00399,
+  "win_rate": 100.0,
+  "trades": 1
+ },
+ {
+  "address": "suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK",
+  "ok": true,
+  "name": "suqh5sHt",
+  "type": "kol",
+  "pnl_total": 0.00399,
+  "win_rate": 100.0,
+  "trades": 1
+ },
+ {
+  "address": "xyzfhxfy8NhfeNG3Um3WaUvFXzNuHkrhrZMD8dsStB6",
+  "ok": true,
+  "name": "xyzfhxfy",
+  "type": "kol",
+  "pnl_total": -0.02558,
+  "win_rate": 0.0,
+  "trades": 1
+ },
+ {
+  "address": "JEDYMr5QFnndwZSF2fXLLDA1TdWDuyKJ9Zc7gA1wWwbK",
+  "ok": true,
+  "name": "JEDYMr5Q",
+  "type": "kol",
+  "pnl_total": -0.02558,
+  "win_rate": 0.0,
+  "trades": 1
+ },
+ {
+  "address": "HmBmSYwYEgEZuBUYuDs9xofyqBAkw4ywugB1d7R7sTGh",
+  "ok": true,
+  "name": "HmBmSYwY",
+  "type": "kol",
+  "pnl_total": 0.00942,
+  "win_rate": 100.0,
+  "trades": 1
+ },
+ {
+  "address": "AVmFMbuehLbCWB6sPdZGComwyrHtxJETZVktdA65j3Gq",
+  "ok": true,
+  "name": "AVmFMbue",
+  "type": "kol",
+  "pnl_total": 0.00942,
+  "win_rate": 100.0,
+  "trades": 1
+ },
+ {
+  "address": "As7HjL7dzzvbRbaD3WCun47robib2kmAKRXMvjHkSMB5",
+  "ok": true,
+  "name": "As7HjL7d",
+  "type": "kol",
+  "pnl_total": -0.03006,
+  "win_rate": 0.0,
+  "trades": 1
  }
 ]

@@ -66,6 +66,32 @@ class MadeOnSolSignals:
             "almost_bonded": 0,
             "alpha_discovered": 0,
         }
+        self._ratelimit_hits: dict[str, int] = {}  # task -> consecutive 429s
+
+    def _on_429(self, task: str, backoff: float) -> float:
+        """Circuit breaker for 429s: warn twice, then go quiet for 1h.
+
+        The free tier (200 calls/day) exhausts fast with 6 pollers; without
+        this each task warns every cycle and burns quota on retries.
+        Any success resets via _on_success().
+        """
+        hits = self._ratelimit_hits.get(task, 0) + 1
+        self._ratelimit_hits[task] = hits
+        if hits >= 3:
+            if hits == 3:
+                log.warning("madeonsol %s rate-limited 3x — circuit open, quiet 1h",
+                            task)
+            else:
+                log.debug("madeonsol %s still rate-limited (%dx), quiet 1h",
+                          task, hits)
+            return 3600.0
+        new = min(backoff * 2, 600)
+        log.warning("madeonsol %s 429, backing off %.0fs", task, new)
+        return new
+
+    def _on_success(self, task: str) -> None:
+        if self._ratelimit_hits.pop(task, None) is not None:
+            log.info("madeonsol %s recovered from rate limit", task)
 
     @property
     def stats(self) -> dict:
@@ -141,11 +167,11 @@ class MadeOnSolSignals:
                     if now - v < 3600
                 }
                 backoff = KOL_FEED_INTERVAL  # reset on success
+                self._on_success("kol feed")
 
             except Exception as exc:
                 if "429" in str(exc):
-                    backoff = min(backoff * 2, 600)  # double up to 10min
-                    log.warning("madeonsol kol feed 429, backing off %.0fs", backoff)
+                    backoff = self._on_429("kol feed", backoff)
                 else:
                     log.warning("madeonsol kol feed poll failed: %s", exc)
                     backoff = KOL_FEED_INTERVAL
@@ -183,11 +209,11 @@ class MadeOnSolSignals:
                         await self.smart_buy(ca, sym, 0.0, 3.0, [wallet])
 
                 backoff = FIRST_TOUCH_INTERVAL  # reset on success
+                self._on_success("first touch")
 
             except Exception as exc:
                 if "429" in str(exc):
-                    backoff = min(backoff * 2, 600)
-                    log.warning("madeonsol first touch 429, backing off %.0fs", backoff)
+                    backoff = self._on_429("first touch", backoff)
                 else:
                     log.warning("madeonsol first touch poll failed: %s", exc)
                     backoff = FIRST_TOUCH_INTERVAL
@@ -227,13 +253,14 @@ class MadeOnSolSignals:
                     if self.smart_buy:
                         await self.smart_buy(ca, sym, 0.0, 2.5, [deployer])
 
+                self._on_success("sniper")
+
             except Exception as exc:
                 if "403" in str(exc):
                     log.info("madeonsol sniper: PRO tier required, backing off")
                     pro_only = True
                 elif "429" in str(exc):
-                    backoff = min(backoff * 2, 600)
-                    log.warning("madeonsol sniper 429, backing off %.0fs", backoff)
+                    backoff = self._on_429("sniper", backoff)
                 else:
                     log.warning("madeonsol sniper poll failed: %s", exc)
 
@@ -261,13 +288,14 @@ class MadeOnSolSignals:
                     log.info("madeonsol surge: %s tier=%s mc=$%.0f",
                              ca[:10], tier, mc)
 
+                self._on_success("surges")
+
             except Exception as exc:
                 if "403" in str(exc):
                     log.info("madeonsol surges: PRO tier required, backing off")
                     pro_only = True
                 elif "429" in str(exc):
-                    backoff = min(backoff * 2, 600)
-                    log.warning("madeonsol surges 429, backing off %.0fs", backoff)
+                    backoff = self._on_429("surges", backoff)
                 else:
                     log.warning("madeonsol surges poll failed: %s", exc)
 
@@ -297,13 +325,14 @@ class MadeOnSolSignals:
                     log.info("madeonsol almost-bonded: %s progress=%.1f%% velocity=%.2f%%/min",
                              ca[:10], progress, velocity)
 
+                self._on_success("almost-bonded")
+
             except Exception as exc:
                 if "403" in str(exc):
                     log.info("madeonsol almost-bonded: PRO tier required, backing off")
                     pro_only = True
                 elif "429" in str(exc):
-                    backoff = min(backoff * 2, 600)
-                    log.warning("madeonsol almost-bonded 429, backing off %.0fs", backoff)
+                    backoff = self._on_429("almost-bonded", backoff)
                 else:
                     log.warning("madeonsol almost-bonded poll failed: %s", exc)
 

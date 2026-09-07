@@ -144,7 +144,12 @@ class Settings:
     require_strong_wallet: bool = True  # consensus must include >=1 wallet with wt >= 1.0
     open_min_wallets: int = 2          # minimum distinct qualified wallets to open
     be_buffer_pct: float = 0.0          # after 1st TP, raise stop to entry+this (breakeven lock)
+    be_arm_mult: float = 1.15           # arm breakeven stop once peak >= this (even before TP1 fires)
     max_hold_h: float = 24.0            # force-close dead/lingering positions after 24h (frees slots)
+    flat_timeout_h: float = 6.0         # close positions older than this that never peaked above flat_timeout_peak
+    flat_timeout_peak: float = 1.10     # peak multiple below which a position counts as "flat" (0=disable via flat_timeout_h=0)
+    stable_symbols: str = "USDC,USDT,USD1,PYUSD,USDS,DAI,SOL,WSOL,WETH,WBTC,CBTC,JUP,RAY,ORCA"  # impostor/stable symbols to never open (comma-separated)
+    open_min_m5_pct: float = -2.0       # skip if 5m price change < this (don't enter active dumps)
     max_open_positions: int = 18        # hard cap on concurrent shadow positions (raised: book saturates at 12 in ~30m)
     start_balance_sol: float = 4.0      # larger paper book so the cap is capital-bound
     shadow_state_file: str = "shadow_book.json"
@@ -281,7 +286,12 @@ def load_settings(path: str = ".env") -> Settings:
         consensus_weight_threshold=get_float(env, "CONSENSUS_WEIGHT_THRESHOLD", _d.consensus_weight_threshold),
         require_strong_wallet=get_bool(env, "REQUIRE_STRONG_WALLET", _d.require_strong_wallet),
         be_buffer_pct=get_float(env, "BE_BUFFER_PCT", _d.be_buffer_pct),
+        be_arm_mult=get_float(env, "BE_ARM_MULT", _d.be_arm_mult),
         max_hold_h=get_float(env, "MAX_HOLD_H", _d.max_hold_h),
+        flat_timeout_h=get_float(env, "FLAT_TIMEOUT_H", _d.flat_timeout_h),
+        flat_timeout_peak=get_float(env, "FLAT_TIMEOUT_PEAK", _d.flat_timeout_peak),
+        stable_symbols=get(env, "STABLE_SYMBOLS", _d.stable_symbols),
+        open_min_m5_pct=get_float(env, "OPEN_MIN_M5_PCT", _d.open_min_m5_pct),
         max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", _d.max_open_positions),
         per_wallet_max_positions=get_int(env, "PER_WALLET_MAX_POSITIONS", _d.per_wallet_max_positions),
         open_max_impact_pct=get_float(env, "OPEN_MAX_IMPACT_PCT", _d.open_max_impact_pct),

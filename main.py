@@ -133,10 +133,12 @@ class ShadowBook:
                  retrace_pct: float, hard_stop_pct: float,
                  state_file: Path, start_balance_sol: float,
                  jupiter=None, notifier=None, max_positions: int = 12,
-                 tp1_mult: float = 1.5, trail_start_mult: float = 1.3,
-                  be_buffer: float = 0.0, max_hold_s: float = 0.0,
-                  tp_ladder: list | None = None,
-                  trail_enabled: bool = False,
+                  tp1_mult: float = 1.5, trail_start_mult: float = 1.3,
+                   be_buffer: float = 0.0, max_hold_s: float = 0.0,
+                   tp_ladder: list | None = None,
+                   be_arm_mult: float = 1.15,
+                   flat_timeout_s: float = 0.0, flat_timeout_peak: float = 1.10,
+                   trail_enabled: bool = False,
                   on_trade_close=None,
                   open_max_impact_pct: float = 4.0,
                  early_filter_window_s: float = 30.0,
@@ -158,6 +160,9 @@ class ShadowBook:
         # None, fall back to the legacy single-TP behaviour (tp1_mult bank 50%).
         # Each level banks `frac` of the ORIGINAL position (not remaining).
         self.tp_ladder = tp_ladder or [(1.5, 0.30, 0.15)]
+        self.be_arm_mult = float(be_arm_mult)
+        self.flat_timeout_s = float(flat_timeout_s)
+        self.flat_timeout_peak = float(flat_timeout_peak)
         self.trail_enabled = bool(trail_enabled)
         self.on_trade_close = on_trade_close  # async/normal fn(wallets, win: bool, pnl: float)
         self.open_max_impact_pct = float(open_max_impact_pct)
@@ -260,7 +265,8 @@ class ShadowBook:
     async def open_position(self, ca: str, symbol: str, usd_entry: float,
                             trigger_usd: float, n_wallets: int,
                             wallets: list[str] | None = None,
-                            size_sol: float | None = None) -> None:
+                            size_sol: float | None = None,
+                            source: str = "pumpapi") -> None:
         # --- Jupiter executable entry basis (primary) ---
         # When Jupiter is available, derive the actual entry price from the buy
         # quote: size_sol SOL -> tokens_raw, so entry = SOL_per_token * SOL_USD.
@@ -353,7 +359,7 @@ class ShadowBook:
                 "trigger_usd": trigger_usd, "n_wallets": n_wallets,
                 "wallets": list(wallets or []),
                 "tp_taken": [], "remaining": 1.0, "banked_pnl": 0.0,
-                "be_armed": False, "peak_mult": 1.0,
+                "be_armed": False, "peak_mult": 1.0, "source": source,
                 "tp_level": -1,  # index into tp_ladder (-1 = no TP yet)
                 "entry_mode": entry_mode,
                 # Early adverse filter state (one-shot at early_filter_window_s)
@@ -364,7 +370,7 @@ class ShadowBook:
             logs.journal("shadow_entry_px", ca=ca, px=px, note=entry_note)
             logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
                          trigger=trigger_usd, n=n_wallets,
-                         wallets=list(wallets or []))
+                         wallets=list(wallets or []), source=source)
             self.save()
         if self.notifier is not None:
             try:
@@ -459,6 +465,15 @@ class ShadowBook:
                     exit_reason = "dead_liquidity"
                 elif self.max_hold_s > 0 and age_s > self.max_hold_s:
                     exit_reason = "timeout"
+                elif (self.flat_timeout_s > 0 and age_s > self.flat_timeout_s
+                        and pos.get("peak_mult", 1.0) < self.flat_timeout_peak
+                        and not pos.get("tp_taken")):
+                    # Flat-timeout: held long enough with no TP and never
+                    # showed life — free the slot instead of slow-bleeding.
+                    exit_reason = "flat_timeout"
+                    log.info("flat timeout %s (%s): age=%.1fh peak=%.3f",
+                             ca[:10], pos["symbol"], age_s / 3600,
+                             pos.get("peak_mult", 1.0))
 
                 # Track peak using ONLY the executable price.
                 best_mult = jup_mult if jup_mult is not None else dex_mult
@@ -532,6 +547,13 @@ class ShadowBook:
                     if pos["tp_taken"] and not pos["be_armed"]:
                         pos["be_armed"] = True
                         logs.journal("shadow_be", ca=ca, symbol=pos["symbol"])
+                    elif (not pos["be_armed"] and self.be_arm_mult > 0
+                            and peak_mult >= self.be_arm_mult):
+                        # Early BE: spike showed +15% but faded before TP1 —
+                        # lock breakeven instead of riding to the hard stop.
+                        pos["be_armed"] = True
+                        logs.journal("shadow_be_early", ca=ca, symbol=pos["symbol"],
+                                     peak=round(peak_mult, 3))
                     if pos["remaining"] <= 0:
                         exit_reason = "tp"   # fully scaled out at the spike
                     else:
@@ -565,9 +587,10 @@ class ShadowBook:
                     # partial was already banked (e.g. Bear: exit 0.70x but net +).
                     trade_mult = (pos["size_sol"] + pnl) / pos["size_sol"]
                     rec = {"ca": ca, "symbol": pos["symbol"], "reason": exit_reason,
-                            "mult": round(trade_mult, 3), "pnl_sol": round(pnl, 5),
-                            "hold_min": int((time.time() - pos["ts"]) / 60),
-                            "wallets": pos.get("wallets", [])}
+                             "mult": round(trade_mult, 3), "pnl_sol": round(pnl, 5),
+                             "hold_min": int((time.time() - pos["ts"]) / 60),
+                             "wallets": pos.get("wallets", []),
+                             "source": pos.get("source", "pumpapi")}
                     self.closed.append(rec)
                     bal_before = self.balance_sol
                     self.balance_sol += self.size_sol + pnl
@@ -881,7 +904,8 @@ async def _run_watch(s: cfg.Settings) -> int:
 
                 # Route to open gate (same as PumpAPI consensus)
                 try:
-                    await _on_smart_buy(mint, sym, mc_usd, score, wallet_addresses)
+                    await _on_smart_buy(mint, sym, mc_usd, score, wallet_addresses,
+                                        source="cabalspy")
                 except Exception:
                     log.exception("cabalspy _on_smart_buy failed for %s", mint[:10])
 
@@ -1021,7 +1045,8 @@ async def _run_watch(s: cfg.Settings) -> int:
         log.info("tg OPEN %s (%s) mc=$%.0f liq=$%.0f holders=%d 1h=%+.1f%% type=%s",
                  ca[:8], sym, mc, liq, holders, pc_1h, signal_type)
         try:
-            await _on_smart_buy(ca, sym, mc, 3.0, ["tg_signal"], tg_liq=liq)
+            await _on_smart_buy(ca, sym, mc, 3.0, ["tg_signal"], tg_liq=liq,
+                                source="tg_signal")
         except Exception:
             log.exception("tg _on_smart_buy failed for %s", ca[:8])
 
@@ -1127,7 +1152,10 @@ async def _run_watch(s: cfg.Settings) -> int:
                       max_positions=max_positions,
                       tp1_mult=s.tp1_mult, trail_start_mult=s.trail_start_mult,
                       be_buffer=s.be_buffer_pct, max_hold_s=s.max_hold_h * 3600.0,
-                      tp_ladder=s.tp_ladder, trail_enabled=s.trail_enabled,
+                      tp_ladder=s.tp_ladder, be_arm_mult=s.be_arm_mult,
+                      flat_timeout_s=s.flat_timeout_h * 3600.0,
+                      flat_timeout_peak=s.flat_timeout_peak,
+                      trail_enabled=s.trail_enabled,
                       on_trade_close=_record_trade,
                       open_max_impact_pct=s.open_max_impact_pct,
                       early_filter_window_s=s.early_filter_window_s,
@@ -1160,7 +1188,10 @@ async def _run_watch(s: cfg.Settings) -> int:
         size = settings.size_sol_min + t * (settings.size_sol_max - settings.size_sol_min)
         return round(size, 4)
 
-    async def _on_smart_buy(ca, sym, usd, score, wallets=None, tg_liq=0.0):
+    _stable_syms = {x.strip().upper() for x in (s.stable_symbols or "").split(",") if x.strip()}
+
+    async def _on_smart_buy(ca, sym, usd, score, wallets=None, tg_liq=0.0,
+                            source="pumpapi"):
         last_detection_ts["t"] = time.time()
         n = len(wallets or [])
         # Concentration guard: cap how many open positions may share any one
@@ -1173,6 +1204,10 @@ async def _run_watch(s: cfg.Settings) -> int:
             overlap = max(overlap, c)
         if not backfill_done.is_set():
             reason = "deferred:lookback"
+        elif (sym or "").upper() in _stable_syms:
+            # Stablecoin/impostor guard: stables can't run the TP ladder and
+            # scam mints reuse trusted symbols (fake USDC). -EV either way.
+            reason = f"skip:stable_symbol({sym})"
         elif score < s.consensus_weight_threshold:
             # Weighted consensus gate: the summed quality score of distinct
             # buying wallets must clear the threshold. A single proven winner
@@ -1468,9 +1503,11 @@ async def _run_watch(s: cfg.Settings) -> int:
                              note="dexscreener_unavailable")
                 logs.journal("open_signal_momentum", ca=ca, symbol=sym,
                              score=score, effective=round(effective, 3),
-                             pmult=pmult, align=align, price_change=pc)
+                             pmult=pmult, align=align, price_change=pc,
+                             source=source)
                 _open_size = _adaptive_size(s, effective) if s.adaptive_sizing else None
-                await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size)
+                await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
+                                         source=source)
                 return
             elif (snap.get("liq") or tg_liq or 0) < s.open_min_liq_usd:
                 reason = "skip:low_liq"
@@ -1478,14 +1515,18 @@ async def _run_watch(s: cfg.Settings) -> int:
                 reason = f"skip:no_momentum(h1={pc.get('h1')})"
             elif (pc.get("m5") or 0) < s.open_max_m5_dump_pct:
                 reason = f"skip:dumping(m5={pc.get('m5')})"
+            elif (pc.get("m5") or 0) < s.open_min_m5_pct:
+                reason = f"skip:weak_m5(m5={pc.get('m5')})"
             else:
                 last_open["t"] = time.time()
                 last_open["score"] = score
                 logs.journal("open_signal_momentum", ca=ca, symbol=sym,
                              score=score, effective=round(effective, 3),
-                             pmult=pmult, align=align, price_change=pc)
+                             pmult=pmult, align=align, price_change=pc,
+                             source=source)
                 _open_size = _adaptive_size(s, effective) if s.adaptive_sizing else None
-                await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size)
+                await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
+                                         source=source)
                 return
             if reason and _skip_log.get(ca, 0) < time.time() - 300:
                 _skip_log[ca] = time.time()
@@ -1630,6 +1671,51 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     status_task = asyncio.create_task(_status_with_restart())
     status_task.add_done_callback(_log_task_result)
+
+    async def _feed_watchdog() -> None:
+        """Watch primary feeds; Telegram-alert on outage, log on recovery.
+
+        PumpAPI reconnect storms and CabalSpy handshake failures have both
+        caused silent blind spots. Alerts are rate-limited to 1 per 30min
+        per feed so a flapping feed doesn't spam.
+        """
+        down_since: dict[str, float] = {}   # feed -> first-seen-down ts
+        alerted: dict[str, float] = {}      # feed -> last alert ts
+        was_up: dict[str, bool] = {"pumpapi": True, "cabalspy": True}
+        while not stop.is_set():
+            await asyncio.sleep(60)
+            try:
+                feeds = {
+                    "pumpapi": pump_stream.connected,
+                    "cabalspy": (cabalspy_client.connected
+                                 if cabalspy_client else False),
+                }
+                now = time.time()
+                for name, up in feeds.items():
+                    if not up:
+                        down_since.setdefault(name, now)
+                        if (was_up.get(name, True)
+                                or now - alerted.get(name, 0) > 1800):
+                            down_for = int(now - down_since[name])
+                            log.warning("watchdog: %s DOWN for %ds", name, down_for)
+                            alerted[name] = now
+                            if notifier is not None:
+                                asyncio.create_task(notifier.send_alert(
+                                    f"feed down: {name}",
+                                    f"no data for {down_for}s")).add_done_callback(
+                                        _log_task_result)
+                        was_up[name] = False
+                    elif not was_up.get(name, True):
+                        down_for = int(now - down_since.pop(name, now))
+                        log.info("watchdog: %s recovered after %ds down",
+                                 name, down_for)
+                        was_up[name] = True
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                log.exception("feed watchdog failed")
+
+    asyncio.create_task(_feed_watchdog()).add_done_callback(_log_task_result)
 
     try:
         while not stop.is_set():
