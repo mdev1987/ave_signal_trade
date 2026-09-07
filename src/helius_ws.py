@@ -215,7 +215,13 @@ class HeliusWS:
             logger.info("helius ws connected")
 
             if self._use_logs_subscribe:
-                await self._subscribe_logs(ws)
+                logger.info("helius ws: transactionSubscribe unavailable (free tier) — PumpAPI is primary feed")
+                # logsSubscribe on Token Program cannot filter by wallet — useless
+                # Just keep connection alive for health, but don't process messages
+                async for raw in ws:
+                    if self._stop.is_set():
+                        break
+                    # Intentionally ignore all messages — PumpAPI handles everything
             else:
                 ok = await self._subscribe_transaction(ws)
                 if not ok:
