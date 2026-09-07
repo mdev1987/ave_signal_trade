@@ -38,7 +38,9 @@ class MadeOnSolGate:
         return self.client is not None
 
     async def check_risk(self, mint: str, max_score: int = 70) -> tuple[bool, str]:
-        """Check token risk score. Returns (safe, reason)."""
+        """Check token risk score. Returns (safe, reason).
+        Note: token_risk requires PRO tier. Free tier returns True (pass).
+        """
         if not self.enabled:
             return True, ""
         try:
@@ -49,6 +51,10 @@ class MadeOnSolGate:
                 return False, f"madeonsol_risk({score}>{max_score},band={band})"
             return True, ""
         except Exception as exc:
+            # Free tier gets 403 on token_risk — fail-open
+            if "403" in str(exc):
+                log.debug("madeonsol risk: PRO required, skipping")
+                return True, ""
             log.warning("madeonsol risk check failed for %s: %s", mint[:10], exc)
             return True, ""  # fail-open
 
@@ -70,12 +76,14 @@ class MadeOnSolGate:
             return True, ""
 
     async def check_coordination(self, mint: str, min_kols: int = 3) -> dict | None:
-        """Check if token has multi-KOL coordination signal."""
+        """Check if token has multi-KOL coordination signal.
+        Uses client.kol_coordination() (x402-priced endpoint).
+        """
         if not self.enabled:
             return None
         try:
-            signals = self.client.rest.kol_coordination(min_kols=min_kols, period="24h")
-            for sig in signals.get("signals", []):
+            signals = self.client.kol_coordination(min_kols=min_kols, period="24h")
+            for sig in (signals.get("signals", []) if signals else []):
                 if sig.get("mint") == mint or sig.get("token_mint") == mint:
                     return sig
             return None
@@ -84,12 +92,14 @@ class MadeOnSolGate:
             return None
 
     async def get_kol_feed(self, limit: int = 20, action: str = "buy") -> list[dict]:
-        """Get recent KOL trades. Free tier = 5min delay."""
+        """Get recent KOL trades. Uses client.kol_feed() (x402-priced).
+        Free tier = 5min delay.
+        """
         if not self.enabled:
             return []
         try:
-            feed = self.client.rest.kol_feed(limit=limit, action=action)
-            return feed.get("trades", [])
+            feed = self.client.kol_feed(limit=limit, action=action)
+            return feed.get("trades", []) if feed else []
         except Exception as exc:
             log.warning("madeonsol kol feed failed: %s", exc)
             return []

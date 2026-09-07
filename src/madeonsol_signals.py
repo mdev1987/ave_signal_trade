@@ -100,7 +100,7 @@ class MadeOnSolSignals:
         """
         while not self._stop.is_set():
             try:
-                feed = self.client.rest.kol_feed(limit=50, action="buy")
+                feed = self.client.kol_feed(limit=50, action="buy")
                 trades = feed.get("trades", []) if feed else []
                 for t in trades:
                     wallet = t.get("wallet", "") or t.get("maker", "")
