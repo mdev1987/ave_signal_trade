@@ -221,6 +221,13 @@ class Settings:
     madeonsol_buyer_quality_gate: bool = True  # use buyer quality score
     madeonsol_buyer_quality_min: int = 30     # reject if avg buyer quality < this
     madeonsol_coordination_boost: float = 0.5 # score bonus for KOL coordination signal
+    # --- Vybe Network (token data, liquidity, top holders, wallet PnL) ---
+    vybe_api_key: str = ""              # Vybe API key (X-API-KEY header)
+    vybe_base_url: str = "https://api.vybenetwork.xyz"
+    vybe_enabled: bool = True           # enable Vybe safety gates
+    vybe_min_liquidity_usd: float = 500.0   # min total USD liquidity to allow entry
+    vybe_max_top_holder_pct: float = 50.0   # reject if top 5 holders own > this %
+    vybe_min_buy_sell_ratio: float = 0.2    # reject if buy/sell ratio < this (1h)
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -332,4 +339,10 @@ def load_settings(path: str = ".env") -> Settings:
         madeonsol_buyer_quality_gate=get_bool(env, "MADEONSOL_BUYER_QUALITY_GATE", _d.madeonsol_buyer_quality_gate),
         madeonsol_buyer_quality_min=get_int(env, "MADEONSOL_BUYER_QUALITY_MIN", _d.madeonsol_buyer_quality_min),
         madeonsol_coordination_boost=get_float(env, "MADEONSOL_COORDINATION_BOOST", _d.madeonsol_coordination_boost),
+        vybe_api_key=get(env, "VYBE_API_KEY", _d.vybe_api_key),
+        vybe_base_url=get(env, "VYBE_API_URL", _d.vybe_base_url),
+        vybe_enabled=get_bool(env, "VYBE_ENABLED", _d.vybe_enabled),
+        vybe_min_liquidity_usd=get_float(env, "VYBE_MIN_LIQ_USD", _d.vybe_min_liquidity_usd),
+        vybe_max_top_holder_pct=get_float(env, "VYBE_MAX_TOP_HOLDER_PCT", _d.vybe_max_top_holder_pct),
+        vybe_min_buy_sell_ratio=get_float(env, "VYBE_MIN_BUY_SELL_RATIO", _d.vybe_min_buy_sell_ratio),
     )

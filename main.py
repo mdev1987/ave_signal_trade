@@ -689,6 +689,28 @@ async def _run_watch(s: cfg.Settings) -> int:
         except Exception:
             log.exception("madeonsol init failed — disabled")
 
+    # Vybe Network client (token data, liquidity, top holders, wallet PnL)
+    vybe = None
+    vybe_key = (cfg.get(env, "VYBE_API_KEY") or "").strip()
+    if vybe_key:
+        try:
+            from vybe import VybeClient
+            vybe = VybeClient(
+                api_key=vybe_key,
+                base_url=cfg.get(env, "VYBE_API_URL", "https://api.vybenetwork.xyz"),
+                enabled=s.vybe_enabled,
+                min_liquidity_usd=s.vybe_min_liquidity_usd,
+                max_top_holder_pct=s.vybe_max_top_holder_pct,
+                min_buy_sell_ratio=s.vybe_min_buy_sell_ratio,
+            )
+            if vybe.enabled:
+                log.info("vybe: enabled (liq>$%.0f, top5<%.0f%%)",
+                         s.vybe_min_liquidity_usd, s.vybe_max_top_holder_pct)
+            else:
+                vybe = None
+        except Exception:
+            log.exception("vybe init failed — disabled")
+
     weights, default_weight = build_weights(
         s.wallet_perf_path,
         floor_win=s.wallet_weight_floor_win,
@@ -1184,6 +1206,37 @@ async def _run_watch(s: cfg.Settings) -> int:
                             return
                 except Exception as exc:
                     log.warning("madeonsol check failed for %s: %s", ca[:10], exc)
+            # Vybe Network safety gates (fail-open): liquidity, top holder
+            # concentration, buy/sell ratio. Provides independent validation
+            # alongside DexPaprika and DBotX.
+            if vybe is not None and s.vybe_enabled:
+                try:
+                    # Liquidity check
+                    liq_safe, liq_usd, liq_reason = await vybe.check_liquidity(ca)
+                    if not liq_safe:
+                        reason = f"skip:{liq_reason}"
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
+                    # Top holder concentration check
+                    holder_safe, top5_pct, holder_reason = await vybe.check_top_holders(ca)
+                    if not holder_safe:
+                        reason = f"skip:{holder_reason}"
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
+                    # Buy/sell ratio check
+                    bs_safe, bs_ratio, bs_reason = await vybe.check_buy_sell_ratio(ca)
+                    if not bs_safe:
+                        reason = f"skip:{bs_reason}"
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
+                except Exception as exc:
+                    log.warning("vybe check failed for %s: %s", ca[:10], exc)
             pc = (snap or {}).get("price_change") or {}
             tfs = ("m5", "h1", "h6", "h24")
             avail = [k for k in tfs if pc.get(k) is not None]
@@ -1276,7 +1329,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                                   "pumpapi": pump_stream.connected,
                                   "helius_ws": helius_ok,
                                   "shyft_ws": shyft_ok,
-                                  "madeonsol": madeonsol is not None and madeonsol.enabled})
+                                  "madeonsol": madeonsol is not None and madeonsol.enabled,
+                                  "vybe": vybe is not None and vybe.enabled})
             log.info("status: %s", build_status(snap))
             if helius_ws:
                 hs = helius_ws.stats
@@ -1341,7 +1395,8 @@ async def _run_watch(s: cfg.Settings) -> int:
     log.info("bot started: %s", build_status(book.snapshot(
         len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True,
                                     "tg_signal": tg_feed.health()["connected"] if tg_feed else False,
-                                    "pumpapi": True})))
+                                    "pumpapi": True,
+                                    "vybe": vybe is not None and vybe.enabled})))
     if notifier is not None:
         asyncio.create_task(notifier.send_startup(
             summary=f"watching {len(w.wallets)} wallets · "
@@ -1438,6 +1493,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             await helius.close()
         if dexpaprika is not None:
             await dexpaprika.close()
+        if vybe is not None:
+            await vybe.close()
         await jupiter.close()
     return 0
 
