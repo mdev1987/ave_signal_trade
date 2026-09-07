@@ -42,6 +42,7 @@ from pair_perf import (load as load_pair_perf, save as save_pair_perf,  # noqa: 
 from notifier import TelegramNotifier  # noqa: E402
 from pump_stream import PumpApiStream  # noqa: E402
 from helius_ws import HeliusWS  # noqa: E402
+from shyft_ws import ShyftWS  # noqa: E402
 from tg_signal_feed import TgSignalFeed  # noqa: E402
 from tatum_notify import TatumNotifications  # noqa: E402
 from watcher import SmartWalletWatcher  # noqa: E402
@@ -716,6 +717,20 @@ async def _run_watch(s: cfg.Settings) -> int:
         log.info("helius ws: started (wallets=%d, key=%s…)",
                  len(w.wallets), helius_keys[0][:8])
 
+    # Shyft WebSocket fallback: active when Helius WS is down
+    shyft_ws_url = (cfg.get(env, "SHYFT_WS_URL") or "").strip()
+    shyft_ws = None
+    if shyft_ws_url:
+        async def _on_shyft_buy(wallet: str, buy: dict) -> None:
+            await w._process_buy(wallet, buy)
+        shyft_ws = ShyftWS(
+            ws_url=shyft_ws_url,
+            wallets=w.wallets,
+            on_buy=_on_shyft_buy,
+        )
+        shyft_ws.start()
+        log.info("shyft ws: started as fallback (wallets=%d)", len(w.wallets))
+
     # Telegram signal feed (@gmgnsignals): real-time token alerts from GMGN's
     # Telegram channel.  The channel IS the consensus — no wallet-tracking needed.
     # TG signals bypass wallet consensus and go directly to the open gate with
@@ -1169,19 +1184,25 @@ async def _run_watch(s: cfg.Settings) -> int:
         while not stop.is_set():
             await asyncio.sleep(max(60, s.status_every_min * 60))
             helius_ok = helius_ws.connected if helius_ws else False
+            shyft_ok = shyft_ws.connected if shyft_ws else False
             snap = book.snapshot(len(w.wallets), alerts["n"],
                                  w.consensus_fired, time.time() - started,
                                  {"tatum": bool(w.tatum_push),
                                   "dexscreener": True,
                                   "tg_signal": tg_feed.health()["connected"] if tg_feed else False,
                                   "pumpapi": pump_stream.connected,
-                                  "helius_ws": helius_ok})
+                                  "helius_ws": helius_ok,
+                                  "shyft_ws": shyft_ok})
             log.info("status: %s", build_status(snap))
             if helius_ws:
                 hs = helius_ws.stats
                 log.info("helius ws: connected=%s msgs=%d buys=%d reconnects=%d",
                          hs["connected"], hs["total_msgs"],
                          hs["total_buys"], hs["reconnects"])
+            if shyft_ws:
+                ss = shyft_ws.stats
+                log.info("shyft ws: connected=%s msgs=%d reconnects=%d",
+                         ss["connected"], ss["total_msgs"], ss["reconnects"])
             ps = pump_stream.stats
             log.info("pumpapi: connected=%s buys=%d reconnects=%d uptime=%ds",
                      ps["connected"], ps["total_buys"],

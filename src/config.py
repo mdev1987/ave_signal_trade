@@ -91,6 +91,7 @@ class Settings:
     # strategy
     dry_run: bool = True
     size_sol: float = 0.05
+    shyft_ws_url: str = ""               # Shyft WebSocket fallback URL
     adaptive_sizing: bool = True        # scale position size by consensus quality
     size_sol_min: float = 0.025         # minimum size for weak consensus (score ~1.5)
     size_sol_max: float = 0.10          # maximum size for strong consensus (score ~3.0+)
@@ -218,6 +219,7 @@ def load_settings(path: str = ".env") -> Settings:
         chat_id=get(env, "CHAT_ID", _d.chat_id),
         dry_run=get_bool(env, "DRY_RUN", _d.dry_run),
         size_sol=get_float(env, "SIZE_SOL", _d.size_sol),
+        shyft_ws_url=get(env, "SHYFT_WS_URL", _d.shyft_ws_url),
         adaptive_sizing=get_bool(env, "ADAPTIVE_SIZING", _d.adaptive_sizing),
         size_sol_min=get_float(env, "SIZE_SOL_MIN", _d.size_sol_min),
         size_sol_max=get_float(env, "SIZE_SOL_MAX", _d.size_sol_max),
