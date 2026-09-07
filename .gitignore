@@ -66,3 +66,6 @@ runwisp.toml
 .claude/
 .agents/skills/gmgn-token
 skills-lock.json.env
+
+# API docs (large, not tracked)
+doc/

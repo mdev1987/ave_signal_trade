@@ -676,6 +676,21 @@ async def _run_watch(s: cfg.Settings) -> int:
         log.info("dexpaprika: enabled")
     except Exception:
         log.exception("dexpaprika init failed — disabled")
+
+    # MadeOnSol client (KOL tracking, risk scoring, coordination detection)
+    madeonsol = None
+    madeonsol_key = (cfg.get(env, "MADEONSOL_API_KEY") or "").strip()
+    if madeonsol_key:
+        try:
+            from madeonsol import MadeOnSolGate
+            madeonsol = MadeOnSolGate(api_key=madeonsol_key)
+            if madeonsol.enabled:
+                log.info("madeonsol: enabled (free tier: 200/day)")
+            else:
+                madeonsol = None
+        except Exception:
+            log.exception("madeonsol init failed — disabled")
+
     weights, default_weight = build_weights(
         s.wallet_perf_path,
         floor_win=s.wallet_weight_floor_win,
@@ -1133,6 +1148,27 @@ async def _run_watch(s: cfg.Settings) -> int:
                                 return
                 except Exception as exc:
                     log.warning("dexpaprika check failed for %s: %s", ca[:10], exc)
+            # MadeOnSol risk + buyer quality gate (fail-open):
+            # Risk score 0-100 (lower = safer); buyer quality 0-100 (higher = smarter).
+            if madeonsol is not None and s.madeonsol_risk_gate:
+                try:
+                    safe, risk_reason = await madeonsol.check_risk(ca, s.madeonsol_risk_max)
+                    if not safe:
+                        reason = f"skip:{risk_reason}"
+                        if _skip_log.get(ca, 0) < time.time() - 300:
+                            _skip_log[ca] = time.time()
+                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                        return
+                    if s.madeonsol_buyer_quality_gate:
+                        bq_safe, bq_reason = await madeonsol.check_buyer_quality(ca, s.madeonsol_buyer_quality_min)
+                        if not bq_safe:
+                            reason = f"skip:{bq_reason}"
+                            if _skip_log.get(ca, 0) < time.time() - 300:
+                                _skip_log[ca] = time.time()
+                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                            return
+                except Exception as exc:
+                    log.warning("madeonsol check failed for %s: %s", ca[:10], exc)
             pc = (snap or {}).get("price_change") or {}
             tfs = ("m5", "h1", "h6", "h24")
             avail = [k for k in tfs if pc.get(k) is not None]
@@ -1141,11 +1177,22 @@ async def _run_watch(s: cfg.Settings) -> int:
             # green on all horizons) get a bonus; reversing/late ones (PINU:
             # +825% h24 but -56% h1) get a discount. Avoids entering tops.
             mkt_bonus = (align - 2) * s.mtf_align_bonus
+            # MadeOnSol coordination boost: if multiple KOLs are buying the
+            # same token (detected by MadeOnSol), add a score bonus.
+            coord_bonus = 0.0
+            if madeonsol is not None and s.madeonsol_coordination_boost > 0:
+                try:
+                    coord = await madeonsol.check_coordination(ca, min_kols=2)
+                    if coord:
+                        coord_bonus = s.madeonsol_coordination_boost
+                        log.info("madeonsol coordination boost %s (+%.2f)", ca[:10], coord_bonus)
+                except Exception:
+                    pass
             # Pair quality is a MULTIPLIER on the market score, not a veto: a weak
             # pair (AgmLJ+kEFiA) is down-weighted but may still trade when the
             # market confirms hard — so we don't overfit to a 6-trade sample.
             pmult, pnote = pair_multiplier(pair_perf, wallets)
-            effective = (score + mkt_bonus) * pmult
+            effective = (score + mkt_bonus + coord_bonus) * pmult
             # Weak pair -> require strong confirmation: every AVAILABLE timeframe
             # positive (m5>0 & h1>0 at minimum) before it may open at all.
             if pmult < 1.0 and not all((pc.get(k) or 0) > 0 for k in avail):

@@ -213,6 +213,14 @@ class Settings:
     dexpaprika_enabled: bool = True       # enable DexPaprika pool health checks
     dexpaprika_min_buysell: float = 0.3   # min buy/sell ratio 1h (reject if < this)
     dexpaprika_max_whale_sells: int = 3   # reject if whale sells > this in 1h
+    # --- MadeOnSol (KOL tracking, risk scoring, coordination detection) ---
+    madeonsol_api_key: str = ""           # MadeOnSol API key (free tier: 200/day, 5min delay)
+    madeonsol_base_url: str = "https://madeonsol.com/api/v1"
+    madeonsol_risk_gate: bool = True      # use MadeOnSol risk score in entry gate
+    madeonsol_risk_max: int = 70          # reject tokens with risk > this (0-100)
+    madeonsol_buyer_quality_gate: bool = True  # use buyer quality score
+    madeonsol_buyer_quality_min: int = 30     # reject if avg buyer quality < this
+    madeonsol_coordination_boost: float = 0.5 # score bonus for KOL coordination signal
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -317,4 +325,11 @@ def load_settings(path: str = ".env") -> Settings:
         dexpaprika_enabled=get_bool(env, "DEXPAPRIKA_ENABLED", _d.dexpaprika_enabled),
         dexpaprika_min_buysell=get_float(env, "DEXPAPRIKA_MIN_BUYSELL", _d.dexpaprika_min_buysell),
         dexpaprika_max_whale_sells=get_int(env, "DEXPAPRIKA_MAX_WHALE_SELLS", _d.dexpaprika_max_whale_sells),
+        madeonsol_api_key=get(env, "MADEONSOL_API_KEY", _d.madeonsol_api_key),
+        madeonsol_base_url=get(env, "MADEONSOL_BASE_URL", _d.madeonsol_base_url),
+        madeonsol_risk_gate=get_bool(env, "MADEONSOL_RISK_GATE", _d.madeonsol_risk_gate),
+        madeonsol_risk_max=get_int(env, "MADEONSOL_RISK_MAX", _d.madeonsol_risk_max),
+        madeonsol_buyer_quality_gate=get_bool(env, "MADEONSOL_BUYER_QUALITY_GATE", _d.madeonsol_buyer_quality_gate),
+        madeonsol_buyer_quality_min=get_int(env, "MADEONSOL_BUYER_QUALITY_MIN", _d.madeonsol_buyer_quality_min),
+        madeonsol_coordination_boost=get_float(env, "MADEONSOL_COORDINATION_BOOST", _d.madeonsol_coordination_boost),
     )
