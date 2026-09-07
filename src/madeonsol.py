@@ -88,7 +88,10 @@ class MadeOnSolGate:
                     return sig
             return None
         except Exception as exc:
-            log.warning("madeonsol coordination check failed: %s", exc)
+            if "403" in str(exc):
+                log.debug("madeonsol coordination: PRO required, skipping")
+            else:
+                log.warning("madeonsol coordination check failed: %s", exc)
             return None
 
     async def get_kol_feed(self, limit: int = 20, action: str = "buy") -> list[dict]:
