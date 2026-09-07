@@ -41,6 +41,7 @@ from pair_perf import (load as load_pair_perf, save as save_pair_perf,  # noqa: 
                        update as update_pair_perf, pair_multiplier)
 from notifier import TelegramNotifier  # noqa: E402
 from pump_stream import PumpApiStream  # noqa: E402
+from helius_ws import HeliusWS  # noqa: E402
 from tg_signal_feed import TgSignalFeed  # noqa: E402
 from tatum_notify import TatumNotifications  # noqa: E402
 from watcher import SmartWalletWatcher  # noqa: E402
@@ -253,7 +254,8 @@ class ShadowBook:
 
     async def open_position(self, ca: str, symbol: str, usd_entry: float,
                             trigger_usd: float, n_wallets: int,
-                            wallets: list[str] | None = None) -> None:
+                            wallets: list[str] | None = None,
+                            size_sol: float | None = None) -> None:
         # --- Jupiter executable entry basis (primary) ---
         # When Jupiter is available, derive the actual entry price from the buy
         # quote: size_sol SOL -> tokens_raw, so entry = SOL_per_token * SOL_USD.
@@ -265,6 +267,7 @@ class ShadowBook:
         entry_mode = "mark_only"
         exec_px = 0.0  # Jupiter-derived USD/token (authoritative when available)
         market_px = 0.0  # DexScreener mid (reference only)
+        _size = size_sol if size_sol is not None else self.size_sol
 
         # DexScreener snapshot: used for market context (liq, price_change) and
         # as fallback when Jupiter is unavailable.
@@ -272,7 +275,7 @@ class ShadowBook:
         market_px = float(snap.get("price_usd") or 0) if snap else 0.0
 
         if self.jupiter is not None:
-            q = await self.jupiter.quote(ca, int(self.size_sol * 1e9),
+            q = await self.jupiter.quote(ca, int(_size * 1e9),
                                          force=True)
             if q is None or not q.success:
                 reason = q.reason if q else "quote_exception"
@@ -291,7 +294,7 @@ class ShadowBook:
             if self.jupiter.quote_stability_checks > 0:
                 buy_slip = None if self.jupiter._buy_rtse else self.jupiter._slippage_bps
                 stable, stab_reason, stab_info = await self.jupiter.check_quote_stability(
-                    ca, int(self.size_sol * 1e9), base=q, slippage_bps=buy_slip)
+                    ca, int(_size * 1e9), base=q, slippage_bps=buy_slip)
                 if not stable:
                     logs.journal("shadow_skip", ca=ca, symbol=symbol,
                                  reason=f"unstable:{stab_reason}", info=stab_info)
@@ -310,7 +313,7 @@ class ShadowBook:
             dec = await self.jupiter.token_decimals(ca) or 6
             sol_usd = await self._sol_usd()
             if sol_usd and tokens_raw:
-                exec_px = (self.size_sol * sol_usd) / (tokens_raw / (10 ** dec))
+                exec_px = (_size * sol_usd) / (tokens_raw / (10 ** dec))
         # Use Jupiter executable price as canonical entry when available;
         # fall back to DexScreener mid only when Jupiter is absent.
         px = exec_px if exec_px > 0 else market_px
@@ -329,19 +332,19 @@ class ShadowBook:
                 log.info("shadow skip %s (%s): max positions %d reached",
                          ca[:10], symbol, self.max_positions)
                 return
-            if self.balance_sol < self.size_sol:
+            if self.balance_sol < _size:
                 logs.journal("shadow_skip", ca=ca, symbol=symbol,
                              reason="insufficient_balance")
                 log.info("shadow skip %s (%s): insufficient balance %.4f",
                           ca[:10], symbol, self.balance_sol)
                 return
             bal_before = self.balance_sol
-            self.balance_sol -= self.size_sol
+            self.balance_sol -= _size
             self.open[ca] = {
                 "symbol": symbol, "entry_usd": px, "peak_usd": px, "last_usd": px,
                 "market_entry_px": market_px, "tokens_raw": tokens_raw,
                 "entry_note": entry_note,
-                "size_sol": self.size_sol, "ts": time.time(),
+                "size_sol": _size, "ts": time.time(),
                 "trigger_usd": trigger_usd, "n_wallets": n_wallets,
                 "wallets": list(wallets or []),
                 "tp_taken": [], "remaining": 1.0, "banked_pnl": 0.0,
@@ -360,7 +363,7 @@ class ShadowBook:
         if self.notifier is not None:
             try:
                 asyncio.get_running_loop().create_task(self.notifier.send_open(
-                    ca=ca, name=symbol, price=px, size_sol=self.size_sol,
+                    ca=ca, name=symbol, price=px, size_sol=_size,
                     balance_before=bal_before, balance_after=self.balance_sol,
                     open_count=len(self.open), max_positions=self.max_positions,
                     n_wallets=n_wallets, trigger_usd=trigger_usd,
@@ -698,6 +701,21 @@ async def _run_watch(s: cfg.Settings) -> int:
     pump_task = asyncio.create_task(pump_stream.run())
     pump_task.add_done_callback(_log_task_result)
 
+    # Helius WebSocket: real-time transaction streaming (replaces Shyft polling)
+    helius_keys = [k.strip() for k in (cfg.get(env, "HELIUS_API_KEYS") or "").split(",") if k.strip()]
+    helius_ws = None
+    if helius_keys:
+        async def _on_helius_buy(wallet: str, buy: dict) -> None:
+            await w._process_buy(wallet, buy)
+        helius_ws = HeliusWS(
+            api_key=helius_keys[0],
+            wallets=w.wallets,
+            on_buy=_on_helius_buy,
+        )
+        helius_ws.start()
+        log.info("helius ws: started (wallets=%d, key=%s…)",
+                 len(w.wallets), helius_keys[0][:8])
+
     # Telegram signal feed (@gmgnsignals): real-time token alerts from GMGN's
     # Telegram channel.  The channel IS the consensus — no wallet-tracking needed.
     # TG signals bypass wallet consensus and go directly to the open gate with
@@ -876,6 +894,18 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     _skip_log = {}
 
+    def _adaptive_size(settings, effective_score: float) -> float:
+        """Scale position size linearly between min/max based on consensus quality.
+
+        Weak consensus (effective ~1.5) -> size_sol_min
+        Strong consensus (effective ~3.0+) -> size_sol_max
+        """
+        score_min = settings.consensus_weight_threshold
+        score_max = score_min * 2.0  # strong signal ~2x threshold
+        t = max(0.0, min(1.0, (effective_score - score_min) / (score_max - score_min)))
+        size = settings.size_sol_min + t * (settings.size_sol_max - settings.size_sol_min)
+        return round(size, 4)
+
     async def _on_smart_buy(ca, sym, usd, score, wallets=None, tg_liq=0.0):
         last_detection_ts["t"] = time.time()
         n = len(wallets or [])
@@ -961,7 +991,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                     _mint_freeze = info["mint_authority"] or info["freeze_authority"]
                     # Block mint/freeze only if liquidity is below threshold
                     # (pump.fun pre-graduation tokens are high-risk)
-                    if _mint_freeze and _liq < 5000:
+                    if _mint_freeze and _liq < s.dbotx_mint_freeze_liq_max:
                         reason = f"skip:unsafe(mint/freeze,liq=${_liq:.0f})"
                         if _skip_log.get(ca, 0) < time.time() - 300:
                             _skip_log[ca] = time.time()
@@ -1097,7 +1127,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                 logs.journal("open_signal_momentum", ca=ca, symbol=sym,
                              score=score, effective=round(effective, 3),
                              pmult=pmult, align=align, price_change=pc)
-                await book.open_position(ca, sym, usd, usd, n, wallets=wallets)
+                _open_size = _adaptive_size(s, effective) if s.adaptive_sizing else None
+                await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size)
                 return
             elif (snap.get("liq") or tg_liq or 0) < s.open_min_liq_usd:
                 reason = "skip:low_liq"
@@ -1111,7 +1142,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                 logs.journal("open_signal_momentum", ca=ca, symbol=sym,
                              score=score, effective=round(effective, 3),
                              pmult=pmult, align=align, price_change=pc)
-                await book.open_position(ca, sym, usd, usd, n, wallets=wallets)
+                _open_size = _adaptive_size(s, effective) if s.adaptive_sizing else None
+                await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size)
                 return
             if reason and _skip_log.get(ca, 0) < time.time() - 300:
                 _skip_log[ca] = time.time()
@@ -1136,13 +1168,24 @@ async def _run_watch(s: cfg.Settings) -> int:
     async def status_loop() -> None:
         while not stop.is_set():
             await asyncio.sleep(max(60, s.status_every_min * 60))
+            helius_ok = helius_ws.connected if helius_ws else False
             snap = book.snapshot(len(w.wallets), alerts["n"],
                                  w.consensus_fired, time.time() - started,
                                  {"tatum": bool(w.tatum_push),
                                   "dexscreener": True,
                                   "tg_signal": tg_feed.health()["connected"] if tg_feed else False,
-                                  "pumpapi": True})
+                                  "pumpapi": pump_stream.connected,
+                                  "helius_ws": helius_ok})
             log.info("status: %s", build_status(snap))
+            if helius_ws:
+                hs = helius_ws.stats
+                log.info("helius ws: connected=%s msgs=%d buys=%d reconnects=%d",
+                         hs["connected"], hs["total_msgs"],
+                         hs["total_buys"], hs["reconnects"])
+            ps = pump_stream.stats
+            log.info("pumpapi: connected=%s buys=%d reconnects=%d uptime=%ds",
+                     ps["connected"], ps["total_buys"],
+                     ps["reconnects"], ps["uptime_s"])
 
     # tatum push (optional) ----------------------------------------------
     tatum_url = cfg.get(env, "WATCH_WEBHOOK_URL", "")

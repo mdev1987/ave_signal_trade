@@ -41,6 +41,24 @@ class PumpApiStream:
         self._sym: dict[str, str] = {}          # mint -> symbol (create events)
         self._sol = sol_fallback
         self._sol_t = 0.0
+        self._connected = False
+        self._reconnect_count = 0
+        self._total_buys = 0
+        self._connected_since = 0.0
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
+
+    @property
+    def stats(self) -> dict:
+        uptime = time.time() - self._connected_since if self._connected and self._connected_since else 0
+        return {
+            "connected": self._connected,
+            "reconnects": self._reconnect_count,
+            "total_buys": self._total_buys,
+            "uptime_s": round(uptime, 0),
+        }
 
     async def run(self) -> None:
         backoff = 1.0
@@ -51,14 +69,23 @@ class PumpApiStream:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:                       # noqa: BLE001
-                log.warning("pumpapi stream dropped: %s", exc)
+                self._connected = False
+                self._reconnect_count += 1
+                log.warning("pumpapi stream dropped: %s (reconnect #%d in %.0fs)",
+                            exc, self._reconnect_count, min(backoff, 30.0))
                 delay = backoff + random.uniform(0, backoff * 0.5)
-                await asyncio.sleep(min(delay, 30.0))
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=min(delay, 30.0))
+                    break
+                except TimeoutError:
+                    pass
                 backoff = min(backoff * 2, 30.0)
 
     async def _loop(self) -> None:
         async with websockets.connect(WS_URL, ping_interval=20,
                                       ping_timeout=20) as ws:
+            self._connected = True
+            self._connected_since = time.time()
             log.info("pumpapi ws connected (%d wallets)", len(self.wallets))
             async for message in ws:
                 if self._stop.is_set():
@@ -96,6 +123,7 @@ class PumpApiStream:
                 amount = float(ev.get("tokenAmount") or 0.0)
                 sym = self._sym.get(ca) or ev.get("symbol") or ev.get("name") or "?"
                 usd = quote * await self._sol_usd()
+                self._total_buys += 1
                 # Forward EVERY tracked wallet in this event, not just one.
                 # A single PumpAPI buy can contain multiple KOL wallets; only
                 # forwarding one destroys the consensus signal.

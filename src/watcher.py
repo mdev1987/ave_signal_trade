@@ -499,7 +499,7 @@ class SmartWalletWatcher:
                 logger.exception("on_smart_buy callback failed")
 
     async def run(self) -> None:
-        logger.info("wallets: %d, poll %.0fs (shyft fallback), concurrency=%d",
+        logger.info("wallets: %d, poll %.0fs (helius ws primary, shyft fallback), concurrency=%d",
                     len(self.wallets), self.poll_s, self._sweep_concurrency)
         while not self._stop.is_set():
             t0 = time.time()

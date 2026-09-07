@@ -91,6 +91,9 @@ class Settings:
     # strategy
     dry_run: bool = True
     size_sol: float = 0.05
+    adaptive_sizing: bool = True        # scale position size by consensus quality
+    size_sol_min: float = 0.025         # minimum size for weak consensus (score ~1.5)
+    size_sol_max: float = 0.10          # maximum size for strong consensus (score ~3.0+)
     # Take-profit ladder (backtest-validated). Each (mult, frac) banks `frac`
     # of the ORIGINAL position size at the level's multiple (virtual, paper).
     # Fractions across levels should sum to ~1.0. Once any TP fires, the stop
@@ -199,6 +202,7 @@ class Settings:
     helius_rpc_url: str = "https://mainnet.helius-rpc.com"
     helius_rugger_block: bool = True      # block trades when deployer is known rugger
     helius_max_top10_pct: float = 50.0    # reject if top-10 holders own > this %
+    dbotx_mint_freeze_liq_max: float = 15_000.0  # block mint/freeze only if liq < this
     # --- DexPaprika (pool analysis, buy/sell ratio, whale detection) ---
     dexpaprika_enabled: bool = True       # enable DexPaprika pool health checks
     dexpaprika_min_buysell: float = 0.3   # min buy/sell ratio 1h (reject if < this)
@@ -214,6 +218,9 @@ def load_settings(path: str = ".env") -> Settings:
         chat_id=get(env, "CHAT_ID", _d.chat_id),
         dry_run=get_bool(env, "DRY_RUN", _d.dry_run),
         size_sol=get_float(env, "SIZE_SOL", _d.size_sol),
+        adaptive_sizing=get_bool(env, "ADAPTIVE_SIZING", _d.adaptive_sizing),
+        size_sol_min=get_float(env, "SIZE_SOL_MIN", _d.size_sol_min),
+        size_sol_max=get_float(env, "SIZE_SOL_MAX", _d.size_sol_max),
         tp_ladder=parse_ladder(env, "TP_LADDER", "1.3:0.4,1.8:0.3,3.0:0.3"),
         trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", _d.trail_retrace_pct),
         hard_stop_pct=get_float(env, "HARD_STOP_PCT", _d.hard_stop_pct),
@@ -298,6 +305,7 @@ def load_settings(path: str = ".env") -> Settings:
         helius_rpc_url=get(env, "HELIUS_RPC_URL", _d.helius_rpc_url),
         helius_rugger_block=get_bool(env, "HELIUS_RUGGER_BLOCK", _d.helius_rugger_block),
         helius_max_top10_pct=get_float(env, "HELIUS_MAX_TOP10_PCT", _d.helius_max_top10_pct),
+        dbotx_mint_freeze_liq_max=get_float(env, "DBOTX_MINT_FREEZE_LIQ_MAX", _d.dbotx_mint_freeze_liq_max),
         dexpaprika_enabled=get_bool(env, "DEXPAPRIKA_ENABLED", _d.dexpaprika_enabled),
         dexpaprika_min_buysell=get_float(env, "DEXPAPRIKA_MIN_BUYSELL", _d.dexpaprika_min_buysell),
         dexpaprika_max_whale_sells=get_int(env, "DEXPAPRIKA_MAX_WHALE_SELLS", _d.dexpaprika_max_whale_sells),

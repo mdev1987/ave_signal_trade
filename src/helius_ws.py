@@ -1,0 +1,302 @@
+"""Helius WebSocket client — real-time transaction streaming.
+
+Replaces Shyft polling with a single WebSocket connection that streams
+all wallet transactions via Helius's ``transactionSubscribe`` extension.
+Sub-second latency, no rate limits, no 429s.
+
+Architecture:
+  - Single WS connection with ``account_include`` for all 262 wallets
+  - Parses buy transactions (SOL spent → token balance increased)
+  - Auto-reconnects on disconnect with exponential backoff
+  - Ping/pong health checks every 30s
+  - Falls back gracefully if connection fails
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from typing import Callable, Awaitable
+
+import websockets
+import websockets.exceptions
+
+logger = logging.getLogger(__name__)
+
+SOL = "So11111111111111111111111111111111111111112"
+WSOL = SOL
+
+# Reconnect backoff: start at 2s, max 60s
+_RECONNECT_MIN = 2.0
+_RECONNECT_MAX = 60.0
+_PING_INTERVAL = 30.0
+_SUBSCRIBE_BATCH = 100  # max wallets per subscribe message (Helius limit)
+
+
+def parse_helius_tx(wallet: str, msg: dict) -> dict | None:
+    """Extract a buy event from a Helius transactionSubscribe message.
+
+    Returns ``{"wallet": ..., "ca": ..., "ts": ..., "amount": ...}`` or None.
+    Same logic as ``parse_shyft_buys`` but adapted for the Helius WS payload.
+    """
+    tx = msg.get("transaction")
+    if not tx:
+        return None
+
+    meta = tx.get("meta") or {}
+    if meta.get("err") is not None:
+        return None
+
+    bt = tx.get("blockTime") or 0
+
+    # Extract account keys
+    message = (tx.get("transaction") or {}).get("message") or {}
+    account_keys = message.get("accountKeys") or []
+
+    # If account_keys are objects (jsonParsed), extract pubkeys
+    if account_keys and isinstance(account_keys[0], dict):
+        account_keys = [k.get("pubkey") or k.get("toString", "") for k in account_keys]
+
+    wallet_idx = None
+    for i, k in enumerate(account_keys):
+        if k == wallet:
+            wallet_idx = i
+            break
+    if wallet_idx is None:
+        return None
+
+    # Check SOL balance decrease (native)
+    pre_balances = meta.get("preBalances") or []
+    post_balances = meta.get("postBalances") or []
+    sol_spent = False
+    if wallet_idx < len(pre_balances) and wallet_idx < len(post_balances):
+        sol_spent = post_balances[wallet_idx] < pre_balances[wallet_idx]
+
+    # Fallback: check WSOL token balance decrease
+    if not sol_spent:
+        pre_sol = {(b.get("accountIndex")): b for b in meta.get("preTokenBalances") or []}
+        post_sol_map = {b.get("accountIndex"): b for b in meta.get("postTokenBalances") or []}
+        for ai in pre_sol:
+            pre = pre_sol.get(ai)
+            post = post_sol_map.get(ai)
+            if pre and pre.get("mint") == WSOL and pre.get("owner") == wallet:
+                try:
+                    pre_amt = float(pre.get("uiTokenAmount", {}).get("uiAmount") or 0)
+                    post_amt = float((post or {}).get("uiTokenAmount", {}).get("uiAmount") or 0)
+                    if post_amt < pre_amt:
+                        sol_spent = True
+                        break
+                except (TypeError, ValueError):
+                    pass
+
+    if not sol_spent:
+        return None
+
+    # Find token balance increase
+    pre_token = {(b.get("accountIndex")): b for b in meta.get("preTokenBalances") or []}
+    for pb in meta.get("postTokenBalances") or []:
+        mint = pb.get("mint")
+        if not mint or mint == WSOL:
+            continue
+        if pb.get("owner") != wallet:
+            continue
+        pre_amt = 0.0
+        old = pre_token.get(pb.get("accountIndex"))
+        if old and old.get("mint") == mint:
+            try:
+                pre_amt = float(old.get("uiTokenAmount", {}).get("uiAmount") or 0)
+            except (TypeError, ValueError):
+                pre_amt = 0.0
+        try:
+            post_amt = float(pb.get("uiTokenAmount", {}).get("uiAmount") or 0)
+        except (TypeError, ValueError):
+            continue
+        delta = post_amt - pre_amt
+        if delta <= 0:
+            continue
+        return {"wallet": wallet, "ca": mint, "ts": float(bt), "amount": delta}
+
+    return None
+
+
+class HeliusWS:
+    """Helius WebSocket client for real-time wallet transaction streaming.
+
+    Usage::
+
+        ws = HeliusWS(api_key="...", wallets=["addr1", "addr2", ...])
+        ws.on_buy = my_callback  # async fn(wallet, buy_row)
+        await ws.run()  # blocks forever, auto-reconnects
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        wallets: list[str],
+        on_buy: Callable[[str, dict], Awaitable[None]] | None = None,
+        endpoint: str = "wss://mainnet.helius-rpc.com",
+    ) -> None:
+        self.api_key = api_key
+        self.wallets = wallets
+        self.on_buy = on_buy
+        self._endpoint = endpoint
+        self._stop = asyncio.Event()
+        self._task: asyncio.Task | None = None
+        self._connected = False
+        self._last_msg_ts = 0.0
+        self._reconnect_count = 0
+        self._total_buys = 0
+        self._total_msgs = 0
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
+
+    @property
+    def stats(self) -> dict:
+        return {
+            "connected": self._connected,
+            "reconnects": self._reconnect_count,
+            "total_buys": self._total_buys,
+            "total_msgs": self._total_msgs,
+            "last_msg_age_s": round(time.time() - self._last_msg_ts, 1) if self._last_msg_ts else None,
+        }
+
+    async def run(self) -> None:
+        """Main loop: connect, subscribe, reconnect on failure."""
+        backoff = _RECONNECT_MIN
+        while not self._stop.is_set():
+            try:
+                await self._connect_and_stream()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self._reconnect_count += 1
+                logger.warning("helius ws disconnected (%s), reconnecting in %.0fs (attempt %d)",
+                               exc, backoff, self._reconnect_count)
+                self._connected = False
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=backoff)
+                    break  # stop was set during backoff
+                except TimeoutError:
+                    pass
+                backoff = min(backoff * 1.5, _RECONNECT_MAX)
+
+    async def _connect_and_stream(self) -> None:
+        """Connect to Helius WS, subscribe to all wallets, process messages."""
+        url = f"{self._endpoint}/?api-key={self.api_key}"
+        logger.info("helius ws connecting to %s (wallets=%d)", self._endpoint, len(self.wallets))
+
+        async with websockets.connect(
+            url,
+            ping_interval=_PING_INTERVAL,
+            ping_timeout=10,
+            max_size=4 * 1024 * 1024,  # 4MB
+            close_timeout=5,
+        ) as ws:
+            self._connected = True
+            self._reconnect_count = 0
+            logger.info("helius ws connected")
+
+            # Subscribe in batches (Helius may limit account_include size)
+            for i in range(0, len(self.wallets), _SUBSCRIBE_BATCH):
+                batch = self.wallets[i:i + _SUBSCRIBE_BATCH]
+                sub = {
+                    "jsonrpc": "2.0",
+                    "id": i // _SUBSCRIBE_BATCH + 1,
+                    "method": "transactionSubscribe",
+                    "params": [
+                        {
+                            "accountInclude": batch,
+                            "vote": False,
+                            "failed": False,
+                        },
+                        {
+                            "commitment": "confirmed",
+                            "encoding": "jsonParsed",
+                            "transactionDetails": "full",
+                            "maxSupportedTransactionVersion": 0,
+                        },
+                    ],
+                }
+                await ws.send(json.dumps(sub))
+                logger.info("helius ws subscribed batch %d/%d (%d wallets)",
+                            i // _SUBSCRIBE_BATCH + 1,
+                            (len(self.wallets) + _SUBSCRIBE_BATCH - 1) // _SUBSCRIBE_BATCH,
+                            len(batch))
+
+            # Message loop
+            async for raw in ws:
+                if self._stop.is_set():
+                    break
+                self._total_msgs += 1
+                self._last_msg_ts = time.time()
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+
+                # Skip subscription confirmations
+                if "result" in msg and "id" in msg:
+                    continue
+
+                # Process transaction notification
+                await self._handle_message(msg)
+
+    async def _handle_message(self, msg: dict) -> None:
+        """Process a single transaction notification from Helius WS."""
+        # Helius wraps the subscription result in "params": {"result": {"transaction": ...}}
+        params = msg.get("params") or {}
+        result = params.get("result") or {}
+        tx_data = result.get("transaction") or msg.get("transaction")
+
+        if not tx_data:
+            return
+
+        # The transaction payload may be nested
+        meta = tx_data.get("meta") or {}
+        message = (tx_data.get("transaction") or {}).get("message") or {}
+        account_keys = message.get("accountKeys") or []
+
+        # Resolve account keys (may be objects in jsonParsed)
+        if account_keys and isinstance(account_keys[0], dict):
+            resolved_keys = [k.get("pubkey", "") for k in account_keys]
+        else:
+            resolved_keys = account_keys
+
+        # Find which of our tracked wallets participated
+        wallet_set = set(self.wallets)
+        participating = [k for k in resolved_keys if k in wallet_set]
+
+        for wallet in participating:
+            buy = parse_helius_tx(wallet, {"transaction": tx_data, "blockTime": tx_data.get("blockTime")})
+            if buy and self.on_buy:
+                self._total_buys += 1
+                try:
+                    await self.on_buy(wallet, buy)
+                except Exception:
+                    logger.exception("helius ws on_buy callback failed for %s", wallet[:10])
+
+    async def stop(self) -> None:
+        """Gracefully stop the WebSocket client."""
+        self._stop.set()
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+    def start(self) -> None:
+        """Start the WebSocket client as a background task."""
+        self._task = asyncio.create_task(self.run())
+        self._task.add_done_callback(self._on_task_done)
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.exception("helius ws task crashed: %s", exc)
