@@ -249,7 +249,7 @@ class ShadowBook:
                 self.closed.append(pos)
                 if self.on_trade_close:
                     try:
-                        await self.on_trade_close(pos.get("wallets", []), False, pos["pnl_sol"])
+                        self.on_trade_close(pos.get("wallets", []), False, pos["pnl_sol"])
                     except Exception:
                         log.exception("on_trade_close reconcile callback failed")
             if removed:
@@ -487,8 +487,8 @@ class ShadowBook:
                 if mult is None and not exit_reason:
                     continue  # can't price, not dead yet — leave open
                 peak_mult = pos.get("peak_mult", mult)
-                if not is_dead:
-                    exit_reason = None  # reset; dead_liquidity already set above
+                if not is_dead and exit_reason not in ("timeout", "flat_timeout"):
+                    exit_reason = None  # reset; dead_liquidity/timeout already set above
                 # ---- early adverse filter (one-shot at early_filter_window_s):
                 # Track worst/best excursion during the early window, then
                 # evaluate once.  If the position drew down >early_filter_dd
@@ -740,16 +740,8 @@ async def _run_watch(s: cfg.Settings) -> int:
     cabalspy = None
     cabalspy_key = (cfg.get(env, "CABALSPY_API_KEY") or "").strip()
     if cabalspy_key and s.cabalspy_enabled:
-        try:
-            # Parse signal thresholds from config
-            _entry_at = [int(x.strip()) for x in s.cabalspy_signal_entry_at.split(",") if x.strip()]
-            _exit_at = [int(x.strip()) for x in s.cabalspy_signal_exit_at.split(",") if x.strip()]
-            _tx_types = [x.strip() for x in s.cabalspy_tx_types.split(",") if x.strip()]
-
-            log.info("cabalspy: enabled (signal entry_at=%s, min_buy=%.1f, min_win_rate=%.0f)",
-                     _entry_at, s.cabalspy_signal_min_buy, s.cabalspy_signal_min_win_rate)
-        except Exception:
-            log.exception("cabalspy init failed — disabled")
+        log.info("cabalspy: enabled (min_buy=%.1f, min_win_rate=%.0f)",
+                 s.cabalspy_signal_min_buy, s.cabalspy_signal_min_win_rate)
 
     weights, default_weight = build_weights(
         s.wallet_perf_path,
@@ -848,12 +840,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             _entry_at = [int(x.strip()) for x in s.cabalspy_signal_entry_at.split(",") if x.strip()]
             _exit_at = [int(x.strip()) for x in s.cabalspy_signal_exit_at.split(",") if x.strip()]
             _tx_types = [x.strip() for x in s.cabalspy_tx_types.split(",") if x.strip()]
-
-            # Holder cache for concentration checks
-            holder_cache = HolderCache()
-
-            # Bundle tracking for coordinated rug detection
-            _bundle_flags: dict[str, dict] = {}  # mint -> {detected_at, bundles}
 
             # Holder cache for concentration checks
             holder_cache = HolderCache()

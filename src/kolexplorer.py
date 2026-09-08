@@ -122,7 +122,7 @@ class KolexplorerFeed:
         self._mode = mode
         self._heatmap_tf = heatmap_tf
         self._on_signal = on_signal
-        self._seen: set[str] = set()
+        self._seen: dict[str, float] = {}  # ca -> first_seen_ts (for TTL pruning)
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._last_poll = 0.0
@@ -168,6 +168,12 @@ class KolexplorerFeed:
                 await self._fetch_heatmap()
                 # Fallback: monitor feed (catches tokens heatmap misses)
                 await self._fetch_monitor_feed()
+                # Prune _seen entries older than 24h
+                if len(self._seen) > 5000:
+                    cutoff = time.time() - 86400
+                    stale = [ca for ca, ts in self._seen.items() if ts < cutoff]
+                    for ca in stale:
+                        del self._seen[ca]
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -253,7 +259,7 @@ class KolexplorerFeed:
             if self._min_score > 0 and weighted_score < self._min_score:
                 continue
 
-            self._seen.add(ca)
+            self._seen[ca] = time.time()
             new_count += 1
 
             log.info(
@@ -347,7 +353,7 @@ class KolexplorerFeed:
             if self._min_score > 0 and weighted_score < self._min_score:
                 continue
 
-            self._seen.add(ca)
+            self._seen[ca] = time.time()
             new_count += 1
 
             log.info(

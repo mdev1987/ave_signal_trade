@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -210,7 +211,6 @@ class SmartWalletWatcher:
         self.consensus_alerted: set[str] = set()  # CAs that already had a consensus alert
         self.token_hits: dict[str, dict] = {}
         self.consensus_fired = 0
-        self._consensus_sent: set[str] = set()  # legacy compat
         self._consensus_ts: dict[str, float] = {}  # ca -> timestamp for persistence
         self.wallet_perf: dict[str, dict] = {}   # addr -> {picks, hits} (live learning)
         self.on_smart_buy = on_smart_buy
@@ -265,14 +265,12 @@ class SmartWalletWatcher:
             cutoff = time.time() - self.consensus_window_s * 2
             self._consensus_ts = {ca: float(ts) for ca, ts in cons.items()
                                   if ts > cutoff}
-            self._consensus_sent = set(self._consensus_ts)
             self._prune_token_hits()
         except Exception:
             logger.exception("watcher state load failed")
 
     def _save_state(self) -> None:
         try:
-            import os as _os
             # self.state keys are already "ts:<wallet>" — do NOT re-prefix
             # Persist consensus dedup as {ca: timestamp} so restarts don't re-fire
             cons = {ca: ts for ca, ts in self._consensus_ts.items()}
@@ -284,7 +282,7 @@ class SmartWalletWatcher:
                 "wallet_perf": self.wallet_perf,
                 "consensus_sent": cons,
             }, indent=1))
-            _os.replace(str(tmp), str(self.state_file))
+            os.replace(str(tmp), str(self.state_file))
         except Exception:
             logger.exception("watcher state save failed")
 
@@ -483,11 +481,10 @@ class SmartWalletWatcher:
         # mediocre wallets alone.
         n_strong = sum(1 for x in active if x.get("wt", 0.0) >= 1.0)
         strong_ok = (not self.require_strong_wallet) or n_strong >= 1
-        consensus = score >= self.consensus_weight_threshold and strong_ok and ca not in self._consensus_sent
+        consensus = score >= self.consensus_weight_threshold and strong_ok and ca not in self._consensus_ts
         if not consensus:
             return
         self.consensus_fired += 1
-        self._consensus_sent.add(ca)
         self._consensus_ts[ca] = now
         syms = ",".join(x["w"][:5] + "…(w" + format(x.get("wt", 0), ".2f") + ")"
                         for x in active[-4:])
@@ -526,6 +523,13 @@ class SmartWalletWatcher:
                 break
             self._save_state()
             self._prune_token_hits()
+            # Prune _price_cache entries older than 10 min
+            if len(self._price_cache) > 1000:
+                cache_cutoff = now - 600
+                stale_cas = [ca for ca, (ts, _, _) in self._price_cache.items()
+                             if ts < cache_cutoff]
+                for ca in stale_cas:
+                    del self._price_cache[ca]
             wait = max(1.0, self.poll_s - (time.time() - t0))
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=wait)
@@ -581,7 +585,10 @@ class SmartWalletWatcher:
                 if usd < self.min_buy_usd:
                     continue
                 logger.info("kol_trade_poll: %s bought %s ($%.2f)", wallet[:8], ca[:8], usd)
-                await self._process_buy(wallet, ca, usd)
+                await self._process_buy(wallet, {
+                    "ca": ca, "usd": usd, "symbol": "?",
+                    "ts": float(ts) if ts else time.time(),
+                })
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=poll_s)
             except TimeoutError:
