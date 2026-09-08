@@ -267,7 +267,9 @@ class ShadowBook:
                             trigger_usd: float, n_wallets: int,
                             wallets: list[str] | None = None,
                             size_sol: float | None = None,
-                            source: str = "pumpapi") -> None:
+                            source: str = "pumpapi",
+                            mc: float = 0.0,
+                            score: float = 0.0) -> None:
         # --- Jupiter executable entry basis (primary) ---
         # When Jupiter is available, derive the actual entry price from the buy
         # quote: size_sol SOL -> tokens_raw, so entry = SOL_per_token * SOL_USD.
@@ -371,7 +373,8 @@ class ShadowBook:
             logs.journal("shadow_entry_px", ca=ca, px=px, note=entry_note)
             logs.journal("shadow_open", ca=ca, symbol=symbol, entry_usd=px,
                          trigger=trigger_usd, n=n_wallets,
-                         wallets=list(wallets or []), source=source)
+                         wallets=list(wallets or []), source=source,
+                         mc=mc, score=score)
             self.save()
         if self.notifier is not None:
             try:
@@ -1532,7 +1535,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                              source=source)
                 _open_size = _adaptive_size(s, effective) if s.adaptive_sizing else None
                 await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
-                                         source=source)
+                                         source=source,
+                                         mc=(snap or {}).get("mcap") or 0, score=score)
                 return
             elif (snap.get("liq") or tg_liq or 0) < s.open_min_liq_usd:
                 reason = "skip:low_liq"
@@ -1551,7 +1555,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                              source=source)
                 _open_size = _adaptive_size(s, effective) if s.adaptive_sizing else None
                 await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
-                                         source=source)
+                                         source=source,
+                                         mc=(snap or {}).get("mcap") or 0, score=score)
                 return
             if reason and _skip_log.get(ca, 0) < time.time() - 300:
                 _skip_log[ca] = time.time()
