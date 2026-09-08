@@ -1,11 +1,15 @@
-"""Kolexplorer monitor feed — pre-computed KOL consensus tokens.
+"""Kolexplorer — pre-computed KOL consensus tokens (heatmap + monitor feed).
 
-Polls the Kolexplorer Terminal AJAX endpoint to get tokens that multiple
-top KOLs are actively buying, with aggregate PnL and entry market cap.
+Two data sources:
+1. Token Heatmap (/token.php?hm_ajax=1&tf=2h) — PRIMARY
+   Structured per-KOL data: slug, name, pnl, buy_vol, first_seen.
+   Time-windowed (2h default), shows tokens gaining KOL traction.
 
-Unlike raw wallet tracking (PumpAPI/CabalSpy), Kolexplorer gives us
-pre-filtered consensus: "12 KOLs bought token X in the last 4 hours."
-We match KOL names to our tracked wallet performance data to compute
+2. Monitor Feed (/terminal/?ajax=monitor_feed) — FALLBACK
+   Aggregate consensus: kol_count, total_pnl, entry_mc.
+   Longer window (4h default), catches tokens the heatmap misses.
+
+We match KOL slugs to tracked wallet performance data to compute
 weighted consensus scores, then feed into the same _on_smart_buy pipeline.
 """
 
@@ -54,18 +58,43 @@ KOL_SLUG_TO_ADDR: dict[str, str] = {
     "trey": "831yhv67QpKqLBJjbmw2xoDUeeFHGUx8RnuRj9imeoEs",
     "rilsio": "4fZFcK8ms3bFMpo1ACzEUz8bH741fQW4zhAMGd5yZMHu",
     "theo": "Bi4rd5FH5bYEN8scZ7wevxNZyNmKHdaBcvewdPFxYdLt",
-    "stigman": "",  # unknown
-    "pain": "",     # unknown
-    "letterbomb": "",  # unknown
-    "esee": "",     # unknown
-    "scharo": "",   # unknown
-    "teddy": "",    # unknown
-    "dali": "",     # unknown
+    "pain": "J6TDXvarvpBdPXTaTU8eJbtso1PUCYKGkVtMKUUY8iEa",
+    "jason": "ACTbvbNm5qTLuofNRPxFPMtHAAtdH1CtzhCZatYHy831",
+    "poorgoat": "HDixbrzwwLXczhDBk1JVrurPQsuLE8FUKnW2pucSXN3o",
+    "loopierr": "9yYya3F5EJoLnBNKW6z4bZvyQytMXzDcpU5D6yYr4jqL",
+    "jidn": "3h65MmPZksoKKyEpEjnWU2Yk2iYT5oZDNitGy5cTaxoE",
+    "stigman": "",  # unmapped
+    "letterbomb": "",  # unmapped
+    "esee": "",    # unmapped
+    "scharo": "",  # unmapped
+    "teddy": "",   # unmapped
+    "dali": "",    # unmapped
+    "heyitsyolo": "",  # unmapped
+    "xanse": "",   # unmapped
+    "coler": "",   # unmapped
+    "parsiiix": "",  # unmapped
+    "kev": "",     # unmapped
+    "tdmilky": "",  # unmapped
+    "frost": "",   # unmapped
+    "cook": "",    # unmapped
+    "kay-the-doc": "",  # unmapped
+    "ozark": "",   # unmapped
+    "cottage": "",  # unmapped
+    "bandit": "",  # unmapped
+    "solana-degen": "",  # unmapped
+    "vein": "",    # unmapped
+    "tech": "",    # unmapped
+    "sting": "",   # unmapped
 }
 
 
 class KolexplorerFeed:
-    """Polls Kolexplorer monitor feed for pre-computed KOL consensus tokens."""
+    """Polls Kolexplorer for pre-computed KOL consensus tokens.
+
+    Uses two endpoints:
+    - Token Heatmap (primary): structured per-KOL data, 2h window
+    - Monitor Feed (fallback): aggregate consensus, 4h window
+    """
 
     def __init__(
         self,
@@ -79,6 +108,7 @@ class KolexplorerFeed:
         max_entry_mc: float = 0.0,
         hours: int = 4,
         mode: int = 1,
+        heatmap_tf: str = "2h",
         on_signal: Optional[Callable] = None,
     ):
         self._cookies = cookies
@@ -90,12 +120,13 @@ class KolexplorerFeed:
         self._max_entry_mc = max_entry_mc
         self._hours = hours
         self._mode = mode
+        self._heatmap_tf = heatmap_tf
         self._on_signal = on_signal
-        self._seen: set[str] = set()  # already processed token addresses
+        self._seen: set[str] = set()
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._last_poll = 0.0
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: Optional[httpx.AsyncClient] = None
 
     async def start(self) -> None:
         if self._running:
@@ -103,8 +134,9 @@ class KolexplorerFeed:
         self._running = True
         self._session = httpx.AsyncClient()
         self._task = asyncio.create_task(self._poll_loop(), name="kolexplorer")
-        log.info("kolexplorer: started (poll=%ds, min_kols=%d, mode=%d, hours=%d)",
-                 self._poll_s, self._min_kols, self._mode, self._hours)
+        log.info("kolexplorer: started (poll=%ds, min_kols=%d, tf=%s, mc_max=$%.0f)",
+                 self._poll_s, self._min_kols, self._heatmap_tf,
+                 self._max_entry_mc)
 
     async def stop(self) -> None:
         self._running = False
@@ -122,48 +154,155 @@ class KolexplorerFeed:
         """Clear seen tokens (e.g. after bot restart)."""
         self._seen.clear()
 
+    def _headers(self) -> dict:
+        return {
+            "Cookie": self._cookies,
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+
     async def _poll_loop(self) -> None:
         while self._running:
             try:
-                await self._fetch_and_process()
+                # Primary: token heatmap (structured per-KOL data)
+                await self._fetch_heatmap()
+                # Fallback: monitor feed (catches tokens heatmap misses)
+                await self._fetch_monitor_feed()
             except asyncio.CancelledError:
                 break
             except Exception:
                 log.exception("kolexplorer poll error")
             await asyncio.sleep(self._poll_s)
 
-    async def _fetch_and_process(self) -> None:
+    # ── Token Heatmap (primary) ───────────────────────────────────────────
+    async def _fetch_heatmap(self) -> None:
+        if not self._session:
+            return
+        url = (
+            f"https://kolexplorer.com/token.php"
+            f"?hm_ajax=1&tf={self._heatmap_tf}"
+        )
+        try:
+            resp = await self._session.get(url, headers=self._headers(), timeout=30)
+            if resp.status_code in (401, 403):
+                log.warning("kolexplorer heatmap: auth expired (HTTP %d)", resp.status_code)
+                return
+            if resp.status_code != 200:
+                log.debug("kolexplorer heatmap: HTTP %d", resp.status_code)
+                return
+            data = resp.json()
+        except httpx.TimeoutException:
+            log.debug("kolexplorer heatmap: timeout")
+            return
+        except Exception:
+            log.debug("kolexplorer heatmap: fetch failed", exc_info=True)
+            return
+
+        if not data.get("ok"):
+            return
+
+        tokens = data.get("tokens", [])
+        if not tokens:
+            return
+
+        self._last_poll = time.time()
+        new_count = 0
+
+        for tok in tokens:
+            ca = tok.get("ca", "")
+            if not ca or ca in self._seen:
+                continue
+
+            sym = tok.get("sym", "?")
+            kol_count = tok.get("kols", 0)
+            entry_mc = tok.get("buy_mc", 0)
+            total_pnl = tok.get("pnl", 0)
+            vol = tok.get("vol", 0)
+
+            if kol_count < self._min_kols:
+                continue
+
+            if self._max_entry_mc > 0 and entry_mc > self._max_entry_mc:
+                continue
+
+            # Parse structured kol_list
+            kol_list = tok.get("kol_list", [])
+            if isinstance(kol_list, str):
+                try:
+                    kol_list = __import__("json").loads(kol_list)
+                except Exception:
+                    kol_list = []
+
+            weighted_score = 0.0
+            matched_wallets = []
+            for kol in kol_list:
+                slug = kol.get("slug", "")
+                kol_pnl = kol.get("kol_pnl", 0)
+                buy_vol = kol.get("buy_vol", 0)
+
+                addr = KOL_SLUG_TO_ADDR.get(slug)
+                if addr and addr in self._weights:
+                    w = self._weights[addr]
+                    if w > 0:
+                        weighted_score += w
+                        matched_wallets.append(addr)
+                else:
+                    # Unknown or unmapped KOL — use default weight
+                    weighted_score += self._default_weight
+
+            if self._min_score > 0 and weighted_score < self._min_score:
+                continue
+
+            self._seen.add(ca)
+            new_count += 1
+
+            log.info(
+                "kolexplorer HEATMAP %s (%s) kols=%d score=%.2f mc=$%.0f pnl=$%.0f vol=$%.0f",
+                ca[:10], sym, kol_count, weighted_score, entry_mc, total_pnl, vol,
+            )
+
+            if self._on_signal:
+                try:
+                    await self._on_signal(
+                        ca, sym, entry_mc, weighted_score,
+                        matched_wallets or [k.get("slug", "?") for k in kol_list[:kol_count]],
+                        source="kolexplorer",
+                        kol_count=kol_count,
+                        total_pnl=total_pnl,
+                        total_buy_vol=vol,
+                    )
+                except Exception:
+                    log.exception("kolexplorer heatmap on_signal failed for %s", ca[:10])
+
+        if new_count:
+            log.debug("kolexplorer heatmap: %d new from %d total", new_count, len(tokens))
+
+    # ── Monitor Feed (fallback) ───────────────────────────────────────────
+    async def _fetch_monitor_feed(self) -> None:
+        if not self._session:
+            return
         url = (
             f"https://kolexplorer.com/terminal/"
             f"?ajax=monitor_feed&st_mode={self._mode}"
             f"&hours={self._hours}&min_buy=0&hot_min=0&limit=60"
         )
-        headers = {
-            "Cookie": self._cookies,
-            "Accept": "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-        }
-        if not self._session:
-            return
-
         try:
-            resp = await self._session.get(url, headers=headers, timeout=30)
+            resp = await self._session.get(url, headers=self._headers(), timeout=30)
             if resp.status_code in (401, 403):
-                log.warning("kolexplorer: auth expired (HTTP %d) — refresh cookies", resp.status_code)
+                log.debug("kolexplorer monitor: auth expired (HTTP %d)", resp.status_code)
                 return
             if resp.status_code != 200:
-                log.debug("kolexplorer: HTTP %d", resp.status_code)
+                log.debug("kolexplorer monitor: HTTP %d", resp.status_code)
                 return
             data = resp.json()
         except httpx.TimeoutException:
-            log.debug("kolexplorer: timeout")
+            log.debug("kolexplorer monitor: timeout")
             return
         except Exception:
-            log.debug("kolexplorer: fetch failed", exc_info=True)
+            log.debug("kolexplorer monitor: fetch failed", exc_info=True)
             return
 
         if not data.get("ok"):
-            log.debug("kolexplorer: ok=false")
             return
 
         rows = data.get("data", {}).get("rows", [])
@@ -183,17 +322,13 @@ class KolexplorerFeed:
             entry_mc = row.get("entry_mc", 0)
             total_pnl = row.get("total_pnl", 0)
             total_buy_vol = row.get("total_buy_vol", 0)
-            score_raw = row.get("score", 0)
 
-            # Minimum KOL threshold
             if kol_count < self._min_kols:
                 continue
 
-            # Max entry MC filter (0 = disabled)
             if self._max_entry_mc > 0 and entry_mc > self._max_entry_mc:
                 continue
 
-            # Parse KOL slugs and compute weighted score
             kol_slugs = [s.strip() for s in row.get("kol_slugs_csv", "").split("||") if s.strip()]
             kol_names = [n.strip() for n in row.get("kol_names_csv", "").split("||") if n.strip()]
 
@@ -206,14 +341,9 @@ class KolexplorerFeed:
                     if w > 0:
                         weighted_score += w
                         matched_wallets.append(addr)
-                elif addr == "":
-                    # Unknown KOL — use default weight
-                    weighted_score += self._default_weight
                 else:
-                    # Known slug but not in our wallet_performance.json
                     weighted_score += self._default_weight
 
-            # Apply minimum score filter
             if self._min_score > 0 and weighted_score < self._min_score:
                 continue
 
@@ -221,7 +351,7 @@ class KolexplorerFeed:
             new_count += 1
 
             log.info(
-                "kolexplorer SIGNAL %s (%s) kols=%d weighted=%.2f mc=$%.0f pnl=$%.0f buy_vol=$%.0f",
+                "kolexplorer MONITOR %s (%s) kols=%d score=%.2f mc=$%.0f pnl=$%.0f vol=$%.0f",
                 ca[:10], sym, kol_count, weighted_score, entry_mc, total_pnl, total_buy_vol,
             )
 
@@ -236,7 +366,7 @@ class KolexplorerFeed:
                         total_buy_vol=total_buy_vol,
                     )
                 except Exception:
-                    log.exception("kolexplorer on_signal failed for %s", ca[:10])
+                    log.exception("kolexplorer monitor on_signal failed for %s", ca[:10])
 
         if new_count:
-            log.debug("kolexplorer: %d new tokens from %d total", new_count, len(rows))
+            log.debug("kolexplorer monitor: %d new from %d total", new_count, len(rows))
