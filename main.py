@@ -49,6 +49,7 @@ from watcher import SmartWalletWatcher  # noqa: E402
 from wallet_discovery import WalletDiscovery  # noqa: E402
 from wallet_weights import build_weights  # noqa: E402
 from cabalspy import CabalSpyClient, HolderCache  # noqa: E402
+from kolexplorer import KolexplorerFeed  # noqa: E402
 
 log = logging.getLogger("main")
 
@@ -1078,6 +1079,43 @@ async def _run_watch(s: cfg.Settings) -> int:
             log.exception("tg signal feed init failed")
             tg_feed = None
 
+    # Kolexplorer monitor feed — pre-computed KOL consensus tokens.
+    kolexplorer_feed = None
+    if s.kolexplorer_enabled and s.kolexplorer_cookies:
+        async def _on_kolexplorer_signal(
+            ca: str, sym: str, mc: float, score: float, wallets,
+            source: str = "kolexplorer", **kw,
+        ) -> None:
+            """Route Kolexplorer consensus signal into the open gate."""
+            kol_count = kw.get("kol_count", 0)
+            total_pnl = kw.get("total_pnl", 0)
+            log.info(
+                "kolexplorer OPEN %s (%s) kols=%d score=%.2f mc=$%.0f pnl=$%.0f",
+                ca[:10], sym, kol_count, score, mc, total_pnl,
+            )
+            try:
+                await _on_smart_buy(ca, sym, mc, score, wallets, source=source)
+            except Exception:
+                log.exception("kolexplorer _on_smart_buy failed for %s", ca[:10])
+
+        kolexplorer_feed = KolexplorerFeed(
+            cookies=s.kolexplorer_cookies,
+            weights=weights,
+            default_weight=default_weight,
+            poll_s=s.kolexplorer_poll_s,
+            min_kols=s.kolexplorer_min_kols,
+            min_score=s.kolexplorer_min_score,
+            max_entry_mc=s.kolexplorer_max_entry_mc,
+            hours=s.kolexplorer_hours,
+            mode=s.kolexplorer_mode,
+            on_signal=_on_kolexplorer_signal,
+        )
+        try:
+            await kolexplorer_feed.start()
+        except Exception:
+            log.exception("kolexplorer init failed — disabled")
+            kolexplorer_feed = None
+
     # SolanaTracker KOL trade feed (optional, needs Advanced tier)
     _kol_task = None
     if soltracker and s.soltracker_kol_feed:
@@ -1563,7 +1601,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                                   "shyft_ws": shyft_ok,
                                   "madeonsol": madeonsol is not None and madeonsol.enabled,
                                   "vybe": vybe is not None and vybe.enabled,
-                                  "cabalspy": cabalspy_client is not None and cabalspy_client.connected})
+                                   "cabalspy": cabalspy_client is not None and cabalspy_client.connected,
+                                   "kolexplorer": kolexplorer_feed is not None and kolexplorer_feed._running})
             log.info("status: %s", build_status(snap))
             if helius_ws:
                 hs = helius_ws.stats
@@ -1780,6 +1819,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             await vybe.close()
         if cabalspy_client is not None:
             await cabalspy_client.stop()
+        if kolexplorer_feed is not None:
+            await kolexplorer_feed.stop()
         await jupiter.close()
     return 0
 

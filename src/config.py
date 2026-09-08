@@ -250,6 +250,15 @@ class Settings:
     cabalspy_holder_max_pct: float = 30.0   # reject if any single holder owns > this %
     # Bundle detection (from CabalSpy bundle stream)
     cabalspy_bundle_block: bool = True      # block trades when coordinated bundle detected
+    # --- Kolexplorer (pre-computed KOL consensus monitor feed) ---
+    kolexplorer_enabled: bool = True        # enable Kolexplorer monitor feed
+    kolexplorer_cookies: str = ""           # session cookies (user_hash=...; PHPSESSID=...)
+    kolexplorer_poll_s: float = 30.0        # poll interval in seconds
+    kolexplorer_min_kols: int = 2           # minimum KOL count to consider signal
+    kolexplorer_min_score: float = 0.0      # minimum weighted score (0 = disabled)
+    kolexplorer_max_entry_mc: float = 0.0   # max entry market cap (0 = disabled)
+    kolexplorer_hours: int = 4              # time window for feed (hours)
+    kolexplorer_mode: int = 1               # feed mode (1=default, 2=hot, 3=sniper)
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -386,4 +395,12 @@ def load_settings(path: str = ".env") -> Settings:
         cabalspy_count_token=get(env, "CABALSPY_COUNT_TOKEN", _d.cabalspy_count_token),
         cabalspy_holder_max_pct=get_float(env, "CABALSPY_HOLDER_MAX_PCT", _d.cabalspy_holder_max_pct),
         cabalspy_bundle_block=get_bool(env, "CABALSPY_BUNDLE_BLOCK", _d.cabalspy_bundle_block),
+        kolexplorer_enabled=get_bool(env, "KOLEXPLORER_ENABLED", _d.kolexplorer_enabled),
+        kolexplorer_cookies=get(env, "KOLEXPLORER_COOKIES", _d.kolexplorer_cookies),
+        kolexplorer_poll_s=get_float(env, "KOLEXPLORER_POLL_S", _d.kolexplorer_poll_s),
+        kolexplorer_min_kols=get_int(env, "KOLEXPLORER_MIN_KOLS", _d.kolexplorer_min_kols),
+        kolexplorer_min_score=get_float(env, "KOLEXPLORER_MIN_SCORE", _d.kolexplorer_min_score),
+        kolexplorer_max_entry_mc=get_float(env, "KOLEXPLORER_MAX_ENTRY_MC", _d.kolexplorer_max_entry_mc),
+        kolexplorer_hours=get_int(env, "KOLEXPLORER_HOURS", _d.kolexplorer_hours),
+        kolexplorer_mode=get_int(env, "KOLEXPLORER_MODE", _d.kolexplorer_mode),
     )
