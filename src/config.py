@@ -259,6 +259,7 @@ class Settings:
     kolexplorer_max_entry_mc: float = 10_000_000.0  # max entry market cap (0 = disabled)
     kolexplorer_hours: int = 4              # time window for feed (hours)
     kolexplorer_mode: int = 1               # feed mode (1=default, 2=hot, 3=sniper)
+    kolexplorer_heatmap_tf: str = "2h"      # heatmap timeframe (2h, 6h, 12h, 1d, 3d, 7d)
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -403,4 +404,5 @@ def load_settings(path: str = ".env") -> Settings:
         kolexplorer_max_entry_mc=get_float(env, "KOLEXPLORER_MAX_ENTRY_MC", _d.kolexplorer_max_entry_mc),
         kolexplorer_hours=get_int(env, "KOLEXPLORER_HOURS", _d.kolexplorer_hours),
         kolexplorer_mode=get_int(env, "KOLEXPLORER_MODE", _d.kolexplorer_mode),
+        kolexplorer_heatmap_tf=get(env, "KOLEXPLORER_HEATMAP_TF", _d.kolexplorer_heatmap_tf),
     )

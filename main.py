@@ -1108,6 +1108,7 @@ async def _run_watch(s: cfg.Settings) -> int:
             max_entry_mc=s.kolexplorer_max_entry_mc,
             hours=s.kolexplorer_hours,
             mode=s.kolexplorer_mode,
+            heatmap_tf=s.kolexplorer_heatmap_tf,
             on_signal=_on_kolexplorer_signal,
         )
         try:
