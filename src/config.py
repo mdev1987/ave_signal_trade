@@ -256,7 +256,7 @@ class Settings:
     kolexplorer_poll_s: float = 30.0        # poll interval in seconds
     kolexplorer_min_kols: int = 2           # minimum KOL count to consider signal
     kolexplorer_min_score: float = 0.0      # minimum weighted score (0 = disabled)
-    kolexplorer_max_entry_mc: float = 0.0   # max entry market cap (0 = disabled)
+    kolexplorer_max_entry_mc: float = 10_000_000.0  # max entry market cap (0 = disabled)
     kolexplorer_hours: int = 4              # time window for feed (hours)
     kolexplorer_mode: int = 1               # feed mode (1=default, 2=hot, 3=sniper)
 
