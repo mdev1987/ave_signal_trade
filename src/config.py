@@ -97,7 +97,6 @@ class Settings:
     # strategy
     dry_run: bool = True
     size_sol: float = 0.05
-    shyft_ws_url: str = ""               # Shyft WebSocket fallback URL
     adaptive_sizing: bool = True        # scale position size by consensus quality
     size_sol_min: float = 0.025         # minimum size for weak consensus (score ~1.5)
     size_sol_max: float = 0.10          # maximum size for strong consensus (score ~3.0+)
@@ -182,27 +181,6 @@ class Settings:
     dbotx_base_url: str = "https://api-data-v1.dbotx.com"
     dbotx_safety: bool = True
     dbotx_top10_max: float = 0.25  # skip if top-10 holders own more than this (0.25 = 25%)
-    # --- SolanaTracker Data API ---
-    soltracker_api_key: str = ""
-    soltracker_base_url: str = "https://data.solanatracker.io"
-    soltracker_kol_feed: bool = False       # enable KOL trade polling (needs Advanced tier)
-    soltracker_kol_poll_s: float = 30.0     # poll interval for KOL trades
-    soltracker_risk_gate: bool = True       # enable risk score pre-filter
-    soltracker_risk_max_score: float = 7.0  # reject tokens with risk > this (1-10 scale)
-    soltracker_sniper_filter: bool = False  # enable sniper detection filter
-    soltracker_sniper_max_pct: float = 30.0 # max % of snipers among first-buyers
-    soltracker_wallet_refresh_h: float = 4.0  # hours between wallet score refresh
-    # --- Telegram signal feed (@gmgnsignals) ---
-    tg_signal_enabled: bool = True       # enable TG signal feed
-    tg_signal_channel: str = "gmgnsignals"  # Telegram channel to listen to
-    tg_api_id: int = 0                   # Telegram API ID
-    tg_api_hash: str = ""                # Telegram API hash
-    tg_phone: str = ""                   # Telegram phone number
-    tg_session_name: str = "tg_signal"   # Telethon session file name
-    tg_min_mc: float = 5_000.0           # min market cap to forward signal
-    tg_min_liq: float = 1_000.0          # min liquidity to forward signal
-    tg_min_holders: int = 10             # min holder count to forward signal
-    tg_signal_topic_ids: str = ""        # comma-separated forum topic IDs to monitor (empty=all)
     # --- MemeTracker signal feed (@memetrackersol) ---
     memetracker_enabled: bool = False     # enable MemeTracker TG feed
     memetracker_channel: str = "memetrackersol"  # Telegram channel to listen to
@@ -223,18 +201,6 @@ class Settings:
     helius_rugger_block: bool = True      # block trades when deployer is known rugger
     helius_max_top10_pct: float = 50.0    # reject if top-10 holders own > this %
     dbotx_mint_freeze_liq_max: float = 15_000.0  # block mint/freeze only if liq < this
-    # --- DexPaprika (pool analysis, buy/sell ratio, whale detection) ---
-    dexpaprika_enabled: bool = True       # enable DexPaprika pool health checks
-    dexpaprika_min_buysell: float = 0.3   # min buy/sell ratio 1h (reject if < this)
-    dexpaprika_max_whale_sells: int = 3   # reject if whale sells > this in 1h
-    # --- MadeOnSol (KOL tracking, risk scoring, coordination detection) ---
-    madeonsol_api_key: str = ""           # MadeOnSol API key (free tier: 200/day, 5min delay)
-    madeonsol_base_url: str = "https://madeonsol.com/api/v1"
-    madeonsol_risk_gate: bool = True      # use MadeOnSol risk score in entry gate
-    madeonsol_risk_max: int = 70          # reject tokens with risk > this (0-100)
-    madeonsol_buyer_quality_gate: bool = True  # use buyer quality score
-    madeonsol_buyer_quality_min: int = 30     # reject if avg buyer quality < this
-    madeonsol_coordination_boost: float = 0.5 # score bonus for KOL coordination signal
     # --- Vybe Network (token data, liquidity, top holders, wallet PnL) ---
     vybe_api_key: str = ""              # Vybe API key (X-API-KEY header)
     vybe_base_url: str = "https://api.vybenetwork.xyz"
@@ -269,6 +235,12 @@ class Settings:
     kolexplorer_hours: int = 4              # time window for feed (hours)
     kolexplorer_mode: int = 1               # feed mode (1=default, 2=hot, 3=sniper)
     kolexplorer_heatmap_tf: str = "2h"      # heatmap timeframe (2h, 6h, 12h, 1d, 3d, 7d)
+    # --- PumpAPI (bonding curve buy/sell fallback for non-migrated tokens) ---
+    pumpapi_enabled: bool = True            # enable PumpAPI Trade API fallback
+    pumpapi_fee_pct: float = 0.25           # PumpAPI fee percentage (0.25%)
+    pumpapi_slippage: int = 99              # slippage percent (high = guaranteed fill)
+    pumpapi_priority_fee: float = 0.00023   # priority fee in SOL (>=0.00023 triggers Jito split)
+    pumpapi_guaranteed_delivery: bool = True  # wait for on-chain confirmation
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -280,7 +252,6 @@ def load_settings(path: str = ".env") -> Settings:
         chat_id=get(env, "CHAT_ID", _d.chat_id),
         dry_run=get_bool(env, "DRY_RUN", _d.dry_run),
         size_sol=get_float(env, "SIZE_SOL", _d.size_sol),
-        shyft_ws_url=get(env, "SHYFT_WS_URL", _d.shyft_ws_url),
         adaptive_sizing=get_bool(env, "ADAPTIVE_SIZING", _d.adaptive_sizing),
         size_sol_min=get_float(env, "SIZE_SOL_MIN", _d.size_sol_min),
         size_sol_max=get_float(env, "SIZE_SOL_MAX", _d.size_sol_max),
@@ -347,25 +318,6 @@ def load_settings(path: str = ".env") -> Settings:
         dbotx_base_url=get(env, "DBOTX_BASE_URL", _d.dbotx_base_url),
         dbotx_safety=get_bool(env, "DBOTX_SAFETY", _d.dbotx_safety),
         dbotx_top10_max=get_float(env, "DBOTX_TOP10_MAX", _d.dbotx_top10_max),
-        soltracker_api_key=get(env, "SOLTRACKER_API_KEY", _d.soltracker_api_key),
-        soltracker_base_url=get(env, "SOLTRACKER_BASE_URL", _d.soltracker_base_url),
-        soltracker_kol_feed=get_bool(env, "SOLTRACKER_KOL_FEED", _d.soltracker_kol_feed),
-        soltracker_kol_poll_s=get_float(env, "SOLTRACKER_KOL_POLL_S", _d.soltracker_kol_poll_s),
-        soltracker_risk_gate=get_bool(env, "SOLTRACKER_RISK_GATE", _d.soltracker_risk_gate),
-        soltracker_risk_max_score=get_float(env, "SOLTRACKER_RISK_MAX_SCORE", _d.soltracker_risk_max_score),
-        soltracker_sniper_filter=get_bool(env, "SOLTRACKER_SNIPER_FILTER", _d.soltracker_sniper_filter),
-        soltracker_sniper_max_pct=get_float(env, "SOLTRACKER_SNIPER_MAX_PCT", _d.soltracker_sniper_max_pct),
-        soltracker_wallet_refresh_h=get_float(env, "SOLTRACKER_WALLET_REFRESH_H", _d.soltracker_wallet_refresh_h),
-        tg_signal_enabled=get_bool(env, "TG_SIGNAL_ENABLED", _d.tg_signal_enabled),
-        tg_signal_channel=get(env, "TG_SIGNAL_CHANNEL", _d.tg_signal_channel),
-        tg_api_id=get_int(env, "TG_API_ID", _d.tg_api_id),
-        tg_api_hash=get(env, "TG_API_HASH", _d.tg_api_hash),
-        tg_phone=get(env, "TG_PHONE", _d.tg_phone),
-        tg_session_name=get(env, "TG_SESSION_NAME", _d.tg_session_name),
-        tg_min_mc=get_float(env, "TG_MIN_MC", _d.tg_min_mc),
-        tg_min_liq=get_float(env, "TG_MIN_LIQ", _d.tg_min_liq),
-        tg_min_holders=get_int(env, "TG_MIN_HOLDERS", _d.tg_min_holders),
-        tg_signal_topic_ids=get(env, "TG_SIGNAL_TOPIC_IDS", _d.tg_signal_topic_ids),
         memetracker_enabled=get_bool(env, "MEMETRACKER_ENABLED", _d.memetracker_enabled),
         memetracker_channel=get(env, "MEMETRACKER_CHANNEL", _d.memetracker_channel),
         memetracker_session=get(env, "MEMETRACKER_SESSION", _d.memetracker_session),
@@ -383,16 +335,6 @@ def load_settings(path: str = ".env") -> Settings:
         helius_rugger_block=get_bool(env, "HELIUS_RUGGER_BLOCK", _d.helius_rugger_block),
         helius_max_top10_pct=get_float(env, "HELIUS_MAX_TOP10_PCT", _d.helius_max_top10_pct),
         dbotx_mint_freeze_liq_max=get_float(env, "DBOTX_MINT_FREEZE_LIQ_MAX", _d.dbotx_mint_freeze_liq_max),
-        dexpaprika_enabled=get_bool(env, "DEXPAPRIKA_ENABLED", _d.dexpaprika_enabled),
-        dexpaprika_min_buysell=get_float(env, "DEXPAPRIKA_MIN_BUYSELL", _d.dexpaprika_min_buysell),
-        dexpaprika_max_whale_sells=get_int(env, "DEXPAPRIKA_MAX_WHALE_SELLS", _d.dexpaprika_max_whale_sells),
-        madeonsol_api_key=get(env, "MADEONSOL_API_KEY", _d.madeonsol_api_key),
-        madeonsol_base_url=get(env, "MADEONSOL_BASE_URL", _d.madeonsol_base_url),
-        madeonsol_risk_gate=get_bool(env, "MADEONSOL_RISK_GATE", _d.madeonsol_risk_gate),
-        madeonsol_risk_max=get_int(env, "MADEONSOL_RISK_MAX", _d.madeonsol_risk_max),
-        madeonsol_buyer_quality_gate=get_bool(env, "MADEONSOL_BUYER_QUALITY_GATE", _d.madeonsol_buyer_quality_gate),
-        madeonsol_buyer_quality_min=get_int(env, "MADEONSOL_BUYER_QUALITY_MIN", _d.madeonsol_buyer_quality_min),
-        madeonsol_coordination_boost=get_float(env, "MADEONSOL_COORDINATION_BOOST", _d.madeonsol_coordination_boost),
         vybe_api_key=get(env, "VYBE_API_KEY", _d.vybe_api_key),
         vybe_base_url=get(env, "VYBE_API_URL", _d.vybe_base_url),
         vybe_enabled=get_bool(env, "VYBE_ENABLED", _d.vybe_enabled),
@@ -422,4 +364,9 @@ def load_settings(path: str = ".env") -> Settings:
         kolexplorer_hours=get_int(env, "KOLEXPLORER_HOURS", _d.kolexplorer_hours),
         kolexplorer_mode=get_int(env, "KOLEXPLORER_MODE", _d.kolexplorer_mode),
         kolexplorer_heatmap_tf=get(env, "KOLEXPLORER_HEATMAP_TF", _d.kolexplorer_heatmap_tf),
+        pumpapi_enabled=get_bool(env, "PUMPAPI_ENABLED", _d.pumpapi_enabled),
+        pumpapi_fee_pct=get_float(env, "PUMPAPI_FEE_PCT", _d.pumpapi_fee_pct),
+        pumpapi_slippage=get_int(env, "PUMPAPI_SLIPPAGE", _d.pumpapi_slippage),
+        pumpapi_priority_fee=get_float(env, "PUMPAPI_PRIORITY_FEE", _d.pumpapi_priority_fee),
+        pumpapi_guaranteed_delivery=get_bool(env, "PUMPAPI_GUARANTEED_DELIVERY", _d.pumpapi_guaranteed_delivery),
     )

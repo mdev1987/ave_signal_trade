@@ -42,8 +42,6 @@ from pair_perf import (load as load_pair_perf, save as save_pair_perf,  # noqa: 
 from notifier import TelegramNotifier  # noqa: E402
 from pump_stream import PumpApiStream  # noqa: E402
 from helius_ws import HeliusWS  # noqa: E402
-from shyft_ws import ShyftWS  # noqa: E402
-from tg_signal_feed import TgSignalFeed, parse_memetracker_signal  # noqa: E402
 from tatum_notify import TatumNotifications  # noqa: E402
 from watcher import SmartWalletWatcher  # noqa: E402
 from wallet_discovery import WalletDiscovery  # noqa: E402
@@ -302,10 +300,25 @@ class ShadowBook:
                                              force=True)
                 if q is None or not q.success:
                     reason = q.reason if q else "quote_exception"
-                    logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                                 reason=f"no_buy_route:{reason}")
-                    log.info("shadow skip %s (%s): no buy route: %s", ca[:10], symbol, reason)
-                    return
+                    # PumpAPI fallback: try bonding curve buy for non-migrated tokens
+                    if self.jupiter._pumpapi_enabled():
+                        log.info("Jupiter no route for %s (%s), trying PumpAPI", ca[:10], symbol)
+                        p_res = await self.jupiter.buy_via_pumpapi(ca, _size)
+                        if p_res.success:
+                            tokens_raw = 0  # PumpAPI doesn't return token amount
+                            entry_note = "pumpapi_fallback"
+                            entry_mode = "pumpapi"
+                            px = signal_price if signal_price > 0 else market_px
+                        else:
+                            logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                         reason=f"no_buy_route:{reason}:pumpapi_failed:{p_res.error}")
+                            log.info("shadow skip %s (%s): PumpAPI also failed: %s", ca[:10], symbol, p_res.error)
+                            return
+                    else:
+                        logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                     reason=f"no_buy_route:{reason}")
+                        log.info("shadow skip %s (%s): no buy route: %s", ca[:10], symbol, reason)
+                        return
                 tokens_raw = q.output_amount
                 entry_note = f"jup impact={q.price_impact_pct:.2f}%"
                 if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
@@ -602,6 +615,26 @@ class ShadowBook:
                                     mult <= peak_mult * (1 - trail_pct):
                                 exit_reason = "trail"
                 if exit_reason:
+                    # --- PumpAPI sell fallback for bonding curve tokens ---
+                    # When position was bought via PumpAPI (entry_mode=pumpapi),
+                    # tokens_raw is 0 and Jupiter can't sell it. Use PumpAPI sell.
+                    if (pos.get("entry_mode") == "pumpapi"
+                            and self.jupiter is not None
+                            and self.jupiter._pumpapi_enabled()):
+                        remaining_pct = int(pos.get("remaining", 1.0) * 100)
+                        if remaining_pct > 0:
+                            log.info("pumpapi sell %s (%s): %d%% remaining",
+                                     ca[:10], pos["symbol"], remaining_pct)
+                            sell_res = await self.jupiter.sell_via_pumpapi(
+                                ca, remaining_pct)
+                            if sell_res.success:
+                                log.info("pumpapi sell OK %s: sig=%s",
+                                         ca[:10], sell_res.signature[:16])
+                                pos["exit_note"] = f"pumpapi_sell:{sell_res.signature[:12]}"
+                            else:
+                                log.warning("pumpapi sell failed %s: %s",
+                                            ca[:10], sell_res.error)
+                                pos["exit_note"] = f"pumpapi_sell_fail:{sell_res.error}"
                     # For dead tokens (mult=None), remaining tokens are
                     # worthless: mult = 0.0.  Banked TP is already counted.
                     eff_mult = mult if mult is not None else 0.0
@@ -660,9 +693,6 @@ class ShadowBook:
 
 async def _run_watch(s: cfg.Settings) -> int:
     env = cfg.load_env()
-    shyft_key = (cfg.get(env, "SHYFT_API_KEY") or "").strip()
-    if not shyft_key:
-        log.warning("SHYFT_API_KEY missing — Shyft HTTP polling disabled (PumpAPI primary)")
     notifier = TelegramNotifier()
     ds = DexScreenerClient(base_url=s.dexscreener_base_url,
                            rpm=s.dexscreener_rpm)
@@ -683,22 +713,6 @@ async def _run_watch(s: cfg.Settings) -> int:
     else:
         log.info("rugcheck: disabled (no API key)")
 
-    # SolanaTracker (optional): live wallet scoring, risk gate, KOL feed
-    _st_key = (s.soltracker_api_key or "").strip()
-    soltracker = None
-    if _st_key:
-        try:
-            from soltracker import SolTrackerClient
-            soltracker = SolTrackerClient(
-                api_key=_st_key,
-                base_url=s.soltracker_base_url,
-            )
-            log.info("soltracker: enabled (feed=%s, risk=%s, sniper=%s)",
-                     s.soltracker_kol_feed, s.soltracker_risk_gate,
-                     s.soltracker_sniper_filter)
-        except Exception:
-            log.exception("soltracker init failed — disabled")
-
     # Data-driven wallet quality: weight each KOL by real win rate + PnL so the
     # consensus score reflects conviction, not just head-count.
 
@@ -714,29 +728,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             log.info("helius: disabled (no API keys)")
     except Exception:
         log.exception("helius init failed — disabled")
-
-    # DexPaprika client (pool analysis, buy/sell ratios, whale detection)
-    dexpaprika = None
-    try:
-        from dexpaprika import DexPaprikaClient
-        dexpaprika = DexPaprikaClient()
-        log.info("dexpaprika: enabled")
-    except Exception:
-        log.exception("dexpaprika init failed — disabled")
-
-    # MadeOnSol client (KOL tracking, risk scoring, coordination detection)
-    madeonsol = None
-    madeonsol_key = (cfg.get(env, "MADEONSOL_API_KEY") or "").strip()
-    if madeonsol_key:
-        try:
-            from madeonsol import MadeOnSolGate
-            madeonsol = MadeOnSolGate(api_key=madeonsol_key)
-            if madeonsol.enabled:
-                log.info("madeonsol: enabled (free tier: 200/day)")
-            else:
-                madeonsol = None
-        except Exception:
-            log.exception("madeonsol init failed — disabled")
 
     # Vybe Network client (token data, liquidity, top holders, wallet PnL)
     vybe = None
@@ -825,37 +816,6 @@ async def _run_watch(s: cfg.Settings) -> int:
         helius_ws.start()
         log.info("helius ws: started (wallets=%d, key=%s…)",
                  len(w.wallets), helius_keys[0][:8])
-
-    # Shyft WebSocket fallback: active when Helius WS is down
-    shyft_ws_url = (cfg.get(env, "SHYFT_WS_URL") or "").strip()
-    shyft_ws = None
-    if shyft_ws_url:
-        async def _on_shyft_buy(wallet: str, buy: dict) -> None:
-            await w._process_buy(wallet, buy)
-        shyft_ws = ShyftWS(
-            ws_url=shyft_ws_url,
-            wallets=w.wallets,
-            on_buy=_on_shyft_buy,
-        )
-        shyft_ws.start()
-        log.info("shyft ws: started as fallback (wallets=%d)", len(w.wallets))
-
-    # MadeOnSol signals: KOL feed, first touches, sniper alerts, surges
-    madeonsol_signals = None
-    if madeonsol is not None and madeonsol.enabled:
-        try:
-            from madeonsol_signals import MadeOnSolSignals
-            madeonsol_signals = MadeOnSolSignals(
-                client=madeonsol.client,
-                process_buy=w._process_buy,
-                smart_buy=w.on_smart_buy,
-                wallet_set=set(w.wallets),
-                seen_cas=set(),
-            )
-            asyncio.create_task(madeonsol_signals.run())
-            log.info("madeonsol signals: started (kol_feed, first_touch, sniper, surges)")
-        except Exception:
-            log.exception("madeonsol signals init failed")
 
     # CabalSpy signal stream: server-side cluster detection
     cabalspy_client = None
@@ -1004,91 +964,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             log.exception("cabalspy init failed — disabled")
             cabalspy_client = None
 
-    # Telegram signal feed (@gmgnsignals): real-time token alerts from GMGN's
-    # Telegram channel.  The channel IS the consensus — no wallet-tracking needed.
-    # TG signals bypass wallet consensus and go directly to the open gate with
-    # score=3.0, since GMGN has already aggregated smart money data.
-    async def _on_tg_signal(sig: dict) -> None:
-        ca = sig["ca"]
-        sym = sig.get("symbol") or "?"
-        mc = sig.get("mc", 0.0)
-        liq = sig.get("liq", 0.0)
-        holders = sig.get("holders", 0)
-        status_pct = sig.get("status_pct", 0.0)
-        dev_hold_from = sig.get("dev_hold_from", 0.0)
-        dev_hold_to = sig.get("dev_hold_to", 0.0)
-        signal_type = sig.get("signal_type", "unknown")
-        pc_1h = sig.get("pc_1h", 0.0)
-
-        # TG-specific quality gates using parsed data
-        # 1. Reject dev_sold signals (dev dumping = rug incoming)
-        if signal_type == "dev_sold":
-            log.info("tg skip %s (%s): dev_sold signal", ca[:8], sym)
-            return
-
-        # 2. Reject if dev holding > 5% after sell (still significant bag)
-        if dev_hold_to > 5.0:
-            log.info("tg skip %s (%s): dev_hold_to=%.1f%% > 5%%", ca[:8], sym, dev_hold_to)
-            return
-
-        # 3. Reject if status_pct > 80% (token near completion, late entry)
-        if status_pct > 80.0:
-            log.info("tg skip %s (%s): status=%.0f%% > 80%%", ca[:8], sym, status_pct)
-            return
-
-        # 4. Minimum MC threshold (use TG-level filter, but double check)
-        if mc < s.tg_min_mc:
-            log.info("tg skip %s (%s): mc=$%.0f < $%.0f", ca[:8], sym, mc, s.tg_min_mc)
-            return
-
-        # 5. Minimum liquidity threshold
-        if liq < s.tg_min_liq:
-            log.info("tg skip %s (%s): liq=$%.0f < $%.0f", ca[:8], sym, liq, s.tg_min_liq)
-            return
-
-        # 6. Minimum holders
-        if holders < s.tg_min_holders:
-            log.info("tg skip %s (%s): holders=%d < %d", ca[:8], sym, holders, s.tg_min_holders)
-            return
-
-        # All TG quality gates passed — route to open gate
-        # The channel IS the consensus, so score=3.0 (well above threshold)
-        log.info("tg OPEN %s (%s) mc=$%.0f liq=$%.0f holders=%d 1h=%+.1f%% type=%s",
-                 ca[:8], sym, mc, liq, holders, pc_1h, signal_type)
-        try:
-            await _on_smart_buy(ca, sym, mc, 3.0, ["tg_signal"], tg_liq=liq,
-                                source="tg_signal")
-        except Exception:
-            log.exception("tg _on_smart_buy failed for %s", ca[:8])
-
-    tg_feed = None
-    if s.tg_signal_enabled and s.tg_api_id and s.tg_api_hash:
-        try:
-            # Parse topic IDs from config (comma-separated string -> set of ints)
-            _topic_ids = None
-            if s.tg_signal_topic_ids:
-                _topic_ids = {int(x.strip()) for x in s.tg_signal_topic_ids.split(",") if x.strip()}
-                log.info("tg signal feed: topic filter enabled — %d topics: %s",
-                         len(_topic_ids), sorted(_topic_ids))
-            tg_feed = TgSignalFeed(
-                on_signal=_on_tg_signal,
-                channel=s.tg_signal_channel,
-                api_id=s.tg_api_id,
-                api_hash=s.tg_api_hash,
-                phone=s.tg_phone,
-                session_name=s.tg_session_name,
-                min_mc=s.tg_min_mc,
-                min_liq=s.tg_min_liq,
-                min_holders=s.tg_min_holders,
-                allowed_topic_ids=_topic_ids,
-            )
-            _tg_feed_task = asyncio.create_task(tg_feed.run())
-            _tg_feed_task.add_done_callback(_log_task_result)
-            log.info("tg signal feed: started (channel=@%s)", s.tg_signal_channel)
-        except Exception:
-            log.exception("tg signal feed init failed")
-            tg_feed = None
-
     # MemeTracker signal feed (@memetrackersol) — fresh pump.fun tokens.
     memetracker_feed = None
     if s.memetracker_enabled and s.tg_api_id and s.tg_api_hash:
@@ -1171,51 +1046,6 @@ async def _run_watch(s: cfg.Settings) -> int:
         except Exception:
             log.exception("kolexplorer init failed — disabled")
             kolexplorer_feed = None
-
-    # SolanaTracker KOL trade feed (optional, needs Advanced tier)
-    _kol_task = None
-    if soltracker and s.soltracker_kol_feed:
-        _kol_task = asyncio.create_task(
-            w.kol_trade_poll(soltracker, s.soltracker_kol_poll_s))
-        _kol_task.add_done_callback(_log_task_result)
-        log.info("kol_trade_poll: started (interval=%.0fs)", s.soltracker_kol_poll_s)
-
-    # SolanaTracker wallet score refresh (periodic)
-    async def _wallet_refresh_loop() -> None:
-        """Refresh wallet weights from SolanaTracker every N hours."""
-        while not stop.is_set():
-            refresh_h = s.soltracker_wallet_refresh_h
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=refresh_h * 3600)
-            except TimeoutError:
-                pass
-            if stop.is_set():
-                break
-            # SolanaTracker wallet scoring
-            if soltracker:
-                try:
-                    from wallet_weights import build_weights_from_soltracker
-                    new_weights, new_default = await build_weights_from_soltracker(
-                        soltracker, w.wallets,
-                        floor_win=s.wallet_weight_floor_win,
-                        full_win=s.wallet_weight_full_win,
-                        pnl_tier1=s.wallet_pnl_tier1, pnl_tier2=s.wallet_pnl_tier2,
-                        tier1_mult=s.wallet_weight_tier1_mult,
-                        tier2_mult=s.wallet_weight_tier2_mult,
-                        default_weight=s.wallet_default_weight,
-                        max_weight=s.wallet_weight_max,
-                    )
-                    if new_weights:
-                        w.weights = new_weights
-                        w.default_weight = new_default
-                        log.info("wallet weights refreshed from soltracker: %d scored",
-                                 sum(1 for v in new_weights.values() if v > 0))
-                except Exception:
-                    log.exception("wallet refresh failed")
-
-    if soltracker:
-        _refresh_task = asyncio.create_task(_wallet_refresh_loop())
-        _refresh_task.add_done_callback(_log_task_result)
 
     # Hard cap on concurrent positions: never more than capital allows, and
     # never above the configured max_open_positions (avoids a consensus burst
@@ -1301,9 +1131,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             overlap = max(overlap, c)
         if not backfill_done.is_set():
             reason = "deferred:lookback"
-        elif source == "pumpapi":
-            # PumpAPI disabled as entry source (27% win rate, net -0.117 SOL)
-            return
         elif (sym or "").upper() in _stable_syms:
             # Stablecoin/impostor guard: stables can't run the TP ladder and
             # scam mints reuse trusted symbols (fake USDC). -EV either way.
@@ -1368,19 +1195,6 @@ async def _run_watch(s: cfg.Settings) -> int:
                 snap = await ds.token_pairs("solana", ca)
             except Exception:
                 snap = None
-            # SolanaTracker risk score gate (fail-open): reject tokens with
-            # high risk scores before the DBotX check.
-            if soltracker and s.soltracker_risk_gate:
-                try:
-                    risk = await soltracker.get_token_info(ca)
-                    if risk and risk.get("riskScore", 0) > s.soltracker_risk_max_score:
-                        reason = f"skip:high_risk(score={risk['riskScore']:.1f})"
-                        if _skip_log.get(ca, 0) < time.time() - 300:
-                            _skip_log[ca] = time.time()
-                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-                        return
-                except Exception:
-                    log.debug("soltracker risk check failed for %s", ca[:10])
             # Rug/safety gate (DBotX, fail-open): reject tokens that still hold a
             # mint or freeze authority, or are dangerously top-10 concentrated.
             # A 403 / missing key degrades to "allow" so an outage never blocks.
@@ -1422,23 +1236,6 @@ async def _run_watch(s: cfg.Settings) -> int:
                         return
                     logs.journal("open_safety_ok", ca=ca, symbol=sym,
                                  safety=info)
-            # SolanaTracker sniper filter (fail-open): reject tokens where
-            # too many first-buyers are known snipers (bot accounts).
-            if soltracker and s.soltracker_sniper_filter:
-                try:
-                    first_buyers = await soltracker.get_first_buyers(ca)
-                    if first_buyers and len(first_buyers) > 0:
-                        sniper_count = sum(1 for fb in first_buyers
-                                          if fb.get("isSniper") or fb.get("type") == "sniper")
-                        sniper_pct = sniper_count / len(first_buyers) * 100
-                        if sniper_pct > s.soltracker_sniper_max_pct:
-                            reason = f"skip:snipers({sniper_pct:.0f}%>{s.soltracker_sniper_max_pct}%)"
-                            if _skip_log.get(ca, 0) < time.time() - 300:
-                                _skip_log[ca] = time.time()
-                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-                            return
-                except Exception:
-                    log.debug("soltracker sniper check failed for %s", ca[:10])
             # RugCheck safety gate (fail-open): reject rug/high-risk tokens
             # Skip DANGER filter (mint/freeze) for tokens with MC > threshold
             # OR with high volume (real organic trading = not a rug)
@@ -1480,52 +1277,6 @@ async def _run_watch(s: cfg.Settings) -> int:
                         return
                 except Exception as exc:
                     log.warning("helius safety check failed for %s: %s", ca[:10], exc)
-            # DexPaprika: pool buy/sell ratio + whale detection
-            if dexpaprika is not None and s.dexpaprika_enabled:
-                try:
-                    # Find the pool for this token on solana
-                    pools = await dexpaprika.get_token_pools("solana", ca, limit=1)
-                    if pools:
-                        pool_id = pools[0].get("id", "")
-                        if pool_id:
-                            health = await dexpaprika.pool_health("solana", pool_id)
-                            bs_ratio = health.get("buy_sell_1h", 1.0)
-                            whale_sells = health.get("whale_sells", 0)
-                            if bs_ratio < s.dexpaprika_min_buysell:
-                                reason = f"skip:selling_pressure(bs={bs_ratio:.2f}<{s.dexpaprika_min_buysell})"
-                                if _skip_log.get(ca, 0) < time.time() - 300:
-                                    _skip_log[ca] = time.time()
-                                    log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-                                return
-                            if whale_sells > s.dexpaprika_max_whale_sells:
-                                reason = f"skip:whale_dump({whale_sells}>{s.dexpaprika_max_whale_sells})"
-                                if _skip_log.get(ca, 0) < time.time() - 300:
-                                    _skip_log[ca] = time.time()
-                                    log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-                                return
-                except Exception as exc:
-                    log.warning("dexpaprika check failed for %s: %s", ca[:10], exc)
-            # MadeOnSol risk + buyer quality gate (fail-open):
-            # Risk score 0-100 (lower = safer); buyer quality 0-100 (higher = smarter).
-            if madeonsol is not None and s.madeonsol_risk_gate:
-                try:
-                    safe, risk_reason = await madeonsol.check_risk(ca, s.madeonsol_risk_max)
-                    if not safe:
-                        reason = f"skip:{risk_reason}"
-                        if _skip_log.get(ca, 0) < time.time() - 300:
-                            _skip_log[ca] = time.time()
-                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-                        return
-                    if s.madeonsol_buyer_quality_gate:
-                        bq_safe, bq_reason = await madeonsol.check_buyer_quality(ca, s.madeonsol_buyer_quality_min)
-                        if not bq_safe:
-                            reason = f"skip:{bq_reason}"
-                            if _skip_log.get(ca, 0) < time.time() - 300:
-                                _skip_log[ca] = time.time()
-                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-                            return
-                except Exception as exc:
-                    log.warning("madeonsol check failed for %s: %s", ca[:10], exc)
             # Vybe Network safety gates (fail-open): liquidity, top holder
             # concentration, buy/sell ratio. Provides independent validation
             # alongside DexPaprika and DBotX.
@@ -1588,22 +1339,11 @@ async def _run_watch(s: cfg.Settings) -> int:
             # green on all horizons) get a bonus; reversing/late ones (PINU:
             # +825% h24 but -56% h1) get a discount. Avoids entering tops.
             mkt_bonus = (align - 2) * s.mtf_align_bonus
-            # MadeOnSol coordination boost: if multiple KOLs are buying the
-            # same token (detected by MadeOnSol), add a score bonus.
-            coord_bonus = 0.0
-            if madeonsol is not None and s.madeonsol_coordination_boost > 0:
-                try:
-                    coord = await madeonsol.check_coordination(ca, min_kols=2)
-                    if coord:
-                        coord_bonus = s.madeonsol_coordination_boost
-                        log.info("madeonsol coordination boost %s (+%.2f)", ca[:10], coord_bonus)
-                except Exception:
-                    pass
             # Pair quality is a MULTIPLIER on the market score, not a veto: a weak
             # pair (AgmLJ+kEFiA) is down-weighted but may still trade when the
             # market confirms hard — so we don't overfit to a 6-trade sample.
             pmult, pnote = pair_multiplier(pair_perf, wallets)
-            effective = (score + mkt_bonus + coord_bonus) * pmult
+            effective = (score + mkt_bonus) * pmult
             # Weak pair -> require strong confirmation: every AVAILABLE timeframe
             # positive (m5>0 & h1>0 at minimum) before it may open at all.
             if pmult < 1.0 and not all((pc.get(k) or 0) > 0 for k in avail):
@@ -1671,16 +1411,12 @@ async def _run_watch(s: cfg.Settings) -> int:
         while not stop.is_set():
             await asyncio.sleep(max(60, s.status_every_min * 60))
             helius_ok = helius_ws.connected if helius_ws else False
-            shyft_ok = shyft_ws.connected if shyft_ws else False
             snap = book.snapshot(len(w.wallets), alerts["n"],
                                  w.consensus_fired, time.time() - started,
                                  {"tatum": bool(w.tatum_push),
                                   "dexscreener": True,
-                                  "tg_signal": tg_feed.health()["connected"] if tg_feed else False,
                                   "pumpapi": pump_stream.connected,
                                   "helius_ws": helius_ok,
-                                  "shyft_ws": shyft_ok,
-                                  "madeonsol": madeonsol is not None and madeonsol.enabled,
                                   "vybe": vybe is not None and vybe.enabled,
                                    "cabalspy": cabalspy_client is not None and cabalspy_client.connected,
                                    "kolexplorer": kolexplorer_feed is not None and kolexplorer_feed._running})
@@ -1690,15 +1426,6 @@ async def _run_watch(s: cfg.Settings) -> int:
                 log.info("helius ws: connected=%s msgs=%d buys=%d reconnects=%d",
                          hs["connected"], hs["total_msgs"],
                          hs["total_buys"], hs["reconnects"])
-            if shyft_ws:
-                ss = shyft_ws.stats
-                log.info("shyft ws: connected=%s msgs=%d reconnects=%d",
-                         ss["connected"], ss["total_msgs"], ss["reconnects"])
-            if madeonsol_signals:
-                ms = madeonsol_signals.stats
-                log.info("madeonsol: kol_buys=%d first_touch=%d sniper=%d surges=%d",
-                         ms["kol_buys"], ms["first_touches"],
-                         ms["sniper_alerts"], ms["surges"])
             ps = pump_stream.stats
             log.info("pumpapi: connected=%s buys=%d reconnects=%d uptime=%ds",
                      ps["connected"], ps["total_buys"],
@@ -1752,7 +1479,6 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     log.info("bot started: %s", build_status(book.snapshot(
         len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True,
-                                    "tg_signal": tg_feed.health()["connected"] if tg_feed else False,
                                    "memetracker": memetracker_feed.health()["connected"] if memetracker_feed else False,
                                     "pumpapi": True,
                                     "vybe": vybe is not None and vybe.enabled})))
@@ -1883,8 +1609,6 @@ async def _run_watch(s: cfg.Settings) -> int:
         except Exception:
             log.exception("send_stopped failed")
         status_task.cancel()
-        if tg_feed is not None:
-            tg_feed.stop()
         pump_stream.stop()
         pump_task.cancel()
         await w.stop()
@@ -1895,8 +1619,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             await rugcheck.close()
         if helius is not None:
             await helius.close()
-        if dexpaprika is not None:
-            await dexpaprika.close()
         if vybe is not None:
             await vybe.close()
         if cabalspy_client is not None:
@@ -2132,14 +1854,7 @@ def build_parser() -> argparse.ArgumentParser:
     wn.set_defaults(func=cmd_wallet_new)
     ws = sub.add_parser("wallet-show", help="throwaway address/balance")
     ws.set_defaults(func=cmd_wallet_show)
-    tg = sub.add_parser("tg-trade", help="TG-first signal trader")
-    tg.set_defaults(func=cmd_tg_trade)
     return ap
-
-
-def cmd_tg_trade(args) -> int:
-    from main_tg import main as tg_main  # noqa: PLC0415
-    return tg_main()
 
 
 if __name__ == "__main__":

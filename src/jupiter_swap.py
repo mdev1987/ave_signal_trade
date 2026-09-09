@@ -246,13 +246,15 @@ class JupiterSwap:
 
         key = private_key or config.get(env, "PRIVATE_KEY")
         self._keypair: Keypair | None = None
+        self._private_key: str = ""  # raw base58 for PumpAPI
         if dry_run:
             # Paper mode NEVER executes — even when a PRIVATE_KEY is configured.
             # DRY_RUN must win over the key: previously any present key forced
             # live=True, silently turning a "paper" run into real trading.
             self.live = False
         elif key:
-            self._keypair = Keypair.from_base58_string(key.strip())
+            self._private_key = key.strip()
+            self._keypair = Keypair.from_base58_string(self._private_key)
             self.live = True
         else:
             raise JupiterError(
@@ -1346,3 +1348,113 @@ class JupiterSwap:
             logs.journal("sell_failed", mint=mint, amount_raw=amount_raw,
                          error=last.error, error_code=last.error_code)
         return last or SwapResult(False, "", amount_raw, 0, "sell failed")
+
+    # ── PumpAPI Trade API (bonding curve fallback) ──────────────────────
+
+    def _pumpapi_enabled(self) -> bool:
+        """Check if PumpAPI fallback is enabled and configured."""
+        return (
+            self._settings.pumpapi_enabled
+            and bool(self._private_key)
+        )
+
+    async def buy_via_pumpapi(
+        self, mint: str, amount_sol: float
+    ) -> SwapResult:
+        """Buy a bonding curve token via PumpAPI Trade API.
+
+        Used when Jupiter returns no route (non-migrated tokens).
+        """
+        if not self._pumpapi_enabled():
+            return SwapResult(False, "", 0, 0, "pumpapi disabled or no api key")
+        if self._dry_run:
+            log.info("PAPER buy via pumpapi %s (%.4f SOL)", mint[:10], amount_sol)
+            return SwapResult(True, f"paper_pumpapi_{mint[:8]}", 0, amount_sol, "paper")
+
+        url = "https://api.pumpapi.io"
+        payload = {
+            "privateKey": self._private_key,
+            "action": "buy",
+            "mint": mint,
+            "amount": amount_sol,
+            "denominatedInQuote": True,
+            "slippage": self._settings.pumpapi_slippage,
+            "priorityFee": self._settings.pumpapi_priority_fee,
+            "guaranteedDelivery": self._settings.pumpapi_guaranteed_delivery,
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    data = await resp.json()
+                    if resp.status != 200:
+                        error = data.get("error", data.get("message", f"HTTP {resp.status}"))
+                        log.warning("pumpapi buy failed %s: %s", mint[:10], error)
+                        logs.journal("pumpapi_buy_failed", mint=mint, error=error,
+                                     amount_sol=amount_sol)
+                        return SwapResult(False, "", 0, 0, f"pumpapi: {error}")
+
+                    signature = data.get("signature", "")
+                    confirmed = data.get("confirmed", False)
+                    log.info("pumpapi buy %s: sig=%s confirmed=%s",
+                             mint[:10], signature[:16], confirmed)
+                    logs.journal("pumpapi_buy", mint=mint, signature=signature,
+                                 amount_sol=amount_sol, confirmed=confirmed)
+                    return SwapResult(
+                        True, signature, 0, amount_sol,
+                        f"pumpapi{'_confirmed' if confirmed else '_pending'}",
+                    )
+        except Exception as e:
+            log.warning("pumpapi buy error %s: %s", mint[:10], e)
+            logs.journal("pumpapi_buy_error", mint=mint, error=str(e))
+            return SwapResult(False, "", 0, 0, f"pumpapi: {e}")
+
+    async def sell_via_pumpapi(
+        self, mint: str, amount_pct: int = 100
+    ) -> SwapResult:
+        """Sell a bonding curve token via PumpAPI Trade API.
+
+        Used when Jupiter fails on sell (token not on Jupiter).
+        """
+        if not self._pumpapi_enabled():
+            return SwapResult(False, "", 0, 0, "pumpapi disabled or no api key")
+        if self._dry_run:
+            log.info("PAPER sell via pumpapi %s (%d%%)", mint[:10], amount_pct)
+            return SwapResult(True, f"paper_pumpapi_sell_{mint[:8]}", 0, 0, "paper")
+
+        url = "https://api.pumpapi.io"
+        payload = {
+            "privateKey": self._private_key,
+            "action": "sell",
+            "mint": mint,
+            "amount": f"{amount_pct}%",
+            "denominatedInQuote": True,
+            "slippage": self._settings.pumpapi_slippage,
+            "priorityFee": self._settings.pumpapi_priority_fee,
+            "guaranteedDelivery": self._settings.pumpapi_guaranteed_delivery,
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    data = await resp.json()
+                    if resp.status != 200:
+                        error = data.get("error", data.get("message", f"HTTP {resp.status}"))
+                        log.warning("pumpapi sell failed %s: %s", mint[:10], error)
+                        logs.journal("pumpapi_sell_failed", mint=mint, error=error)
+                        return SwapResult(False, "", 0, 0, f"pumpapi: {error}")
+
+                    signature = data.get("signature", "")
+                    confirmed = data.get("confirmed", False)
+                    log.info("pumpapi sell %s: sig=%s confirmed=%s",
+                             mint[:10], signature[:16], confirmed)
+                    logs.journal("pumpapi_sell", mint=mint, signature=signature,
+                                 confirmed=confirmed)
+                    return SwapResult(
+                        True, signature, 0, 0,
+                        f"pumpapi{'_confirmed' if confirmed else '_pending'}",
+                    )
+        except Exception as e:
+            log.warning("pumpapi sell error %s: %s", mint[:10], e)
+            logs.journal("pumpapi_sell_error", mint=mint, error=str(e))
+            return SwapResult(False, "", 0, 0, f"pumpapi: {e}")

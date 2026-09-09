@@ -73,18 +73,28 @@ KOL_SLUG_TO_ADDR: dict[str, str] = {
     "xanse": "",   # unmapped
     "coler": "",   # unmapped
     "parsiiix": "",  # unmapped
-    "kev": "",     # unmapped
+    "kev": "BTf4A2exGK9BCVDNzy65b9dUzXgMqB4weVkvTMFQsadd",
     "tdmilky": "",  # unmapped
     "frost": "",   # unmapped
     "cook": "",    # unmapped
     "kay-the-doc": "",  # unmapped
     "ozark": "",   # unmapped
     "cottage": "",  # unmapped
-    "bandit": "",  # unmapped
+    "bandit": "5B79fMkcFeRTiwm7ehsZsFiKsC7m7n1Bgv9yLxPp9q2X",
     "solana-degen": "",  # unmapped
     "vein": "",    # unmapped
     "tech": "",    # unmapped
     "sting": "",   # unmapped
+    "japbitch": "DemfvB4iwd3NmVquvWqWbB92yVZWFFqybqBeJGdyEeM6",
+    "leck": "98T65wcMEjoNLDTJszBHGZEX75QRe8QaANXokv4yw3Mp",
+    "kaaox": "3j5c4aD1aznxQXJ3DWw1b7UD8kKuaqXVbpaVeWPR83TG",
+    "smokez": "5t9xBNuDdGTGpjaPTx6hKd7sdRJbvtKS8Mhq6qVbo8Qz",
+    "xander": "B3wagQZiZU2hKa5pUCj6rrdhWsX3Q6WfTTnki9PjwzMh",
+    "ethan-prosper": "sAdNbe1cKNMDqDsa4npB3TfL62T14uAo2MsUQfLvzLT",
+    "evening": "E7gozEiAPNhpJsdS52amhhN2XCAqLZa7WPrhyR6C8o4S",
+    "tom": "CEUA7zVoDRqRYoeHTP58UHU6TR8yvtVbeLrX1dppqoXJ",
+    "risk": "BHREKFkPQgAtDs8Vb1UfLkUpjG6ScidTjHaCWFuG2AtX",
+    "wugi": "862TYSvRYoiHAK3F3WwTRYAfuGiQaGdxedN9AGvRGWo2",
 }
 
 
