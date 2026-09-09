@@ -182,6 +182,11 @@ class Settings:
     dbotx_safety: bool = True
     dbotx_top10_max: float = 0.25  # skip if top-10 holders own more than this (0.25 = 25%)
     # --- MemeTracker signal feed (@memetrackersol) ---
+    # TG API credentials needed for Telethon (MemeTracker uses these)
+    tg_api_id: int = 0
+    tg_api_hash: str = ""
+    tg_phone: str = ""
+    tg_session_name: str = "tg_memetracker"
     memetracker_enabled: bool = False     # enable MemeTracker TG feed
     memetracker_channel: str = "memetrackersol"  # Telegram channel to listen to
     memetracker_session: str = "tg_memetracker"  # Telethon session file name
@@ -318,6 +323,10 @@ def load_settings(path: str = ".env") -> Settings:
         dbotx_base_url=get(env, "DBOTX_BASE_URL", _d.dbotx_base_url),
         dbotx_safety=get_bool(env, "DBOTX_SAFETY", _d.dbotx_safety),
         dbotx_top10_max=get_float(env, "DBOTX_TOP10_MAX", _d.dbotx_top10_max),
+        tg_api_id=get_int(env, "TG_API_ID", _d.tg_api_id),
+        tg_api_hash=get(env, "TG_API_HASH", _d.tg_api_hash),
+        tg_phone=get(env, "TG_PHONE", _d.tg_phone),
+        tg_session_name=get(env, "TG_SESSION_NAME", _d.tg_session_name),
         memetracker_enabled=get_bool(env, "MEMETRACKER_ENABLED", _d.memetracker_enabled),
         memetracker_channel=get(env, "MEMETRACKER_CHANNEL", _d.memetracker_channel),
         memetracker_session=get(env, "MEMETRACKER_SESSION", _d.memetracker_session),
