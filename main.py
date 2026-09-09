@@ -488,10 +488,13 @@ class ShadowBook:
                              ca[:10], pos["symbol"], age_s / 3600,
                              pos.get("peak_mult", 1.0))
                 elif (age_s < 1800 and pos.get("peak_mult", 1.0) < 1.05
-                        and not pos.get("tp_taken")):
+                        and not pos.get("tp_taken")
+                        and pos.get("source") != "memetracker"):
                     # Quick bleed guard: force-close positions <30m old that
                     # never showed >5% gain. Prevents slow-bleed losers from
                     # holding slots. Winners hit 1.05x+ within minutes.
+                    # MemeTracker exempt: bonding curve tokens can't be priced
+                    # by DexScreener until migration, so peak stays at 1.0.
                     exit_reason = "quick_bleed"
                     log.info("quick bleed %s (%s): age=%.0fm peak=%.3f",
                              ca[:10], pos["symbol"], age_s / 60,
