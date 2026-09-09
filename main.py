@@ -478,6 +478,15 @@ class ShadowBook:
                     log.info("flat timeout %s (%s): age=%.1fh peak=%.3f",
                              ca[:10], pos["symbol"], age_s / 3600,
                              pos.get("peak_mult", 1.0))
+                elif (age_s < 1800 and pos.get("peak_mult", 1.0) < 1.05
+                        and not pos.get("tp_taken")):
+                    # Quick bleed guard: force-close positions <30m old that
+                    # never showed >5% gain. Prevents slow-bleed losers from
+                    # holding slots. Winners hit 1.05x+ within minutes.
+                    exit_reason = "quick_bleed"
+                    log.info("quick bleed %s (%s): age=%.0fm peak=%.3f",
+                             ca[:10], pos["symbol"], age_s / 60,
+                             pos.get("peak_mult", 1.0))
 
                 # Track peak using ONLY the executable price.
                 best_mult = jup_mult if jup_mult is not None else dex_mult
@@ -1248,17 +1257,20 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     _skip_log = {}
 
-    def _adaptive_size(settings, effective_score: float) -> float:
+    def _adaptive_size(settings, effective_score: float, source: str = "") -> float:
         """Scale position size linearly between min/max based on consensus quality.
 
         Weak consensus (effective ~1.5) -> size_sol_min
         Strong consensus (effective ~3.0+) -> size_sol_max
+        CabalSpy gets 1.3x boost (67% win rate, best source).
         """
         score_min = settings.consensus_weight_threshold
         score_max = score_min * 2.0  # strong signal ~2x threshold
         t = max(0.0, min(1.0, (effective_score - score_min) / (score_max - score_min)))
         size = settings.size_sol_min + t * (settings.size_sol_max - settings.size_sol_min)
-        return round(size, 4)
+        if source == "cabalspy":
+            size *= 1.3
+        return round(min(size, settings.size_sol_max), 4)
 
     _stable_syms = {x.strip().upper() for x in (s.stable_symbols or "").split(",") if x.strip()}
 
@@ -1276,6 +1288,9 @@ async def _run_watch(s: cfg.Settings) -> int:
             overlap = max(overlap, c)
         if not backfill_done.is_set():
             reason = "deferred:lookback"
+        elif source == "pumpapi":
+            # PumpAPI disabled as entry source (27% win rate, net -0.117 SOL)
+            return
         elif (sym or "").upper() in _stable_syms:
             # Stablecoin/impostor guard: stables can't run the TP ladder and
             # scam mints reuse trusted symbols (fake USDC). -EV either way.
@@ -1334,7 +1349,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                          score=score, effective=round(score, 3),
                          pmult=1.0, align=0, price_change=pc,
                          source=source)
-            _open_size = _adaptive_size(s, score) if s.adaptive_sizing else None
+            _open_size = _adaptive_size(s, score, source) if s.adaptive_sizing else None
             await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
                                      source=source,
                                      mc=(snap or {}).get("mcap") or 0, score=score)
@@ -1600,7 +1615,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                              score=score, effective=round(effective, 3),
                              pmult=pmult, align=align, price_change=pc,
                              source=source)
-                _open_size = _adaptive_size(s, effective) if s.adaptive_sizing else None
+                _open_size = _adaptive_size(s, effective, source) if s.adaptive_sizing else None
                 await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
                                          source=source,
                                          mc=(snap or {}).get("mcap") or 0, score=score)
@@ -1620,7 +1635,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                              score=score, effective=round(effective, 3),
                              pmult=pmult, align=align, price_change=pc,
                              source=source)
-                _open_size = _adaptive_size(s, effective) if s.adaptive_sizing else None
+                _open_size = _adaptive_size(s, effective, source) if s.adaptive_sizing else None
                 await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
                                          source=source,
                                          mc=(snap or {}).get("mcap") or 0, score=score)
