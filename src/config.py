@@ -116,6 +116,7 @@ class Settings:
     open_min_liq_usd: float = 1500.0    # skip only the thinnest tokens; smart wallets buy fresh <$5k pumps
     per_wallet_max_positions: int = 3   # cap open positions that share a wallet (kills AgmLJ/kEFiA correlation stack)
     open_max_impact_pct: float = 5.0    # skip open if Jupiter buy-side price impact > this (match Jupiter's own gate)
+    simulate_before_execute: bool = True  # simulate tx via Shyft RPC before live execution
     open_min_h1_pct: float = 0.0        # require 1h price change >= this (enter uptrends, skip tops/flat)
     open_max_m5_dump_pct: float = -5.0  # skip if 5m price change < this (don't enter a token dumping at the signal)
     mtf_align_bonus: float = 0.3       # multi-timeframe alignment score modifier (per aligned timeframe above the 2/4 midpoint)
@@ -313,6 +314,7 @@ def load_settings(path: str = ".env") -> Settings:
         max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", _d.max_open_positions),
         per_wallet_max_positions=get_int(env, "PER_WALLET_MAX_POSITIONS", _d.per_wallet_max_positions),
         open_max_impact_pct=get_float(env, "OPEN_MAX_IMPACT_PCT", _d.open_max_impact_pct),
+        simulate_before_execute=get_bool(env, "SIMULATE_BEFORE_EXECUTE", _d.simulate_before_execute),
         open_min_h1_pct=get_float(env, "OPEN_MIN_H1_PCT", _d.open_min_h1_pct),
         open_max_m5_dump_pct=get_float(env, "OPEN_MAX_M5_DUMP_PCT", _d.open_max_m5_dump_pct),
         mtf_align_bonus=get_float(env, "MTF_ALIGN_BONUS", _d.mtf_align_bonus),

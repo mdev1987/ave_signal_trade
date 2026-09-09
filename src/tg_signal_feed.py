@@ -184,6 +184,7 @@ _MT_TXN_RE = re.compile(r"📊\s*Txns\s*Ⓑ\s*(\d+)")
 _MT_RUG_RE = re.compile(r"🔎.*?Rug\s*Score:\s*(\d+)")
 _MT_MIGRATED_RE = re.compile(r"✈️\s*Migrated:\s*(🟢|🔴)")
 _MT_PRICE_PCT_RE = re.compile(r"[+]?([\d.]+)%")
+_MT_PRICE_USD_RE = re.compile(r"💵\s*USD\s+\$?([\d.]+)")
 
 
 def parse_memetracker_signal(text: str) -> dict | None:
@@ -274,6 +275,12 @@ def parse_memetracker_signal(text: str) -> dict | None:
     if pc_m:
         pc_1h = float(pc_m.group(1))
 
+    # Extract USD price from 💵USD $0.0001920
+    price_usd = 0.0
+    price_m = _MT_PRICE_USD_RE.search(clean)
+    if price_m:
+        price_usd = float(price_m.group(1))
+
     return {
         "ca": ca,
         "symbol": sym,
@@ -287,6 +294,7 @@ def parse_memetracker_signal(text: str) -> dict | None:
         "rug_score": rug_score,
         "migrated": migrated,
         "pc_1h": pc_1h,
+        "price_usd": price_usd,
         "signal_type": "memetracker",
         "raw_text": text[:500],
     }

@@ -648,6 +648,55 @@ class JupiterSwap:
         signed = VersionedTransaction.populate(tx.message, sigs)
         return base64.b64encode(bytes(signed)).decode()
 
+    # ----------------------------------------------------------- simulate
+    async def simulate_transaction(self, b64_transaction: str) -> dict:
+        """Simulate a signed transaction via Shyft RPC before execution.
+
+        Returns ``{"ok": True, "units": N, "logs": [...]}`` on success or
+        ``{"ok": False, "reason": "...", "logs": [...]}`` on failure.
+        Only called in live mode — paper mode has no real tx to simulate.
+        """
+        if self._keypair is None:
+            return {"ok": False, "reason": "paper_mode"}
+        try:
+            signed_b64 = self._sign(b64_transaction)
+        except Exception as e:
+            return {"ok": False, "reason": f"sign_failed:{e}"}
+
+        shyft_key = config.get(config.load_env(), "SHYFT_API_KEY", "")
+        if not shyft_key:
+            return {"ok": False, "reason": "no_shyft_key"}
+
+        rpc_url = f"https://rpc.shyft.to?api_key={shyft_key}"
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "simulateTransaction",
+            "params": [
+                signed_b64,
+                {
+                    "encoding": "base64",
+                    "replaceRecentBlockhash": True,
+                    "sigVerify": False,
+                },
+            ],
+        }
+        try:
+            resp = await asyncio.wait_for(
+                self._client.post(rpc_url, json=payload),
+                timeout=self._rpc_timeout_s,
+            )
+            data = resp.json()
+            result = data.get("result", {}).get("value", {})
+            err = result.get("err")
+            logs_list = result.get("logs") or []
+            units = result.get("unitsConsumed") or 0
+            if err:
+                return {"ok": False, "reason": f"sim_error:{err}", "logs": logs_list, "units": units}
+            return {"ok": True, "units": units, "logs": logs_list}
+        except Exception as e:
+            return {"ok": False, "reason": f"sim_rpc_error:{e}"}
+
     # ----------------------------------------------------------------- execute
     async def execute(self, order: dict) -> SwapResult:
         """POST the signed transaction to /execute managed landing.
@@ -1155,6 +1204,28 @@ class JupiterSwap:
                 False, "", 0, 0,
                 "paper quote: no transaction to execute",
             )
+        # --- Pre-flight simulation (live mode only) ---
+        # Simulate the signed tx via Shyft RPC before hitting /execute.
+        # Catches: honeypot transfers, frozen mints, compute budget blowouts,
+        # and any on-chain rejection that Jupiter's quote gate cannot detect.
+        env = config.load_env()
+        if (self.live
+                and config.get_bool(env, "SIMULATE_BEFORE_EXECUTE", True)
+                and order.get("transaction")):
+            sim = await self.simulate_transaction(order["transaction"])
+            if not sim.get("ok"):
+                reason = sim.get("reason", "sim_unknown")
+                logs.journal("sim_skip", reason=reason,
+                             compute_units=sim.get("units", 0))
+                log.info("simulate SKIP: %s (units=%s)", reason, sim.get("units"))
+                return SwapResult(False, "", 0, 0, f"sim_failed:{reason}")
+            units = sim.get("units", 0)
+            if units > 200_000:
+                reason = f"sim_compute_exceeded:{units}"
+                logs.journal("sim_skip", reason=reason, compute_units=units)
+                log.info("simulate SKIP: %s", reason)
+                return SwapResult(False, "", 0, 0, reason)
+            log.info("simulate OK (units=%d)", units)
         return await self.execute(order)
 
     async def sell(self, mint: str, amount_raw: int) -> SwapResult:
@@ -1202,6 +1273,17 @@ class JupiterSwap:
                 log.warning("sell order @%dbps failed: %s", slippage, exc)
                 last = SwapResult(False, "", amount_raw, 0, str(exc))
                 continue
+            # Pre-flight simulation for sells (live mode only)
+            env = config.load_env()
+            if (self.live
+                    and config.get_bool(env, "SIMULATE_BEFORE_EXECUTE", True)
+                    and order.get("transaction")):
+                sim = await self.simulate_transaction(order["transaction"])
+                if not sim.get("ok"):
+                    reason = sim.get("reason", "sim_unknown")
+                    log.info("sell simulate SKIP @%dbps: %s", slippage, reason)
+                    last = SwapResult(False, "", amount_raw, 0, f"sim_failed:{reason}")
+                    continue
             result = await self.execute(order)
             if result.success:
                 return result

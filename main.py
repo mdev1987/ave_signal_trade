@@ -269,7 +269,8 @@ class ShadowBook:
                             size_sol: float | None = None,
                             source: str = "pumpapi",
                             mc: float = 0.0,
-                            score: float = 0.0) -> None:
+                            score: float = 0.0,
+                            signal_price: float = 0.0) -> None:
         # --- Jupiter executable entry basis (primary) ---
         # When Jupiter is available, derive the actual entry price from the buy
         # quote: size_sol SOL -> tokens_raw, so entry = SOL_per_token * SOL_USD.
@@ -283,54 +284,62 @@ class ShadowBook:
         market_px = 0.0  # DexScreener mid (reference only)
         _size = size_sol if size_sol is not None else self.size_sol
 
-        # DexScreener snapshot: used for market context (liq, price_change) and
-        # as fallback when Jupiter is unavailable.
-        snap = await self.ds.token_pairs("solana", ca)
-        market_px = float(snap.get("price_usd") or 0) if snap else 0.0
+        # Signal price bypass: when entry price comes from the signal itself
+        # (e.g. MemeTracker TG message), skip Jupiter + DexScreener entirely.
+        if signal_price > 0:
+            px = signal_price
+            snap = None
+            entry_note = "signal_price"
+            entry_mode = "signal"
+        else:
+            # DexScreener snapshot: used for market context (liq, price_change) and
+            # as fallback when Jupiter is unavailable.
+            snap = await self.ds.token_pairs("solana", ca)
+            market_px = float(snap.get("price_usd") or 0) if snap else 0.0
 
-        if self.jupiter is not None:
-            q = await self.jupiter.quote(ca, int(_size * 1e9),
-                                         force=True)
-            if q is None or not q.success:
-                reason = q.reason if q else "quote_exception"
-                logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                             reason=f"no_buy_route:{reason}")
-                log.info("shadow skip %s (%s): no buy route: %s", ca[:10], symbol, reason)
-                return
-            tokens_raw = q.output_amount
-            entry_note = f"jup impact={q.price_impact_pct:.2f}%"
-            if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
-                logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                             reason=f"untradable:impact{q.price_impact_pct:.2f}%")
-                log.info("shadow skip %s (%s): impact %.2f%%",
-                         ca[:10], symbol, q.price_impact_pct)
-                return
-            if self.jupiter.quote_stability_checks > 0:
-                buy_slip = None if self.jupiter._buy_rtse else self.jupiter._slippage_bps
-                stable, stab_reason, stab_info = await self.jupiter.check_quote_stability(
-                    ca, int(_size * 1e9), base=q, slippage_bps=buy_slip)
-                if not stable:
+            if self.jupiter is not None:
+                q = await self.jupiter.quote(ca, int(_size * 1e9),
+                                             force=True)
+                if q is None or not q.success:
+                    reason = q.reason if q else "quote_exception"
                     logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                                 reason=f"unstable:{stab_reason}", info=stab_info)
-                    log.info("shadow skip %s (%s): %s", ca[:10], symbol, stab_reason)
+                                 reason=f"no_buy_route:{reason}")
+                    log.info("shadow skip %s (%s): no buy route: %s", ca[:10], symbol, reason)
                     return
-            sq = await self.jupiter.quote_sell(ca, tokens_raw)
-            if sq is None or not sq.success:
-                reason = sq.reason if sq else "quote_exception"
-                logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                             reason=f"unsellable:{reason}")
-                log.info("shadow skip %s (%s): unsellable %s", ca[:10], symbol, reason)
-                return
-            entry_mode = "executable"
-            # Derive executable entry from the Jupiter buy quote:
-            # size_sol SOL spent, tokens_raw received, SOL price in USD.
-            dec = await self.jupiter.token_decimals(ca) or 6
-            sol_usd = await self._sol_usd()
-            if sol_usd and tokens_raw:
-                exec_px = (_size * sol_usd) / (tokens_raw / (10 ** dec))
-        # Use Jupiter executable price as canonical entry when available;
-        # fall back to DexScreener mid only when Jupiter is absent.
-        px = exec_px if exec_px > 0 else market_px
+                tokens_raw = q.output_amount
+                entry_note = f"jup impact={q.price_impact_pct:.2f}%"
+                if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
+                    logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                 reason=f"untradable:impact{q.price_impact_pct:.2f}%")
+                    log.info("shadow skip %s (%s): impact %.2f%%",
+                             ca[:10], symbol, q.price_impact_pct)
+                    return
+                if self.jupiter.quote_stability_checks > 0:
+                    buy_slip = None if self.jupiter._buy_rtse else self.jupiter._slippage_bps
+                    stable, stab_reason, stab_info = await self.jupiter.check_quote_stability(
+                        ca, int(_size * 1e9), base=q, slippage_bps=buy_slip)
+                    if not stable:
+                        logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                     reason=f"unstable:{stab_reason}", info=stab_info)
+                        log.info("shadow skip %s (%s): %s", ca[:10], symbol, stab_reason)
+                        return
+                sq = await self.jupiter.quote_sell(ca, tokens_raw)
+                if sq is None or not sq.success:
+                    reason = sq.reason if sq else "quote_exception"
+                    logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                 reason=f"unsellable:{reason}")
+                    log.info("shadow skip %s (%s): unsellable %s", ca[:10], symbol, reason)
+                    return
+                entry_mode = "executable"
+                # Derive executable entry from the Jupiter buy quote:
+                # size_sol SOL spent, tokens_raw received, SOL price in USD.
+                dec = await self.jupiter.token_decimals(ca) or 6
+                sol_usd = await self._sol_usd()
+                if sol_usd and tokens_raw:
+                    exec_px = (_size * sol_usd) / (tokens_raw / (10 ** dec))
+            # Use Jupiter executable price as canonical entry when available;
+            # fall back to DexScreener mid only when Jupiter is absent.
+            px = exec_px if exec_px > 0 else market_px
         if px <= 0:
             logs.journal("shadow_skip", ca=ca, symbol=symbol, reason="no_price")
             log.info("shadow skip %s (%s): no price", ca[:10], symbol)
@@ -1090,14 +1099,15 @@ async def _run_watch(s: cfg.Settings) -> int:
             insiders = sig.get("insiders", 0)
             rug = sig.get("rug_score", 0)
             migrated = sig.get("migrated", False)
+            price_usd = sig.get("price_usd", 0)
             log.info(
-                "memetracker SIGNAL %s (%s) mc=$%.0f liq=$%.0f hold=%d vol=$%.0f ins=%d rug=%d mig=%s",
-                sym or "?", ca[:8], mc, liq, holders, vol, insiders, rug, migrated,
+                "memetracker SIGNAL %s (%s) mc=$%.0f liq=$%.0f hold=%d vol=$%.0f ins=%d rug=%d mig=%s px=$%.8f",
+                sym or "?", ca[:8], mc, liq, holders, vol, insiders, rug, migrated, price_usd,
             )
             # TG signal source bypasses consensus gate — channel IS the signal
             try:
                 await _on_smart_buy(ca, sym, mc, 3.0, ["tg_signal"], tg_liq=liq,
-                                    source="memetracker")
+                                    source="memetracker", signal_price=price_usd)
             except Exception:
                 log.exception("memetracker _on_smart_buy failed for %s", ca[:10])
 
@@ -1275,7 +1285,7 @@ async def _run_watch(s: cfg.Settings) -> int:
     _stable_syms = {x.strip().upper() for x in (s.stable_symbols or "").split(",") if x.strip()}
 
     async def _on_smart_buy(ca, sym, usd, score, wallets=None, tg_liq=0.0,
-                            source="pumpapi"):
+                            source="pumpapi", signal_price=0.0):
         last_detection_ts["t"] = time.time()
         n = len(wallets or [])
         # Concentration guard: cap how many open positions may share any one
@@ -1332,27 +1342,21 @@ async def _run_watch(s: cfg.Settings) -> int:
             else:
                 reason = "skip:open_spacing"
         elif source == "memetracker":
-            # MemeTracker bypass: accept all signals for evaluation
-            try:
-                snap = await ds.token_pairs("solana", ca)
-            except Exception:
-                snap = None
-            pc = {}
-            try:
-                if snap and snap.get("pair_address"):
-                    pc = await ds.price_change("solana", snap["pair_address"]) or {}
-            except Exception:
-                pass
+            # MemeTracker bypass: use signal price directly (no Jupiter/DexScreener needed)
+            px = signal_price
+            if px <= 0:
+                log.info("memetracker skip %s (%s): no price in signal", ca[:10], sym)
+                return
             last_open["t"] = time.time()
             last_open["score"] = score
             logs.journal("open_signal_momentum", ca=ca, symbol=sym,
                          score=score, effective=round(score, 3),
-                         pmult=1.0, align=0, price_change=pc,
+                         pmult=1.0, align=0, price_change={},
                          source=source)
             _open_size = _adaptive_size(s, score, source) if s.adaptive_sizing else None
-            await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
-                                     source=source,
-                                     mc=(snap or {}).get("mcap") or 0, score=score)
+            await book.open_position(ca, sym, px, px, n, wallets=wallets, size_sol=_open_size,
+                                     source=source, mc=usd, score=score,
+                                     signal_price=px)
             return
         else:
             # Fetch the market snapshot once: it drives both the momentum floor
