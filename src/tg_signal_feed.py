@@ -173,6 +173,125 @@ def parse_tg_signal(text: str) -> dict | None:
     }
 
 
+# --- MemeTracker parser ---------------------------------------------------
+
+_MT_INSIDER_RE = re.compile(r"👛\s*Insiders:\s*(\d+)")
+_MT_MC_RE = re.compile(r"💰\s*MC\s+\$?([\d.]+[KMB]?)")
+_MT_LP_RE = re.compile(r"💸\s*LP\s+\$?([\d.]+[KMB]?)")
+_MT_HOLDER_RE = re.compile(r"🙂\s*Hold\s+(\d+)")
+_MT_VOL_RE = re.compile(r"📈\s*Vol\s*Ⓑ\s*\$?([\d.]+[KMB]?)")
+_MT_TXN_RE = re.compile(r"📊\s*Txns\s*Ⓑ\s*(\d+)")
+_MT_RUG_RE = re.compile(r"🔎.*?Rug\s*Score:\s*(\d+)")
+_MT_MIGRATED_RE = re.compile(r"✈️\s*Migrated:\s*(🟢|🔴)")
+_MT_PRICE_PCT_RE = re.compile(r"[+]?([\d.]+)%")
+
+
+def parse_memetracker_signal(text: str) -> dict | None:
+    """Parse a @memetrackersol message into a token signal dict.
+
+    Returns None if no valid CA found.
+    Message format:
+        🔔TOKEN_NAME $SYMBOL
+        <CA> 📋
+        ⏰Xmin · 👛Insiders: N
+        💵USD $0.0000123 (+123.45%)
+        💰MC $25.9K
+        💸LP $9.3K
+        📊Txns Ⓑ 698 / Ⓢ 463
+        📈Vol Ⓑ $25.5K / Ⓢ $19.3K
+        🙂Hold 258
+        🔎Rug Score: 1
+        ✈️Migrated: 🟢/🔴
+    """
+    if not text:
+        return None
+
+    # Extract CA (32-44 base58 chars)
+    ca_match = _CA_RE.search(text)
+    if not ca_match:
+        return None
+    ca = ca_match.group(0)
+
+    # Extract symbol: look for $SYMBOL before the CA
+    sym = ""
+    name = ""
+    ca_pos = ca_match.start()
+    # Pattern: 🔔NAME $SYMBOL or 🔔$SYMBOL
+    header = text[:ca_pos]
+    sym_match = re.search(r"\$([A-Za-z0-9_]+)", header)
+    if sym_match:
+        sym = sym_match.group(1)
+    # Extract name from 🔔 prefix
+    name_match = re.search(r"🔔\s*(.+?)(?:\s+\$|\s*$)", header)
+    if name_match:
+        name = name_match.group(1).strip()
+
+    clean = text.replace("**", "").replace("*", "").replace("`", "")
+
+    mc = 0.0
+    mc_m = _MT_MC_RE.search(clean)
+    if mc_m:
+        mc = _parse_value(mc_m.group(1))
+
+    liq = 0.0
+    liq_m = _MT_LP_RE.search(clean)
+    if liq_m:
+        liq = _parse_value(liq_m.group(1))
+
+    holders = 0
+    h_m = _MT_HOLDER_RE.search(clean)
+    if h_m:
+        holders = int(h_m.group(1))
+
+    insiders = 0
+    ins_m = _MT_INSIDER_RE.search(clean)
+    if ins_m:
+        insiders = int(ins_m.group(1))
+
+    vol = 0.0
+    vol_m = _MT_VOL_RE.search(clean)
+    if vol_m:
+        vol = _parse_value(vol_m.group(1))
+
+    txns = 0
+    txn_m = _MT_TXN_RE.search(clean)
+    if txn_m:
+        txns = int(txn_m.group(1))
+
+    rug_score = 0
+    rug_m = _MT_RUG_RE.search(clean)
+    if rug_m:
+        rug_score = int(rug_m.group(1))
+
+    migrated = False
+    mig_m = _MT_MIGRATED_RE.search(clean)
+    if mig_m:
+        migrated = mig_m.group(1) == "🟢"
+
+    # Extract price change % from 💵 line
+    pc_1h = 0.0
+    pc_m = re.search(r"💵.*?\(([+-]?[\d.]+)%\)", clean)
+    if pc_m:
+        pc_1h = float(pc_m.group(1))
+
+    return {
+        "ca": ca,
+        "symbol": sym,
+        "name": name,
+        "mc": mc,
+        "liq": liq,
+        "holders": holders,
+        "insiders": insiders,
+        "vol": vol,
+        "txns": txns,
+        "rug_score": rug_score,
+        "migrated": migrated,
+        "pc_1h": pc_1h,
+        "signal_type": "memetracker",
+        "raw_text": text[:500],
+    }
+
+
 class TgSignalFeed:
     """Real-time listener for @gmgnsignals Telegram channel.
 
@@ -197,6 +316,7 @@ class TgSignalFeed:
         min_holders: int = 10,
         dedup_ttl_s: float = 3600.0,
         allowed_topic_ids: set[int] | None = None,
+        parser: Callable[[str], dict | None] | None = None,
     ) -> None:
         self._on_signal = on_signal
         self._channel = channel
@@ -209,6 +329,7 @@ class TgSignalFeed:
         self._min_holders = min_holders
         self._dedup_ttl_s = dedup_ttl_s
         self._allowed_topic_ids = allowed_topic_ids
+        self._parser = parser or parse_tg_signal
         self._stop = asyncio.Event()
         self._seen: dict[str, float] = {}  # ca -> first_seen_ts
 
@@ -362,7 +483,7 @@ class TgSignalFeed:
     async def _handle_message(self, text: str, topic_id: int | None = None) -> None:
         """Parse a message and forward qualifying signals."""
         self._messages_received += 1
-        signal = parse_tg_signal(text)
+        signal = self._parser(text)
         if not signal:
             return
 

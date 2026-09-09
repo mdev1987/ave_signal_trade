@@ -43,7 +43,7 @@ from notifier import TelegramNotifier  # noqa: E402
 from pump_stream import PumpApiStream  # noqa: E402
 from helius_ws import HeliusWS  # noqa: E402
 from shyft_ws import ShyftWS  # noqa: E402
-from tg_signal_feed import TgSignalFeed  # noqa: E402
+from tg_signal_feed import TgSignalFeed, parse_memetracker_signal  # noqa: E402
 from tatum_notify import TatumNotifications  # noqa: E402
 from watcher import SmartWalletWatcher  # noqa: E402
 from wallet_discovery import WalletDiscovery  # noqa: E402
@@ -1068,6 +1068,50 @@ async def _run_watch(s: cfg.Settings) -> int:
             log.exception("tg signal feed init failed")
             tg_feed = None
 
+    # MemeTracker signal feed (@memetrackersol) — fresh pump.fun tokens.
+    memetracker_feed = None
+    if s.memetracker_enabled and s.tg_api_id and s.tg_api_hash:
+        async def _on_memetracker_signal(sig: dict) -> None:
+            ca = sig.get("ca", "")
+            sym = sig.get("symbol", "")
+            mc = sig.get("mc", 0)
+            liq = sig.get("liq", 0)
+            holders = sig.get("holders", 0)
+            vol = sig.get("vol", 0)
+            insiders = sig.get("insiders", 0)
+            rug = sig.get("rug_score", 0)
+            migrated = sig.get("migrated", False)
+            log.info(
+                "memetracker SIGNAL %s (%s) mc=$%.0f liq=$%.0f hold=%d vol=$%.0f ins=%d rug=%d mig=%s",
+                sym or "?", ca[:8], mc, liq, holders, vol, insiders, rug, migrated,
+            )
+            # TG signal source bypasses consensus gate — channel IS the signal
+            try:
+                await _on_smart_buy(ca, sym, mc, 3.0, ["tg_signal"], tg_liq=liq,
+                                    source="memetracker")
+            except Exception:
+                log.exception("memetracker _on_smart_buy failed for %s", ca[:10])
+
+        try:
+            memetracker_feed = TgSignalFeed(
+                on_signal=_on_memetracker_signal,
+                channel=s.memetracker_channel,
+                api_id=s.tg_api_id,
+                api_hash=s.tg_api_hash,
+                phone=s.tg_phone,
+                session_name=s.memetracker_session,
+                min_mc=s.memetracker_min_mc,
+                min_liq=s.memetracker_min_liq,
+                min_holders=s.memetracker_min_holders,
+                parser=parse_memetracker_signal,
+            )
+            _mt_feed_task = asyncio.create_task(memetracker_feed.run())
+            _mt_feed_task.add_done_callback(_log_task_result)
+            log.info("memetracker feed: started (channel=@%s)", s.memetracker_channel)
+        except Exception:
+            log.exception("memetracker feed init failed")
+            memetracker_feed = None
+
     # Kolexplorer monitor feed — pre-computed KOL consensus tokens.
     kolexplorer_feed = None
     if s.kolexplorer_enabled and s.kolexplorer_cookies:
@@ -1664,6 +1708,7 @@ async def _run_watch(s: cfg.Settings) -> int:
     log.info("bot started: %s", build_status(book.snapshot(
         len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True,
                                     "tg_signal": tg_feed.health()["connected"] if tg_feed else False,
+                                   "memetracker": memetracker_feed.health()["connected"] if memetracker_feed else False,
                                     "pumpapi": True,
                                     "vybe": vybe is not None and vybe.enabled})))
     if notifier is not None:

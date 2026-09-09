@@ -202,6 +202,14 @@ class Settings:
     tg_min_liq: float = 1_000.0          # min liquidity to forward signal
     tg_min_holders: int = 10             # min holder count to forward signal
     tg_signal_topic_ids: str = ""        # comma-separated forum topic IDs to monitor (empty=all)
+    # --- MemeTracker signal feed (@memetrackersol) ---
+    memetracker_enabled: bool = False     # enable MemeTracker TG feed
+    memetracker_channel: str = "memetrackersol"  # Telegram channel to listen to
+    memetracker_session: str = "tg_memetracker"  # Telethon session file name
+    memetracker_min_mc: float = 10_000.0  # min market cap to forward signal
+    memetracker_min_liq: float = 5_000.0  # min liquidity to forward signal
+    memetracker_min_holders: int = 50     # min holder count to forward signal
+    memetracker_min_vol: float = 10_000.0 # min 24h volume to forward signal
     # --- RugCheck (solana rug detection) ---
     rug_check_api_key: str = ""          # RugCheck API key (free tier works)
     rug_check_base_url: str = "https://api.rugcheck.xyz"
@@ -356,6 +364,13 @@ def load_settings(path: str = ".env") -> Settings:
         tg_min_liq=get_float(env, "TG_MIN_LIQ", _d.tg_min_liq),
         tg_min_holders=get_int(env, "TG_MIN_HOLDERS", _d.tg_min_holders),
         tg_signal_topic_ids=get(env, "TG_SIGNAL_TOPIC_IDS", _d.tg_signal_topic_ids),
+        memetracker_enabled=get_bool(env, "MEMETRACKER_ENABLED", _d.memetracker_enabled),
+        memetracker_channel=get(env, "MEMETRACKER_CHANNEL", _d.memetracker_channel),
+        memetracker_session=get(env, "MEMETRACKER_SESSION", _d.memetracker_session),
+        memetracker_min_mc=get_float(env, "MEMETRACKER_MIN_MC", _d.memetracker_min_mc),
+        memetracker_min_liq=get_float(env, "MEMETRACKER_MIN_LIQ", _d.memetracker_min_liq),
+        memetracker_min_holders=get_int(env, "MEMETRACKER_MIN_HOLDERS", _d.memetracker_min_holders),
+        memetracker_min_vol=get_float(env, "MEMETRACKER_MIN_VOL", _d.memetracker_min_vol),
         rug_check_api_key=get(env, "RUG_CHECK_API_KEY", _d.rug_check_api_key),
         rug_check_base_url=get(env, "RUG_CHECK_BASE_URL", _d.rug_check_base_url),
         rug_check_max_score=get_int(env, "RUG_CHECK_MAX_SCORE", _d.rug_check_max_score),
