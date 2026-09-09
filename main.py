@@ -1316,6 +1316,29 @@ async def _run_watch(s: cfg.Settings) -> int:
                 reason = None  # override — will proceed to open
             else:
                 reason = "skip:open_spacing"
+        elif source == "memetracker":
+            # MemeTracker bypass: accept all signals for evaluation
+            try:
+                snap = await ds.token_pairs("solana", ca)
+            except Exception:
+                snap = None
+            pc = {}
+            try:
+                if snap and snap.get("pair_address"):
+                    pc = await ds.price_change("solana", snap["pair_address"]) or {}
+            except Exception:
+                pass
+            last_open["t"] = time.time()
+            last_open["score"] = score
+            logs.journal("open_signal_momentum", ca=ca, symbol=sym,
+                         score=score, effective=round(score, 3),
+                         pmult=1.0, align=0, price_change=pc,
+                         source=source)
+            _open_size = _adaptive_size(s, score) if s.adaptive_sizing else None
+            await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
+                                     source=source,
+                                     mc=(snap or {}).get("mcap") or 0, score=score)
+            return
         else:
             # Fetch the market snapshot once: it drives both the momentum floor
             # and the multi-timeframe alignment score modifier below.
