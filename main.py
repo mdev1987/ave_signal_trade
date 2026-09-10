@@ -48,6 +48,7 @@ from wallet_discovery import WalletDiscovery  # noqa: E402
 from wallet_weights import build_weights  # noqa: E402
 from cabalspy import CabalSpyClient, HolderCache  # noqa: E402
 from kolexplorer import KolexplorerFeed  # noqa: E402
+from tg_signal_feed import TgSignalFeed, parse_memetracker_signal, parse_avesignalmonitor  # noqa: E402
 
 log = logging.getLogger("main")
 
@@ -754,7 +755,8 @@ async def _run_watch(s: cfg.Settings) -> int:
     # CabalSpy client (real-time KOL/SM/Whale data streams)
     cabalspy = None
     cabalspy_key = (cfg.get(env, "CABALSPY_API_KEY") or "").strip()
-    if cabalspy_key and s.cabalspy_enabled:
+    cabalspy_keys = [k.strip() for k in cabalspy_key.split(",") if k.strip()]
+    if cabalspy_keys and s.cabalspy_enabled:
         log.info("cabalspy: enabled (min_buy=%.1f, min_win_rate=%.0f)",
                  s.cabalspy_signal_min_buy, s.cabalspy_signal_min_win_rate)
 
@@ -809,17 +811,17 @@ async def _run_watch(s: cfg.Settings) -> int:
         async def _on_helius_buy(wallet: str, buy: dict) -> None:
             await w._process_buy(wallet, buy)
         helius_ws = HeliusWS(
-            api_key=helius_keys[0],
+            api_keys=helius_keys,
             wallets=w.wallets,
             on_buy=_on_helius_buy,
         )
         helius_ws.start()
-        log.info("helius ws: started (wallets=%d, key=%s…)",
-                 len(w.wallets), helius_keys[0][:8])
+        log.info("helius ws: started (wallets=%d, keys=%d)",
+                 len(w.wallets), len(helius_keys))
 
     # CabalSpy signal stream: server-side cluster detection
     cabalspy_client = None
-    if cabalspy_key and s.cabalspy_enabled:
+    if cabalspy_keys and s.cabalspy_enabled:
         try:
             _entry_at = [int(x.strip()) for x in s.cabalspy_signal_entry_at.split(",") if x.strip()]
             _exit_at = [int(x.strip()) for x in s.cabalspy_signal_exit_at.split(",") if x.strip()]
@@ -942,7 +944,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                                     mint[:10])
 
             cabalspy_client = CabalSpyClient(
-                api_key=cabalspy_key,
+                api_keys=cabalspy_keys,
                 on_signal=_on_cabalspy_signal,
                 on_tx=_on_cabalspy_tx,
                 on_holder=_on_cabalspy_holder,
@@ -1008,6 +1010,45 @@ async def _run_watch(s: cfg.Settings) -> int:
         except Exception:
             log.exception("memetracker feed init failed")
             memetracker_feed = None
+
+    # AveSignalMonitor signal feed (@AveSignalMonitor) — multi-chain KOL buy signals.
+    avesm_feed = None
+    if s.avesm_enabled and s.tg_api_id and s.tg_api_hash:
+        async def _on_avesm_signal(sig: dict) -> None:
+            ca = sig.get("ca", "")
+            sym = sig.get("symbol", "")
+            mc = sig.get("mc", 0)
+            kol_count = sig.get("kol_count", 0)
+            total_buy = sig.get("total_buy_sol", 0)
+            max_pump = sig.get("max_pump", "")
+            log.info(
+                "avesm SIGNAL %s (%s) mc=$%.0f kols=%d buy=%.2fS pump=%s",
+                sym or "?", ca[:8], mc, kol_count, total_buy, max_pump,
+            )
+            try:
+                await _on_smart_buy(ca, sym, mc, 3.0, ["tg_signal"], tg_liq=0,
+                                    source="avesignalmonitor")
+            except Exception:
+                log.exception("avesm _on_smart_buy failed for %s", ca[:10])
+
+        try:
+            avesm_feed = TgSignalFeed(
+                on_signal=_on_avesm_signal,
+                channel=s.avesm_channel,
+                api_id=s.tg_api_id,
+                api_hash=s.tg_api_hash,
+                phone=s.tg_phone,
+                session_name=s.avesm_session,
+                min_mc=s.avesm_min_mc,
+                min_liq=0,  # AveSignalMonitor doesn't provide liq
+                parser=parse_avesignalmonitor,
+            )
+            _avesm_task = asyncio.create_task(avesm_feed.run())
+            _avesm_task.add_done_callback(_log_task_result)
+            log.info("avesm feed: started (channel=@%s)", s.avesm_channel)
+        except Exception:
+            log.exception("avesm feed init failed")
+            avesm_feed = None
 
     # Kolexplorer monitor feed — pre-computed KOL consensus tokens.
     kolexplorer_feed = None
@@ -1338,7 +1379,11 @@ async def _run_watch(s: cfg.Settings) -> int:
             # Multi-timeframe alignment: trend-shaped tokens (sling/SABL/Leafy:
             # green on all horizons) get a bonus; reversing/late ones (PINU:
             # +825% h24 but -56% h1) get a discount. Avoids entering tops.
-            mkt_bonus = (align - 2) * s.mtf_align_bonus
+            # No penalty when price data is unavailable (new tokens have no history).
+            if avail:
+                mkt_bonus = (align - 2) * s.mtf_align_bonus
+            else:
+                mkt_bonus = 0
             # Pair quality is a MULTIPLIER on the market score, not a veto: a weak
             # pair (AgmLJ+kEFiA) is down-weighted but may still trade when the
             # market confirms hard — so we don't overfit to a 6-trade sample.
@@ -1413,13 +1458,15 @@ async def _run_watch(s: cfg.Settings) -> int:
             helius_ok = helius_ws.connected if helius_ws else False
             snap = book.snapshot(len(w.wallets), alerts["n"],
                                  w.consensus_fired, time.time() - started,
-                                 {"tatum": bool(w.tatum_push),
-                                  "dexscreener": True,
-                                  "pumpapi": pump_stream.connected,
-                                  "helius_ws": helius_ok,
-                                  "vybe": vybe is not None and vybe.enabled,
-                                   "cabalspy": cabalspy_client is not None and cabalspy_client.connected,
-                                   "kolexplorer": kolexplorer_feed is not None and kolexplorer_feed._running})
+                                  {"tatum": bool(w.tatum_push),
+                                   "dexscreener": True,
+                                   "pumpapi": pump_stream.connected,
+                                   "helius_ws": helius_ok,
+                                   "vybe": vybe is not None and vybe.enabled,
+                                    "cabalspy": cabalspy_client is not None and cabalspy_client.connected,
+                                    "kolexplorer": kolexplorer_feed is not None and kolexplorer_feed._running,
+                                    "memetracker": memetracker_feed is not None and memetracker_feed._running,
+                                    "avesignalmonitor": avesm_feed is not None and avesm_feed._running})
             log.info("status: %s", build_status(snap))
             if helius_ws:
                 hs = helius_ws.stats
@@ -1480,6 +1527,7 @@ async def _run_watch(s: cfg.Settings) -> int:
     log.info("bot started: %s", build_status(book.snapshot(
         len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True,
                                    "memetracker": memetracker_feed.health()["connected"] if memetracker_feed else False,
+                                   "avesignalmonitor": avesm_feed.health()["connected"] if avesm_feed else False,
                                     "pumpapi": True,
                                     "vybe": vybe is not None and vybe.enabled})))
     if notifier is not None:

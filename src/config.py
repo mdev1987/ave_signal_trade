@@ -194,6 +194,14 @@ class Settings:
     memetracker_min_liq: float = 5_000.0  # min liquidity to forward signal
     memetracker_min_holders: int = 50     # min holder count to forward signal
     memetracker_min_vol: float = 10_000.0 # min 24h volume to forward signal
+    # --- AveSignalMonitor (@AveSignalMonitor) — multi-chain KOL buy signals ---
+    avesm_enabled: bool = False           # enable AveSignalMonitor TG feed
+    avesm_channel: str = "AveSignalMonitor"  # Telegram channel to listen to
+    avesm_session: str = "tg_avesm"       # Telethon session file name
+    avesm_min_mc: float = 5_000.0         # min market cap to forward signal
+    avesm_min_kols: int = 2               # min KOL/Smart wallet count
+    avesm_min_buy_sol: float = 0.5        # min total buy amount in SOL
+    avesm_max_mc: float = 200_000.0       # max market cap (avoid late entries)
     # --- RugCheck (solana rug detection) ---
     rug_check_api_key: str = ""          # RugCheck API key (free tier works)
     rug_check_base_url: str = "https://api.rugcheck.xyz"
@@ -334,6 +342,13 @@ def load_settings(path: str = ".env") -> Settings:
         memetracker_min_liq=get_float(env, "MEMETRACKER_MIN_LIQ", _d.memetracker_min_liq),
         memetracker_min_holders=get_int(env, "MEMETRACKER_MIN_HOLDERS", _d.memetracker_min_holders),
         memetracker_min_vol=get_float(env, "MEMETRACKER_MIN_VOL", _d.memetracker_min_vol),
+        avesm_enabled=get_bool(env, "AVESM_ENABLED", _d.avesm_enabled),
+        avesm_channel=get(env, "AVESM_CHANNEL", _d.avesm_channel),
+        avesm_session=get(env, "AVESM_SESSION", _d.avesm_session),
+        avesm_min_mc=get_float(env, "AVESM_MIN_MC", _d.avesm_min_mc),
+        avesm_min_kols=get_int(env, "AVESM_MIN_KOLS", _d.avesm_min_kols),
+        avesm_min_buy_sol=get_float(env, "AVESM_MIN_BUY_SOL", _d.avesm_min_buy_sol),
+        avesm_max_mc=get_float(env, "AVESM_MAX_MC", _d.avesm_max_mc),
         rug_check_api_key=get(env, "RUG_CHECK_API_KEY", _d.rug_check_api_key),
         rug_check_base_url=get(env, "RUG_CHECK_BASE_URL", _d.rug_check_base_url),
         rug_check_max_score=get_int(env, "RUG_CHECK_MAX_SCORE", _d.rug_check_max_score),

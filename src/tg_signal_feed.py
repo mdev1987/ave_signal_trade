@@ -300,6 +300,87 @@ def parse_memetracker_signal(text: str) -> dict | None:
     }
 
 
+def parse_avesignalmonitor(text: str) -> dict | None:
+    """Parse a @AveSignalMonitor Solana buy signal.
+
+    Returns None if not Solana or no CA found.
+    Message format:
+        🪙 $TOKEN_NAME (from pump.fun) | 🔗 solana | CA: <ca> | ...
+        🔢 2nd Vibe Buy Signal | 💹 Max Pump: 8x | 💰 3 KOL Wallet Buy
+        🤑 Current MC: 34.75K | 💸 Total Buy 8.0309 SOL
+        🛗 Inflow | 🟢 Wallet1 Buy X SOL | 🟢 Wallet2 Buy Y SOL
+    """
+    if not text:
+        return None
+
+    # Must be Solana
+    if "🔗 solana" not in text.lower():
+        return None
+
+    # Must be a buy signal (🪙), not a moon alert (🚀)
+    if "🪙" not in text:
+        return None
+
+    # Extract CA
+    ca_match = _CA_RE.search(text)
+    if not ca_match:
+        return None
+    ca = ca_match.group(0)
+
+    # Extract symbol from 🪙 $SYMBOL
+    sym = ""
+    sym_match = re.search(r"🪙\s*\$([A-Za-z0-9_]+)", text)
+    if sym_match:
+        sym = sym_match.group(1)
+
+    # Extract name from header
+    name = ""
+    name_match = re.search(r"🪙\s*\$([A-Za-z0-9_]+)\s*\(([^)]+)\)", text)
+    if name_match:
+        sym = name_match.group(1)
+        name = name_match.group(2)
+
+    # Extract MC
+    mc = 0.0
+    mc_m = re.search(r"Current MC:\s*([\d.]+[KMB]?)", text)
+    if mc_m:
+        mc = _parse_value(mc_m.group(1))
+
+    # Extract KOL count
+    kol_count = 0
+    kol_m = re.search(r"(\d+)\s+(?:KOL|Smart)\s+Wallet\s+Buy", text)
+    if kol_m:
+        kol_count = int(kol_m.group(1))
+
+    # Extract total buy amount (SOL)
+    total_buy = 0.0
+    buy_m = re.search(r"Total Buy\s+([\d.]+)\s+SOL", text)
+    if buy_m:
+        total_buy = float(buy_m.group(1))
+
+    # Extract max pump estimate
+    max_pump = ""
+    pump_m = re.search(r"Max Pump:\s*([^\s|]+)", text)
+    if pump_m:
+        max_pump = pump_m.group(1)
+
+    # Count individual wallet inflows
+    inflow_count = len(re.findall(r"🟢.*?Buy\s+[\d.]+", text))
+
+    return {
+        "ca": ca,
+        "symbol": sym,
+        "name": name,
+        "mc": mc,
+        "kol_count": kol_count,
+        "total_buy_sol": total_buy,
+        "max_pump": max_pump,
+        "inflow_count": inflow_count,
+        "signal_type": "avesignalmonitor",
+        "raw_text": text[:500],
+    }
+
+
 class TgSignalFeed:
     """Real-time listener for @gmgnsignals Telegram channel.
 

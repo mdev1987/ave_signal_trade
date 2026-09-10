@@ -57,7 +57,8 @@ class CabalSpyClient:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
+        api_keys: list[str] | None = None,
         on_signal: Callable[[dict], Awaitable[None]] | None = None,
         on_tx: Callable[[dict], Awaitable[None]] | None = None,
         on_holder: Callable[[dict], Awaitable[None]] | None = None,
@@ -112,6 +113,9 @@ class CabalSpyClient:
         self.balance_wallets = balance_wallets or []
 
         # Internal state
+        self._api_keys = api_keys or ([api_key] if api_key else [])
+        self._key_idx = 0
+        self.api_key = self._api_keys[0] if self._api_keys else ""
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._connected = False
@@ -123,10 +127,29 @@ class CabalSpyClient:
         self._total_holders = 0
         self._total_bundles = 0
         self._total_counts = 0
+        self._exhausted_keys: set[str] = set()
 
     @property
     def connected(self) -> bool:
         return self._connected
+
+    def _next_key(self) -> str:
+        """Rotate to the next available API key, skipping exhausted ones."""
+        if not self._api_keys:
+            return ""
+        for _ in range(len(self._api_keys)):
+            self._key_idx = (self._key_idx + 1) % len(self._api_keys)
+            key = self._api_keys[self._key_idx]
+            if key not in self._exhausted_keys:
+                self.api_key = key
+                logger.info("cabalspy: rotated to key %s…", key[:8])
+                return key
+        # all keys exhausted — reset and retry
+        logger.warning("cabalspy: all %d keys exhausted, resetting", len(self._api_keys))
+        self._exhausted_keys.clear()
+        self._key_idx = 0
+        self.api_key = self._api_keys[0]
+        return self._api_keys[0]
 
     @property
     def stats(self) -> dict:
@@ -151,6 +174,14 @@ class CabalSpyClient:
                 break
             except Exception as exc:
                 self._reconnect_count += 1
+                exc_str = str(exc).lower()
+                # Rotate key on auth/timeout errors if we have multiple keys
+                if any(kw in exc_str for kw in ("401", "403", "unauthorized", "forbidden", "invalid api key")):
+                    if len(self._api_keys) > 1:
+                        self._exhausted_keys.add(self.api_key)
+                        self._next_key()
+                        backoff = _RECONNECT_MIN
+                        continue
                 logger.warning("cabalspy ws disconnected (%s), reconnecting in %.0fs (attempt %d)",
                                exc, backoff, self._reconnect_count)
                 self._connected = False

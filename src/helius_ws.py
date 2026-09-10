@@ -144,17 +144,20 @@ class HeliusWS:
 
     def __init__(
         self,
-        api_key: str,
-        wallets: list[str],
+        api_key: str | None = None,
+        api_keys: list[str] | None = None,
+        wallets: list[str] | None = None,
         on_buy: Callable[[str, dict], Awaitable[None]] | None = None,
         endpoint: str = "wss://beta.helius-rpc.com",
         rpc_url: str | None = None,
     ) -> None:
-        self.api_key = api_key
-        self.wallets = wallets
+        self._api_keys = api_keys or ([api_key] if api_key else [])
+        self._key_idx = 0
+        self.api_key = self._api_keys[0] if self._api_keys else ""
+        self.wallets = wallets or []
         self.on_buy = on_buy
         self._endpoint = endpoint
-        self._rpc_url = rpc_url or f"https://mainnet.helius-rpc.com/?api-key={api_key}"
+        self._rpc_url = rpc_url or f"https://mainnet.helius-rpc.com/?api-key={self.api_key}"
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._connected = False
@@ -163,6 +166,28 @@ class HeliusWS:
         self._total_buys = 0
         self._total_msgs = 0
         self._use_logs_subscribe = False  # fallback if transactionSubscribe unavailable
+        self._exhausted_keys: set[str] = set()
+
+    def _next_key(self) -> str:
+        """Rotate to the next available API key, skipping exhausted ones."""
+        if not self._api_keys:
+            return ""
+        start = self._key_idx
+        for _ in range(len(self._api_keys)):
+            self._key_idx = (self._key_idx + 1) % len(self._api_keys)
+            key = self._api_keys[self._key_idx]
+            if key not in self._exhausted_keys:
+                self.api_key = key
+                self._rpc_url = f"https://mainnet.helius-rpc.com/?api-key={key}"
+                logger.info("helius ws: rotated to key %s…", key[:8])
+                return key
+        # all keys exhausted — reset and retry from beginning
+        logger.warning("helius ws: all %d keys exhausted, resetting", len(self._api_keys))
+        self._exhausted_keys.clear()
+        self._key_idx = 0
+        self.api_key = self._api_keys[0]
+        self._rpc_url = f"https://mainnet.helius-rpc.com/?api-key={self._api_keys[0]}"
+        return self._api_keys[0]
 
     @property
     def connected(self) -> bool:
@@ -188,6 +213,14 @@ class HeliusWS:
                 break
             except Exception as exc:
                 self._reconnect_count += 1
+                exc_str = str(exc).lower()
+                # Detect exhausted/rate-limited key and rotate immediately
+                if any(kw in exc_str for kw in ("max usage", "429", "rate limit", "too many")):
+                    if len(self._api_keys) > 1:
+                        self._exhausted_keys.add(self.api_key)
+                        self._next_key()
+                        backoff = _RECONNECT_MIN
+                        continue
                 logger.warning("helius ws disconnected (%s), reconnecting in %.0fs (attempt %d)",
                                exc, backoff, self._reconnect_count)
                 self._connected = False
