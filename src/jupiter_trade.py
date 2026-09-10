@@ -43,6 +43,8 @@ from typing import Any
 import httpx
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
+from solana_rpc_resilient import ResilientRPCClient, Ok, Err
+from jupiter_swap.tokens import TokenClient
 
 import config
 import logs
@@ -69,7 +71,6 @@ _LATENCY_SAMPLES_MAX = 500
 _DEFAULT_ORDER_TIMEOUT_S = 20.0
 _DEFAULT_EXECUTE_TIMEOUT_S = 60.0   # Jupiter lands + confirms the tx server-side
 _DEFAULT_RPC_TIMEOUT_S = 12.0
-_DEFAULT_RPC_KEY_COOLDOWN_S = 60.0    # skip a 429'd RPC key for this long
 _DEFAULT_QUOTE_CACHE_MAX = 500      # bounded cache: (mint, amount) -> QuoteResult
 
 
@@ -218,9 +219,6 @@ class JupiterSwap:
         )
         # RPC used for real-wallet reads (getBalance, token decimals). Only
         # ever queried in live mode — never in paper/dry-run.
-        self._rpc_url = self._build_rpc_url(env)
-        # Ordered RPC key list (Helius), newest-first: the first key is always
-        # preferred and older keys act as fallbacks when one is 429-limited.
         self._rpc_keys: list[str] = [
             k.strip()
             for k in config.get(
@@ -228,13 +226,6 @@ class JupiterSwap:
             ).split(",")
             if k.strip()
         ]
-        # Per-key 429 cooldown: after a key rate-limits it is skipped for
-        # ``_rpc_key_cooldown_s`` (default 60s) so a hammered key gets time to
-        # recover instead of being re-hit on every balance refresh.
-        self._rpc_key_cooldown_s = float(config.get(
-            env, "RPC_KEY_COOLDOWN_S", _DEFAULT_RPC_KEY_COOLDOWN_S,
-        ))
-        self._rpc_key_cooldown_until: dict[str, float] = {}
         self._order_timeout_s = config.get_float(env, "JUPITER_ORDER_TIMEOUT_S",
                                                  _DEFAULT_ORDER_TIMEOUT_S)
         self._execute_timeout_s = config.get_float(env, "JUPITER_EXECUTE_TIMEOUT_S",
@@ -278,6 +269,38 @@ class JupiterSwap:
 
         self._client = httpx.AsyncClient(timeout=20.0)
 
+        # Resilient RPC client — circuit breaking, provider rotation, 429 retry
+        self._rpc_client: ResilientRPCClient | None = None
+        if self._rpc_keys:
+            providers = []
+            base_rpc = (
+                config.get(env, "GATEKEEPER_RPC_URL")
+                or config.get(env, "SOLANA_RPC_URL")
+                or config.get(env, "HELIUS_BASE_URL", "https://mainnet.helius-rpc.com")
+            )
+            for i, k in enumerate(self._rpc_keys):
+                url = f"{base_rpc}/?api-key={k}" if "api-key=" not in base_rpc else base_rpc
+                providers.append({
+                    "name": f"helius_{i}",
+                    "url": url,
+                    "weight": len(self._rpc_keys) - i,  # newest key gets highest weight
+                    "tier": "paid",
+                })
+            # Add public endpoint as last resort
+            providers.append({
+                "name": "public",
+                "url": "https://api.mainnet-beta.solana.com",
+                "weight": 1,
+                "tier": "free",
+            })
+            self._rpc_client = ResilientRPCClient(
+                providers,
+                rate_limit=10.0,
+                burst=20.0,
+                failure_threshold=5,
+                recovery_seconds=60.0,
+            )
+
         # -- quote gate state -------------------------------------------------
         self._quote_lock = asyncio.Lock()
         self._next_quote_ts: float = 0.0
@@ -294,6 +317,15 @@ class JupiterSwap:
             "quote_insufficient_funds": 0,
             "quote_exception": 0,
         }
+
+        # Token safety — Jupiter's banned token list for pre-trade scam checks
+        self._token_client: TokenClient | None = None
+        self._token_client_connected = False
+        try:
+            jup_api_key = config.get(env, "JUPITER_API_KEY", "")
+            self._token_client = TokenClient(api_key=jup_api_key, cache_ttl=300.0)
+        except Exception:  # noqa: BLE001
+            log.debug("TokenClient init skipped")
         self._lat_sum = 0.0
         self._lat_count = 0
         self._lat_max = 0.0
@@ -307,6 +339,25 @@ class JupiterSwap:
     async def close(self) -> None:
         """Release the underlying HTTP client."""
         await self._client.aclose()
+        if self._rpc_client:
+            await self._rpc_client.shutdown()
+        if self._token_client and self._token_client_connected:
+            try:
+                await self._token_client.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def is_token_banned(self, mint: str) -> bool:
+        """Check if a token is on Jupiter's banned list (known scam)."""
+        if not self._token_client:
+            return False
+        try:
+            if not self._token_client_connected:
+                await self._token_client.connect()
+                self._token_client_connected = True
+            return await self._token_client.is_banned(mint)
+        except Exception:  # noqa: BLE001
+            return False
 
     @property
     def ready(self) -> bool:
@@ -318,113 +369,24 @@ class JupiterSwap:
         """The live wallet's public key (None in paper mode)."""
         return str(self._keypair.pubkey()) if self._keypair is not None else None
 
-    def _build_rpc_url(self, env: dict[str, str]) -> str:
-        """Pick an RPC endpoint for live wallet reads (never used in paper).
-
-        Prefers the Gatekeeper beta router (lowest-latency Helius edge; same
-        keys) when configured, falling back to SOLANA_RPC_URL/RPC_URL and
-        finally HELIUS_BASE_URL. The base URL never embeds a key: the newest
-        ``HELIUS_API_KEYS`` entry is appended here so rotation stays central.
-        A URL that already carries ``api-key=`` (custom RPC) is used as-is.
-        """
-        keys = [
-            k.strip()
-            for k in config.get(
-                env, "HELIUS_API_KEYS", config.get(env, "HELIUS_API_KEY", "")
-            ).split(",")
-            if k.strip()
-        ]
-        base = (
-            config.get(env, "GATEKEEPER_RPC_URL")
-            or config.get(env, "SOLANA_RPC_URL")
-            or config.get(env, "RPC_URL")
-            or config.get(env, "HELIUS_BASE_URL", "https://beta.helius-rpc.com")
-        )
-        if "api-key=" in base:
-            return base
-        if keys:
-            sep = "&" if "?" in base else "?"
-            return f"{base.rstrip('/')}{sep}api-key={keys[0]}"
-        return base
-
-    def _rpc_key_candidates(self) -> list[str]:
-        """RPC keys currently out of 429-cooldown, in configured priority order.
-
-        Keys in ``HELIUS_API_KEYS`` are ordered newest-first, so the first key
-        is always preferred; a key that answered 429 is skipped (cooldown) and
-        the next one down the list is tried. Returns ``[self._rpc_url]`` when
-        no key rotation is configured so the single (possibly custom) endpoint
-        is always tried.
-        """
-        if len(self._rpc_keys) <= 1:
-            return [self._rpc_url]
-        now = time.monotonic()
-        cooled = [
-            k for k in self._rpc_keys
-            if self._rpc_key_cooldown_until.get(k, 0.0) <= now
-        ]
-        if not cooled:
-            # Every key is cooling down: retry them all anyway after the
-            # shortest cooldown — a brief 429 storm should not freeze balance.
-            cooled = self._rpc_keys
-        # Preserve configured order: newest (first) key stays preferred, so
-        # the newest key absorbs the load and older keys only act as fallbacks.
-        return cooled
-
-    def _rpc_url_for_key(self, key: str) -> str:
-        """Endpoint URL using ``key`` — base without any ``?query``, then ``?api-key=``."""
-        if not self._rpc_keys or "helius-rpc.com" not in self._rpc_url:
-            return self._rpc_url if key == self._rpc_url else key
-        base = self._rpc_url.split("?", 1)[0]
-        return f"{base}?api-key={key}"
 
     async def _rpc(self, method: str, params: list) -> Any:
-        """POST a JSON-RPC call to the configured RPC (live wallet reads only).
+        """POST a JSON-RPC call via the resilient RPC client.
 
-        Wrapped in :func:`asyncio.wait_for` so a hung DNS resolver or a dead
-        socket can never block the event loop past ``_rpc_timeout_s``. When
-        several Helius keys are configured, the newest (first) key is always
-        tried first; a key that answers 429 is put into cooldown
-        (``_rpc_key_cooldown_s``) and skipped on later calls so a rate-limited
-        key never wedges wallet balance refreshes.
+        Uses solana-rpc-resilient for automatic provider rotation, circuit
+        breaking, and 429 retry. Falls back to direct httpx if the resilient
+        client is unavailable.
         """
-        async def _post(url: str) -> Any:
-            resp = await self._client.post(
-                url,
-                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if "error" in data:
-                raise JupiterError(f"rpc {method}: {data['error']}")
-            return data.get("result")
-
-        last_429: httpx.HTTPStatusError | None = None
-        for attempt in range(3):
-            for key in self._rpc_key_candidates():
-                url = self._rpc_url_for_key(key)
-                try:
-                    return await asyncio.wait_for(
-                        _post(url), timeout=self._rpc_timeout_s
-                    )
-                except httpx.HTTPStatusError as exc:
-                    if exc.response.status_code == 429:
-                        # Rate-limited: cool this key down and try the next one.
-                        now = time.monotonic()
-                        self._rpc_key_cooldown_until[key] = now + self._rpc_key_cooldown_s
-                        last_429 = exc
-                        continue
-                    raise
-                except (TimeoutError, httpx.TimeoutException) as exc:
-                    # Timeout is NOT retried: the endpoint is unhealthy; fail
-                    # fast so the sweep loop can advance and retry next round.
-                    raise JupiterError(f"rpc {method} timed out: {exc}") from exc
-            if last_429 is None:
-                break  # no key left a 429 behind; nothing more to retry
-            # All keys were rate-limited on this pass: give the shortest
-            # cooldown a moment to elapse before one final retry.
-            await asyncio.sleep(0.5 * (attempt + 1))
-        raise JupiterError(f"rpc {method}: all RPC keys rate-limited (429)")
+        if self._rpc_client is None:
+            raise JupiterError("no RPC providers configured")
+        # Lazy-start the resilient client
+        if not self._rpc_client._started:
+            await self._rpc_client.startup()
+        result = await self._rpc_client.rpc_request(method, params)
+        if result.is_ok:
+            return result.unwrap()
+        err = result.unwrap_err()
+        raise JupiterError(f"rpc {method}: [{err.code}] {err.message}")
 
     async def balance_sol(self) -> float | None:
         """Return the wallet's SOL balance (live) or paper balance (paper mode)."""
@@ -780,35 +742,31 @@ class JupiterSwap:
         )
 
     async def check_tx_status(self, signature: str) -> str | None:
-        """Check if a transaction landed on Solana via Helius RPC.
+        """Check if a transaction landed on Solana via resilient RPC.
 
         Returns the confirmation status string ('processed', 'confirmed',
         'finalized') or 'error' if the tx failed on-chain, or None on
         network failure.  Used by sell() to reconcile execute-timeout before
         retrying — prevents double-sells.
         """
-        if not signature:
+        if not signature or not self._rpc_client:
             return None
         try:
-            resp = await self._client.post(
-                self._rpc_url,
-                json={
-                    "jsonrpc": "2.0", "id": "tx-check",
-                    "method": "getSignatureStatuses",
-                    "params": [[signature], {"searchTransactionHistory": True}],
-                },
-                timeout=self._rpc_timeout_s,
+            if not self._rpc_client._started:
+                await self._rpc_client.startup()
+            result = await self._rpc_client.get_signature_statuses(
+                [signature], search_transaction_history=True,
             )
-            data = resp.json()
-            statuses = (data.get("result") or {}).get("value") or []
-            if statuses:
-                s = statuses[0]
-                if s is None:
-                    return None
-                err = s.get("err")
-                if err is not None:
-                    return "error"
-                return s.get("confirmationStatus")
+            if result.is_ok:
+                statuses = result.unwrap() or []
+                if statuses:
+                    s = statuses[0]
+                    if s is None:
+                        return None
+                    err = s.get("err")
+                    if err is not None:
+                        return "error"
+                    return s.get("confirmationStatus")
         except Exception:
             log.debug("tx status check failed for %s", signature[:12])
         return None
@@ -990,6 +948,11 @@ class JupiterSwap:
         briefly to collapse simultaneous evaluations of the same token.
         ``force=True`` bypasses the cache (used when a cached quote is stale).
         """
+        # Pre-flight: reject Jupiter-banned tokens (known scams)
+        if await self.is_token_banned(mint):
+            log.info("quote %s rejected: Jupiter banned token", mint[:8])
+            return None
+
         slippage = self._slippage_bps
         key = (mint, amount_raw, slippage)
 

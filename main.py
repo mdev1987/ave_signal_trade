@@ -31,10 +31,10 @@ import base58  # noqa: E402
 import os  # noqa: E402
 import config as cfg  # noqa: E402
 import logs  # noqa: E402
-from dexscreener import DexScreenerClient  # noqa: E402
+from dexscreener_oracle import DexScreenerClient  # noqa: E402
 from dbotx import DBotXClient  # noqa: E402
 from rugcheck import RugCheckClient  # noqa: E402
-from jupiter_swap import JupiterSwap  # noqa: E402
+from jupiter_trade import JupiterSwap  # noqa: E402
 from solders.keypair import Keypair  # noqa: E402
 from logs import setup_logging  # noqa: E402
 from pair_perf import (load as load_pair_perf, save as save_pair_perf,  # noqa: E402
@@ -967,6 +967,7 @@ async def _run_watch(s: cfg.Settings) -> int:
             cabalspy_client = None
 
     # MemeTracker signal feed (@memetrackersol) — fresh pump.fun tokens.
+    # Also listens to @AveSignalMonitor (multi-chain KOL buy signals) via extra_channels.
     memetracker_feed = None
     if s.memetracker_enabled and s.tg_api_id and s.tg_api_hash:
         async def _on_memetracker_signal(sig: dict) -> None:
@@ -991,29 +992,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             except Exception:
                 log.exception("memetracker _on_smart_buy failed for %s", ca[:10])
 
-        try:
-            memetracker_feed = TgSignalFeed(
-                on_signal=_on_memetracker_signal,
-                channel=s.memetracker_channel,
-                api_id=s.tg_api_id,
-                api_hash=s.tg_api_hash,
-                phone=s.tg_phone,
-                session_name=s.memetracker_session,
-                min_mc=s.memetracker_min_mc,
-                min_liq=s.memetracker_min_liq,
-                min_holders=s.memetracker_min_holders,
-                parser=parse_memetracker_signal,
-            )
-            _mt_feed_task = asyncio.create_task(memetracker_feed.run())
-            _mt_feed_task.add_done_callback(_log_task_result)
-            log.info("memetracker feed: started (channel=@%s)", s.memetracker_channel)
-        except Exception:
-            log.exception("memetracker feed init failed")
-            memetracker_feed = None
-
-    # AveSignalMonitor signal feed (@AveSignalMonitor) — multi-chain KOL buy signals.
-    avesm_feed = None
-    if s.avesm_enabled and s.tg_api_id and s.tg_api_hash:
         async def _on_avesm_signal(sig: dict) -> None:
             ca = sig.get("ca", "")
             sym = sig.get("symbol", "")
@@ -1031,24 +1009,38 @@ async def _run_watch(s: cfg.Settings) -> int:
             except Exception:
                 log.exception("avesm _on_smart_buy failed for %s", ca[:10])
 
+        # Build extra channels list for AveSignalMonitor
+        _extra_channels = []
+        if s.avesm_enabled:
+            _extra_channels.append({
+                "channel": s.avesm_channel,
+                "parser": parse_avesignalmonitor,
+                "callback": _on_avesm_signal,
+                "min_mc": s.avesm_min_mc,
+                "min_liq": 0,
+            })
+
         try:
-            avesm_feed = TgSignalFeed(
-                on_signal=_on_avesm_signal,
-                channel=s.avesm_channel,
+            memetracker_feed = TgSignalFeed(
+                on_signal=_on_memetracker_signal,
+                channel=s.memetracker_channel,
                 api_id=s.tg_api_id,
                 api_hash=s.tg_api_hash,
                 phone=s.tg_phone,
-                session_name=s.avesm_session,
-                min_mc=s.avesm_min_mc,
-                min_liq=0,  # AveSignalMonitor doesn't provide liq
-                parser=parse_avesignalmonitor,
+                session_name=s.memetracker_session,
+                min_mc=s.memetracker_min_mc,
+                min_liq=s.memetracker_min_liq,
+                min_holders=s.memetracker_min_holders,
+                parser=parse_memetracker_signal,
+                extra_channels=_extra_channels if _extra_channels else None,
             )
-            _avesm_task = asyncio.create_task(avesm_feed.run())
-            _avesm_task.add_done_callback(_log_task_result)
-            log.info("avesm feed: started (channel=@%s)", s.avesm_channel)
+            _mt_feed_task = asyncio.create_task(memetracker_feed.run())
+            _mt_feed_task.add_done_callback(_log_task_result)
+            channels_list = [s.memetracker_channel] + [ec["channel"] for ec in _extra_channels]
+            log.info("memetracker feed: started (channels=%s)", channels_list)
         except Exception:
-            log.exception("avesm feed init failed")
-            avesm_feed = None
+            log.exception("memetracker feed init failed")
+            memetracker_feed = None
 
     # Kolexplorer monitor feed — pre-computed KOL consensus tokens.
     kolexplorer_feed = None
@@ -1465,8 +1457,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                                    "vybe": vybe is not None and vybe.enabled,
                                     "cabalspy": cabalspy_client is not None and cabalspy_client.connected,
                                     "kolexplorer": kolexplorer_feed is not None and kolexplorer_feed._running,
-                                    "memetracker": memetracker_feed is not None and memetracker_feed._running,
-                                    "avesignalmonitor": avesm_feed is not None and avesm_feed._running})
+                                     "memetracker": memetracker_feed is not None and memetracker_feed._running})
             log.info("status: %s", build_status(snap))
             if helius_ws:
                 hs = helius_ws.stats
@@ -1527,7 +1518,6 @@ async def _run_watch(s: cfg.Settings) -> int:
     log.info("bot started: %s", build_status(book.snapshot(
         len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True,
                                    "memetracker": memetracker_feed.health()["connected"] if memetracker_feed else False,
-                                   "avesignalmonitor": avesm_feed.health()["connected"] if avesm_feed else False,
                                     "pumpapi": True,
                                     "vybe": vybe is not None and vybe.enabled})))
     if notifier is not None:

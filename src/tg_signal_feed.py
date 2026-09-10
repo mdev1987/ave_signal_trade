@@ -406,6 +406,7 @@ class TgSignalFeed:
         dedup_ttl_s: float = 3600.0,
         allowed_topic_ids: set[int] | None = None,
         parser: Callable[[str], dict | None] | None = None,
+        extra_channels: list[dict] | None = None,
     ) -> None:
         self._on_signal = on_signal
         self._channel = channel
@@ -419,6 +420,7 @@ class TgSignalFeed:
         self._dedup_ttl_s = dedup_ttl_s
         self._allowed_topic_ids = allowed_topic_ids
         self._parser = parser or parse_tg_signal
+        self._extra_channels = extra_channels or []
         self._stop = asyncio.Event()
         self._seen: dict[str, float] = {}  # ca -> first_seen_ts
 
@@ -469,17 +471,37 @@ class TgSignalFeed:
             self._api_hash,
         )
 
-        # Resolve channel username to chat_id dynamically
-        # Telegram channels use -100 prefix: entity.id=2202241417 -> chat_id=-1002202241417
-        resolved_chat_id = None
+        # Build channel -> {parser, callback, min_mc, min_liq} map
+        channel_map: dict[int, dict] = {}
+
+        # Primary channel
+        channel_map["__primary__"] = {
+            "parser": self._parser,
+            "callback": self._on_signal,
+            "min_mc": self._min_mc,
+            "min_liq": self._min_liq,
+        }
+
+        # Extra channels
+        for ec in self._extra_channels:
+            channel_map[ec["channel"]] = {
+                "parser": ec.get("parser", self._parser),
+                "callback": ec.get("callback", self._on_signal),
+                "min_mc": ec.get("min_mc", self._min_mc),
+                "min_liq": ec.get("min_liq", self._min_liq),
+            }
+
+        # resolved: chat_id -> channel_config
+        resolved: dict[int, dict] = {}
 
         @client.on(events.NewMessage)
         async def _handler(event):
             if self._stop.is_set():
                 return
             chat_id = event.chat_id
-            # Match by resolved chat_id or by channel username
-            if resolved_chat_id and chat_id != resolved_chat_id:
+            # Match by resolved chat_id
+            cfg = resolved.get(chat_id)
+            if not cfg:
                 return
             text = event.message.text or ""
             if not text:
@@ -491,47 +513,54 @@ class TgSignalFeed:
                 if topic_id is None or topic_id not in self._allowed_topic_ids:
                     return
             try:
-                await self._handle_message(text, topic_id=topic_id)
+                await self._handle_message(text, topic_id=topic_id,
+                                           parser=cfg["parser"],
+                                           callback=cfg["callback"],
+                                           min_mc=cfg["min_mc"],
+                                           min_liq=cfg["min_liq"])
             except Exception:  # noqa: BLE001
                 self._errors += 1
                 log.exception("tg signal feed: handle failed")
 
         await client.start(phone=self._phone)
 
-        # Resolve channel to chat_id
-        try:
-            entity = await client.get_entity(self._channel)
-            # For channels/supergroups, Telethon uses -100 prefix
-            raw_id = entity.id
-            if hasattr(entity, 'megagroup') or hasattr(entity, 'broadcast'):
-                # It's a channel/supergroup - add -100 prefix
-                resolved_chat_id = int(f"-100{raw_id}")
-            else:
-                resolved_chat_id = raw_id
-            log.info(
-                "tg signal feed: resolved @%s -> entity.id=%s chat_id=%s",
-                self._channel, raw_id, resolved_chat_id,
-            )
-        except Exception:
-            # Fallback: try with @ prefix
+        # Resolve all channels
+        async def _resolve_channel(ch_name: str) -> int | None:
             try:
-                entity = await client.get_entity(f"@{self._channel}")
+                entity = await client.get_entity(ch_name)
                 raw_id = entity.id
                 if hasattr(entity, 'megagroup') or hasattr(entity, 'broadcast'):
-                    resolved_chat_id = int(f"-100{raw_id}")
-                else:
-                    resolved_chat_id = raw_id
-                log.info(
-                    "tg signal feed: resolved @%s -> entity.id=%s chat_id=%s",
-                    self._channel, raw_id, resolved_chat_id,
-                )
+                    return int(f"-100{raw_id}")
+                return raw_id
             except Exception:
-                log.warning(
-                    "tg signal feed: could not resolve @%s — listening to all channels",
-                    self._channel,
-                )
+                try:
+                    entity = await client.get_entity(f"@{ch_name}")
+                    raw_id = entity.id
+                    if hasattr(entity, 'megagroup') or hasattr(entity, 'broadcast'):
+                        return int(f"-100{raw_id}")
+                    return raw_id
+                except Exception:
+                    return None
 
-        log.info("tg signal feed: connected, listening to @%s (real-time)", self._channel)
+        # Resolve primary channel
+        primary_id = await _resolve_channel(self._channel)
+        if primary_id:
+            resolved[primary_id] = channel_map["__primary__"]
+            log.info("tg signal feed: resolved @%s -> chat_id=%s", self._channel, primary_id)
+        else:
+            log.warning("tg signal feed: could not resolve @%s — listening to all channels", self._channel)
+
+        # Resolve extra channels
+        for ec in self._extra_channels:
+            ch = ec["channel"]
+            ch_id = await _resolve_channel(ch)
+            if ch_id:
+                resolved[ch_id] = channel_map[ch]
+                log.info("tg signal feed: resolved @%s -> chat_id=%s (extra)", ch, ch_id)
+            else:
+                log.warning("tg signal feed: could not resolve @%s (extra)", ch)
+
+        log.info("tg signal feed: connected, listening to %d channels (real-time)", len(resolved))
 
         # run_until_disconnected blocks until the client disconnects or stop()
         # We poll _stop periodically so we can exit cleanly
@@ -569,10 +598,19 @@ class TgSignalFeed:
         except Exception:  # noqa: BLE001
             pass
 
-    async def _handle_message(self, text: str, topic_id: int | None = None) -> None:
+    async def _handle_message(self, text: str, topic_id: int | None = None,
+                               parser: Callable | None = None,
+                               callback: Callable | None = None,
+                               min_mc: float | None = None,
+                               min_liq: float | None = None) -> None:
         """Parse a message and forward qualifying signals."""
         self._messages_received += 1
-        signal = self._parser(text)
+        _parser = parser or self._parser
+        _callback = callback or self._on_signal
+        _min_mc = min_mc if min_mc is not None else self._min_mc
+        _min_liq = min_liq if min_liq is not None else self._min_liq
+
+        signal = _parser(text)
         if not signal:
             return
 
@@ -589,34 +627,22 @@ class TgSignalFeed:
         self._prune_seen(now)
 
         # Quality gates — reject unknown (0) or below minimum
-        if signal["mc"] <= 0 or signal["mc"] < self._min_mc:
+        sig_mc = signal.get("mc", 0)
+        if sig_mc > 0 and sig_mc < _min_mc:
             self._signals_filtered += 1
-            log.debug(
-                "tg signal: filtered %s (mc=%.0f < %.0f)",
-                ca[:8],
-                signal["mc"],
-                self._min_mc,
-            )
+            log.debug("tg signal: filtered %s (mc=%.0f < %.0f)", ca[:8], sig_mc, _min_mc)
             return
 
-        if signal["liq"] <= 0 or signal["liq"] < self._min_liq:
+        sig_liq = signal.get("liq", 0)
+        if _min_liq > 0 and sig_liq > 0 and sig_liq < _min_liq:
             self._signals_filtered += 1
-            log.debug(
-                "tg signal: filtered %s (liq=%.0f < %.0f)",
-                ca[:8],
-                signal["liq"],
-                self._min_liq,
-            )
+            log.debug("tg signal: filtered %s (liq=%.0f < %.0f)", ca[:8], sig_liq, _min_liq)
             return
 
-        if signal["holders"] <= 0 or signal["holders"] < self._min_holders:
+        holders = signal.get("holders", 0)
+        if holders > 0 and holders < self._min_holders:
             self._signals_filtered += 1
-            log.debug(
-                "tg signal: filtered %s (holders=%d < %d)",
-                ca[:8],
-                signal["holders"],
-                self._min_holders,
-            )
+            log.debug("tg signal: filtered %s (holders=%d < %d)", ca[:8], holders, self._min_holders)
             return
 
         self._last_event_at = now
@@ -624,17 +650,17 @@ class TgSignalFeed:
 
         log.info(
             "tg signal: %s %s mc=$%.0f liq=$%.0f holders=%d 1h=%+.1f%% topic=%s",
-            signal["symbol"] or "?",
+            signal.get("symbol") or "?",
             ca[:8],
-            signal["mc"],
-            signal["liq"],
-            signal["holders"],
-            signal["pc_1h"],
+            signal.get("mc", 0),
+            signal.get("liq", 0),
+            signal.get("holders", 0),
+            signal.get("pc_1h", 0),
             topic_id or "none",
         )
 
         try:
-            await self._on_signal(signal)
+            await _callback(signal)
         except Exception:
             log.exception("tg signal: on_signal failed for %s", ca[:8])
 

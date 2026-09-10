@@ -188,10 +188,13 @@ dependencies = [
     { name = "ai-cloudscraper" },
     { name = "aiohttp" },
     { name = "base58" },
+    { name = "dexscreener-python" },
     { name = "httpx" },
+    { name = "jupiter-swap-python" },
     { name = "madeonsol-x402" },
     { name = "python-dotenv" },
     { name = "python-telegram-bot" },
+    { name = "solana-rpc-resilient" },
     { name = "solders" },
     { name = "telegramify-markdown" },
     { name = "telethon" },
@@ -204,10 +207,13 @@ requires-dist = [
     { name = "ai-cloudscraper", specifier = ">=3.8.4" },
     { name = "aiohttp", specifier = ">=3.14.3" },
     { name = "base58", specifier = ">=2.1.1" },
+    { name = "dexscreener-python", specifier = ">=0.1.1" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "jupiter-swap-python", specifier = ">=0.1.1" },
     { name = "madeonsol-x402", specifier = ">=1.29.0" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "python-telegram-bot", specifier = ">=22.8" },
+    { name = "solana-rpc-resilient", specifier = ">=0.1.1" },
     { name = "solders", specifier = ">=0.29.0" },
     { name = "telegramify-markdown", specifier = ">=1.2.0" },
     { name = "telethon", specifier = ">=1.44.0" },
@@ -478,6 +484,18 @@ wheels = [
 ]
 
 [[package]]
+name = "dexscreener-python"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/9f/ed6349b4ecddf18430e9855b5bcff3e9fe18a6496966cbaf7dcdcb03383d/dexscreener_python-0.1.1.tar.gz", hash = "sha256:f8e6363dc5a34b04f0d45a59d7569b2ec99260f667d7efa684df7748555d976a", size = 11896, upload-time = "2026-05-29T16:56:03.954Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/e1/0069d30becab8ccf38013f20f7cf56f9b59b142e05bd32fb0ed0438ac3b5/dexscreener_python-0.1.1-py3-none-any.whl", hash = "sha256:679a3bb314498aeebefd6d3ad68f299a4468f3f34d4cf5a07b5bb7ba4d2facb5", size = 9888, upload-time = "2026-05-29T16:56:02.796Z" },
+]
+
+[[package]]
 name = "frozenlist"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -659,6 +677,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ec/45/ee7e17002cb7f3264f755ff6a1a72c55d1830e07808d643167d2a2277c4f/jsonalias-0.1.1.tar.gz", hash = "sha256:64f04d935397d579fc94509e1fcb6212f2d081235d9d6395bd10baedf760a769", size = 1095, upload-time = "2022-10-28T22:57:56.224Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/41/ed/05aebce69f78c104feff2ffcdd5a6f9d668a208aba3a8bf56e3750809fd8/jsonalias-0.1.1-py3-none-any.whl", hash = "sha256:a56d2888e6397812c606156504e861e8ec00e188005af149f003c787db3d3f18", size = 1312, upload-time = "2022-10-28T22:57:54.763Z" },
+]
+
+[[package]]
+name = "jupiter-swap-python"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c2/1d/0748f2d7caaf64484507ede2bbf826820f5a4a6a258ed244e342ebb08fd2/jupiter_swap_python-0.1.1.tar.gz", hash = "sha256:d7ea821b86c3708ce13a8e376ad5fb07974e7059111cf43ae299cbbc8bff6141", size = 13202, upload-time = "2026-05-29T16:56:07.061Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/05/c52bda44e53a88baeb0c3013fdbf491479113a39ffd6ab7425fcf50da8ba/jupiter_swap_python-0.1.1-py3-none-any.whl", hash = "sha256:5b4e9bd6cc02cfb743be43cdbb8836d2db88d74041957aa7720d3213461c66ea", size = 11518, upload-time = "2026-05-29T16:56:06.053Z" },
 ]
 
 [[package]]
@@ -1157,6 +1187,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/13/08/e8f166f9eb6325bbfd36c43753e8e045d5e5676825f6a0967e5c001d3cca/solana-0.40.3.tar.gz", hash = "sha256:279e6f17efe477f0cb4dfacbea57dda6a2b78511e85ccd9e8eb8fd850b4e19bc", size = 497256, upload-time = "2026-08-27T03:26:49.904Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e3/c7/47548cd65aa1f9453289b0f35f19b180ab8de92b67237e0fc7aab0b09a45/solana-0.40.3-py3-none-any.whl", hash = "sha256:7c26923d66c9d962e36808f34553e4977e447b966f36561588d97c396cb9607a", size = 49055, upload-time = "2026-08-27T03:26:48.819Z" },
+]
+
+[[package]]
+name = "solana-rpc-resilient"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/41/5d/0a8fbc07a8cf84a4265124308290e0455d544668069e03b9e84c1de614d4/solana_rpc_resilient-0.1.1.tar.gz", hash = "sha256:5de81e86721d4e41de60e7cf7487a7b2077c8ea7ad7d50131588a2f7f50c9968", size = 18930, upload-time = "2026-05-29T16:56:00.649Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/15/8b/d90c104145eefbbd0e771bbb697f8f7274387560b21f4cc9f6cb66034513/solana_rpc_resilient-0.1.1-py3-none-any.whl", hash = "sha256:c2c480b50a35b635f34c4de0d0c01c6779ec66ee54f5c94e18876bf4d7ae8b94", size = 19419, upload-time = "2026-05-29T16:55:59.625Z" },
 ]
 
 [[package]]
