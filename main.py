@@ -1457,7 +1457,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                                    "vybe": vybe is not None and vybe.enabled,
                                     "cabalspy": cabalspy_client is not None and cabalspy_client.connected,
                                     "kolexplorer": kolexplorer_feed is not None and kolexplorer_feed._running,
-                                     "memetracker": memetracker_feed is not None and memetracker_feed._running})
+                                     "memetracker": memetracker_feed is not None and memetracker_feed.health()["connected"]})
             log.info("status: %s", build_status(snap))
             if helius_ws:
                 hs = helius_ws.stats

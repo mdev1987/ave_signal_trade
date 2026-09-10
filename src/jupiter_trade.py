@@ -357,6 +357,10 @@ class JupiterSwap:
                 self._token_client_connected = True
             return await self._token_client.is_banned(mint)
         except Exception:  # noqa: BLE001
+            # Disable client on DNS/connect failure to avoid warning spam
+            if not self._token_client_connected:
+                log.debug("TokenClient disabled after connect failure")
+                self._token_client = None
             return False
 
     @property
@@ -380,7 +384,7 @@ class JupiterSwap:
         if self._rpc_client is None:
             raise JupiterError("no RPC providers configured")
         # Lazy-start the resilient client
-        if not self._rpc_client._started:
+        if self._rpc_client._http is None:
             await self._rpc_client.startup()
         result = await self._rpc_client.rpc_request(method, params)
         if result.is_ok:
@@ -752,7 +756,7 @@ class JupiterSwap:
         if not signature or not self._rpc_client:
             return None
         try:
-            if not self._rpc_client._started:
+            if self._rpc_client._http is None:
                 await self._rpc_client.startup()
             result = await self._rpc_client.get_signature_statuses(
                 [signature], search_transaction_history=True,
@@ -1316,8 +1320,9 @@ class JupiterSwap:
 
     def _pumpapi_enabled(self) -> bool:
         """Check if PumpAPI fallback is enabled and configured."""
+        env = config.load_env()
         return (
-            self._settings.pumpapi_enabled
+            config.get_bool(env, "PUMPAPI_ENABLED", False)
             and bool(self._private_key)
         )
 
@@ -1335,15 +1340,16 @@ class JupiterSwap:
             return SwapResult(True, f"paper_pumpapi_{mint[:8]}", 0, amount_sol, "paper")
 
         url = "https://api.pumpapi.io"
+        env = config.load_env()
         payload = {
             "privateKey": self._private_key,
             "action": "buy",
             "mint": mint,
             "amount": amount_sol,
             "denominatedInQuote": True,
-            "slippage": self._settings.pumpapi_slippage,
-            "priorityFee": self._settings.pumpapi_priority_fee,
-            "guaranteedDelivery": self._settings.pumpapi_guaranteed_delivery,
+            "slippage": config.get_int(env, "PUMPAPI_SLIPPAGE", 99),
+            "priorityFee": config.get_float(env, "PUMPAPI_PRIORITY_FEE", 0.00023),
+            "guaranteedDelivery": config.get_bool(env, "PUMPAPI_GUARANTEED_DELIVERY", True),
         }
 
         try:
@@ -1386,15 +1392,16 @@ class JupiterSwap:
             return SwapResult(True, f"paper_pumpapi_sell_{mint[:8]}", 0, 0, "paper")
 
         url = "https://api.pumpapi.io"
+        env = config.load_env()
         payload = {
             "privateKey": self._private_key,
             "action": "sell",
             "mint": mint,
             "amount": f"{amount_pct}%",
             "denominatedInQuote": True,
-            "slippage": self._settings.pumpapi_slippage,
-            "priorityFee": self._settings.pumpapi_priority_fee,
-            "guaranteedDelivery": self._settings.pumpapi_guaranteed_delivery,
+            "slippage": config.get_int(env, "PUMPAPI_SLIPPAGE", 99),
+            "priorityFee": config.get_float(env, "PUMPAPI_PRIORITY_FEE", 0.00023),
+            "guaranteedDelivery": config.get_bool(env, "PUMPAPI_GUARANTEED_DELIVERY", True),
         }
 
         try:

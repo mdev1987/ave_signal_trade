@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 # Reconnect backoff: start at 2s, max 60s
 _RECONNECT_MIN = 2.0
 _RECONNECT_MAX = 60.0
+_MAX_RECONNECT_ATTEMPTS = 20   # pause after this many consecutive failures
+_RECONNECT_PAUSE_S = 300.0    # 5 min cooldown before retrying after cap hit
 _PING_INTERVAL = 30.0
 
 # Stream types
@@ -182,6 +184,19 @@ class CabalSpyClient:
                         self._next_key()
                         backoff = _RECONNECT_MIN
                         continue
+                # Cap: after N consecutive failures, pause 5 min before retrying
+                if self._reconnect_count >= _MAX_RECONNECT_ATTEMPTS:
+                    logger.warning("cabalspy paused after %d failures — retrying in %.0fs",
+                                   self._reconnect_count, _RECONNECT_PAUSE_S)
+                    self._connected = False
+                    try:
+                        await asyncio.wait_for(self._stop.wait(), timeout=_RECONNECT_PAUSE_S)
+                        break
+                    except TimeoutError:
+                        pass
+                    self._reconnect_count = 0
+                    backoff = _RECONNECT_MIN
+                    continue
                 logger.warning("cabalspy ws disconnected (%s), reconnecting in %.0fs (attempt %d)",
                                exc, backoff, self._reconnect_count)
                 self._connected = False

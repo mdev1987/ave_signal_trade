@@ -230,10 +230,10 @@ class KolexplorerFeed:
                 continue
 
             sym = tok.get("sym", "?")
-            kol_count = tok.get("kols", 0)
-            entry_mc = tok.get("buy_mc", 0)
-            total_pnl = tok.get("pnl", 0)
-            vol = tok.get("vol", 0)
+            kol_count = tok.get("kols") or 0
+            entry_mc = tok.get("buy_mc") or 0
+            total_pnl = tok.get("pnl") or 0
+            vol = tok.get("vol") or 0
 
             if kol_count < self._min_kols:
                 continue
