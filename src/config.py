@@ -254,6 +254,13 @@ class Settings:
     pumpapi_slippage: int = 99              # slippage percent (high = guaranteed fill)
     pumpapi_priority_fee: float = 0.00023   # priority fee in SOL (>=0.00023 triggers Jito split)
     pumpapi_guaranteed_delivery: bool = True  # wait for on-chain confirmation
+    # --- Jupiter Token Audit (pre-trade safety via /tokens/v2/search) ---
+    jup_audit_enabled: bool = True            # enable Jupiter token audit pre-trade
+    jup_audit_max_top_holders_pct: float = 30.0  # reject if top holders own > this %
+    jup_audit_max_dev_balance_pct: float = 10.0  # reject if dev holds > this %
+    jup_audit_max_dev_mints: int = 3          # reject if dev minted > this many times
+    jup_audit_min_organic_score: int = 20     # reject if organic score < this
+    jup_audit_min_holder_count: int = 50      # reject if fewer holders than this
 
 
 def load_settings(path: str = ".env") -> Settings:
@@ -393,4 +400,10 @@ def load_settings(path: str = ".env") -> Settings:
         pumpapi_slippage=get_int(env, "PUMPAPI_SLIPPAGE", _d.pumpapi_slippage),
         pumpapi_priority_fee=get_float(env, "PUMPAPI_PRIORITY_FEE", _d.pumpapi_priority_fee),
         pumpapi_guaranteed_delivery=get_bool(env, "PUMPAPI_GUARANTEED_DELIVERY", _d.pumpapi_guaranteed_delivery),
+        jup_audit_enabled=get_bool(env, "JUP_AUDIT_ENABLED", _d.jup_audit_enabled),
+        jup_audit_max_top_holders_pct=get_float(env, "JUP_AUDIT_MAX_TOP_HOLDER_PCT", _d.jup_audit_max_top_holders_pct),
+        jup_audit_max_dev_balance_pct=get_float(env, "JUP_AUDIT_MAX_DEV_BALANCE_PCT", _d.jup_audit_max_dev_balance_pct),
+        jup_audit_max_dev_mints=get_int(env, "JUP_AUDIT_MAX_DEV_MINTS", _d.jup_audit_max_dev_mints),
+        jup_audit_min_organic_score=get_int(env, "JUP_AUDIT_MIN_ORGANIC_SCORE", _d.jup_audit_min_organic_score),
+        jup_audit_min_holder_count=get_int(env, "JUP_AUDIT_MIN_HOLDER_COUNT", _d.jup_audit_min_holder_count),
     )

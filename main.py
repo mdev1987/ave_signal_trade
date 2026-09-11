@@ -32,6 +32,7 @@ import os  # noqa: E402
 import config as cfg  # noqa: E402
 import logs  # noqa: E402
 from dexscreener_oracle import DexScreenerClient  # noqa: E402
+from dexpaprika import DexPaprikaClient  # noqa: E402
 from dbotx import DBotXClient  # noqa: E402
 from rugcheck import RugCheckClient  # noqa: E402
 from jupiter_trade import JupiterSwap  # noqa: E402
@@ -144,7 +145,8 @@ class ShadowBook:
                  early_filter_window_s: float = 30.0,
                  early_filter_dd_pct: float = 20.0,
                  early_filter_gain_pct: float = 5.0,
-                 reentry_cooldown_s: float = 3600.0) -> None:
+                 reentry_cooldown_s: float = 3600.0,
+                 dexpaprika=None) -> None:
         self.jupiter = jupiter
         self.notifier = notifier
         self.max_positions = int(max_positions)
@@ -169,6 +171,7 @@ class ShadowBook:
         self.early_filter_window_s = float(early_filter_window_s)
         self.early_filter_dd = float(early_filter_dd_pct) / 100.0  # store as fraction
         self.early_filter_gain = float(early_filter_gain_pct) / 100.0  # store as fraction
+        self.dexpaprika = dexpaprika
         self.state_file = state_file
         self.start_balance_sol = float(start_balance_sol)
         self.balance_sol = float(start_balance_sol)
@@ -294,6 +297,12 @@ class ShadowBook:
             # DexScreener snapshot: used for market context (liq, price_change) and
             # as fallback when Jupiter is unavailable.
             snap = await self.ds.token_pairs("solana", ca)
+            # DexPaprika fallback: richer Solana data when DexScreener fails
+            if not snap and self.dexpaprika is not None:
+                try:
+                    snap = await self.dexpaprika.get_token_details(ca)
+                except Exception:  # noqa: BLE001
+                    pass
             market_px = float(snap.get("price_usd") or 0) if snap else 0.0
 
             if self.jupiter is not None:
@@ -739,6 +748,8 @@ async def _run_watch(s: cfg.Settings) -> int:
     notifier = TelegramNotifier()
     ds = DexScreenerClient(base_url=s.dexscreener_base_url,
                            rpm=s.dexscreener_rpm)
+    # DexPaprika fallback: richer Solana data when DexScreener is unavailable
+    dp = DexPaprikaClient(enabled=True)
     # Fail-open rug/safety filter (DBotX). Degrades to allow on any error.
     dbx = DBotXClient(api_key=s.dbotx_api_key, base_url=s.dbotx_base_url)
 
@@ -1160,7 +1171,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                       early_filter_window_s=s.early_filter_window_s,
                       early_filter_dd_pct=s.early_filter_dd_pct,
                       early_filter_gain_pct=s.early_filter_gain_pct,
-                      reentry_cooldown_s=s.reentry_cooldown_s)
+                      reentry_cooldown_s=s.reentry_cooldown_s,
+                      dexpaprika=dp)
     await book.reconcile_balances()
 
     # shadow book opens automatically via on_smart_buy callback. During the
@@ -1270,6 +1282,12 @@ async def _run_watch(s: cfg.Settings) -> int:
                 snap = await ds.token_pairs("solana", ca)
             except Exception:
                 snap = None
+            # DexPaprika fallback: richer Solana data when DexScreener fails
+            if not snap and dp is not None:
+                try:
+                    snap = await dp.get_token_details(ca)
+                except Exception:  # noqa: BLE001
+                    pass
             # Rug/safety gate (DBotX, fail-open): reject tokens that still hold a
             # mint or freeze authority, or are dangerously top-10 concentrated.
             # A 403 / missing key degrades to "allow" so an outage never blocks.
@@ -1421,6 +1439,50 @@ async def _run_watch(s: cfg.Settings) -> int:
                             return
                 except Exception as exc:
                     log.debug("cabalspy holder/bundle check failed for %s: %s", ca[:10], exc)
+            # Jupiter Token Audit: pre-trade safety via /tokens/v2/search
+            # Checks mint/freeze authority, dev balance, holder concentration,
+            # organic score, and suspicious flags. Fail-open on errors.
+            if s.jup_audit_enabled and jupiter is not None:
+                try:
+                    audit = await jupiter.token_audit(ca)
+                    if audit.get("available"):
+                        _reject_reasons = []
+                        if not audit.get("mint_authority_disabled", True):
+                            _reject_reasons.append("mint_authority")
+                        if not audit.get("freeze_authority_disabled", True):
+                            _reject_reasons.append("freeze_authority")
+                        if audit.get("is_sus"):
+                            _reject_reasons.append("flagged_suspicious")
+                        if audit.get("top_holders_pct", 0) > s.jup_audit_max_top_holders_pct:
+                            _reject_reasons.append(
+                                f"top_holders={audit['top_holders_pct']:.1f}%"
+                                f">{s.jup_audit_max_top_holders_pct}%")
+                        if audit.get("dev_balance_pct", 0) > s.jup_audit_max_dev_balance_pct:
+                            _reject_reasons.append(
+                                f"dev_balance={audit['dev_balance_pct']:.1f}%"
+                                f">{s.jup_audit_max_dev_balance_pct}%")
+                        if audit.get("dev_mints", 0) > s.jup_audit_max_dev_mints:
+                            _reject_reasons.append(
+                                f"dev_mints={audit['dev_mints']}>{s.jup_audit_max_dev_mints}")
+                        if audit.get("organic_score", 100) < s.jup_audit_min_organic_score:
+                            _reject_reasons.append(
+                                f"organic={audit['organic_score']}"
+                                f"<{s.jup_audit_min_organic_score}")
+                        if audit.get("holder_count", 999999) < s.jup_audit_min_holder_count:
+                            _reject_reasons.append(
+                                f"holders={audit['holder_count']}"
+                                f"<{s.jup_audit_min_holder_count}")
+                        if _reject_reasons:
+                            reason = f"skip:jup_audit({';'.join(_reject_reasons)})"
+                            if _skip_log.get(ca, 0) < time.time() - 300:
+                                _skip_log[ca] = time.time()
+                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                            return
+                        log.debug("jup_audit OK %s (%s): org=%d holders=%d",
+                                  ca[:10], sym, audit.get("organic_score", 0),
+                                  audit.get("holder_count", 0))
+                except Exception as exc:
+                    log.debug("jup_audit failed for %s: %s", ca[:10], exc)
             pc = (snap or {}).get("price_change") or {}
             tfs = ("m5", "h1", "h6", "h24")
             avail = [k for k in tfs if pc.get(k) is not None]
@@ -1709,6 +1771,7 @@ async def _run_watch(s: cfg.Settings) -> int:
         await w.stop()
         await runner.cleanup()
         await ds.close()
+        await dp.close()
         await dbx.close()
         if rugcheck is not None:
             await rugcheck.close()

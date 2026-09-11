@@ -235,6 +235,12 @@ class JupiterSwap:
         self._quote_cache_max = int(config.get(env, "JUPITER_QUOTE_CACHE_MAX",
                                                 _DEFAULT_QUOTE_CACHE_MAX))
 
+        # Local banned token list (fallback when Jupiter DNS fails)
+        from src.banned_tokens import LocalBanList
+        ban_file = config.get(env, "BANNED_TOKENS_FILE", "banned_tokens.json")
+        ban_ttl = float(config.get(env, "BANNED_TOKENS_TTL_S", 604800))  # 7 days
+        self._local_ban_list = LocalBanList(ban_file=ban_file, ttl_s=ban_ttl)
+
         key = private_key or config.get(env, "PRIVATE_KEY")
         self._keypair: Keypair | None = None
         self._private_key: str = ""  # raw base58 for PumpAPI
@@ -356,7 +362,13 @@ class JupiterSwap:
         DNS/connect failures are transient — retry once with a short delay
         before disabling the client.  A single DNS blip should not permanently
         disable the scam check for the rest of the session.
+
+        Also checks the local banned token list as a fallback.
         """
+        # Check local ban list first (always available)
+        if self._local_ban_list and self._local_ban_list.is_banned(mint):
+            return True
+
         if not self._token_client:
             return False
         for attempt in range(2):
@@ -379,6 +391,62 @@ class JupiterSwap:
                     self._token_client = None
                 return False
         return False
+
+    async def token_audit(self, mint: str) -> dict[str, Any]:
+        """Fetch token audit data from Jupiter's /tokens/v2/search endpoint.
+
+        Returns a dict with safety fields:
+          - mint_authority_disabled: bool (safe if True)
+          - freeze_authority_disabled: bool (safe if True)
+          - is_sus: bool (True if flagged as suspicious)
+          - top_holders_pct: float (0-100, lower is safer)
+          - dev_balance_pct: float (0-100, lower is safer)
+          - dev_mints: int (number of developer mint events)
+          - organic_score: int (0-100, higher is safer)
+          - organic_score_label: str ("high"/"medium"/"low")
+          - holder_count: int
+          - available: bool (True if API responded successfully)
+
+        Fail-open: returns available=False on any error so callers never block.
+        Cost: 10 credits per call.
+        """
+        result: dict[str, Any] = {"available": False}
+        try:
+            r = await asyncio.wait_for(
+                self._client.get(
+                    f"{self._base}/tokens/v2/search",
+                    params={"query": mint},
+                    headers=self._headers,
+                ),
+                timeout=8.0,
+            )
+            if r.status_code != 200:
+                log.debug("jupiter token audit HTTP %s for %s", r.status_code, mint[:8])
+                return result
+            data = r.json()
+            items = data if isinstance(data, list) else data.get("items", [])
+            if not items:
+                return result
+            item = items[0]
+            audit = item.get("audit") or {}
+            result.update({
+                "available": True,
+                "mint_authority_disabled": audit.get("mintAuthorityDisabled", True),
+                "freeze_authority_disabled": audit.get("freezeAuthorityDisabled", True),
+                "is_sus": "isSus" in audit and bool(audit["isSus"]),
+                "top_holders_pct": float(audit.get("topHoldersPercentage") or 0),
+                "dev_balance_pct": float(audit.get("devBalancePercentage") or 0),
+                "dev_mints": int(audit.get("devMints") or 0),
+                "organic_score": int(item.get("organicScore") or 0),
+                "organic_score_label": str(item.get("organicScoreLabel") or ""),
+                "holder_count": int(item.get("holderCount") or 0),
+                "is_verified": bool(item.get("isVerified")),
+            })
+        except asyncio.TimeoutError:
+            log.debug("jupiter token audit timed out %s", mint[:8])
+        except Exception as exc:  # noqa: BLE001
+            log.debug("jupiter token audit failed %s: %s", mint[:8], exc)
+        return result
 
     @property
     def ready(self) -> bool:

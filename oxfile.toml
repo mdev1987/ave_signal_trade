@@ -10,9 +10,11 @@ crash_restart_limit = 0
 restart_delay_secs = 5
 stop_signal = "SIGTERM"
 stop_timeout_secs = 20
-health_cmd = "/usr/bin/find /home/mdev/Programming/ave_signal_trade/bot_logs/bot.log -mmin -6"
+# Health check: verify bot.log AND shadow_book.json are being updated
+# This catches crashes where the process is alive but not functioning
+health_cmd = "/usr/bin/test -f /home/mdev/Programming/ave_signal_trade/bot_logs/bot.log -a -f /home/mdev/Programming/ave_signal_trade/shadow_book.json && /usr/bin/test $(( $(date +%s) - $(stat -c %Y /home/mdev/Programming/ave_signal_trade/bot_logs/bot.log) )) -lt 360 && /usr/bin/test $(( $(date +%s) - $(stat -c %Y /home/mdev/Programming/ave_signal_trade/shadow_book.json) )) -lt 360"
 health_interval_secs = 60
-health_timeout_secs = 5
+health_timeout_secs = 10
 health_max_failures = 3
 
 [apps.env]

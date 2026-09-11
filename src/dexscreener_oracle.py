@@ -116,3 +116,73 @@ class DexScreenerClient:
         except Exception as e:  # noqa: BLE001
             logger.warning("dexscreener token-pairs failed %s: %s %s", ca[:8], type(e).__name__, e)
             return None
+
+    async def token_boosts(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Get latest boosted tokens from DexScreener.
+
+        Returns list of token dicts with address, name, symbol, boost amount, etc.
+        Useful as a social signal for what's trending.
+        """
+        await self._ensure_started()
+        try:
+            # DexScreener token boosts endpoint
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(
+                    "https://api.dexscreener.com/token-boosts/latest/v1",
+                )
+                if r.status_code != 200:
+                    return []
+                data = r.json()
+                if not isinstance(data, list):
+                    return []
+                return data[:limit]
+        except Exception as e:  # noqa: BLE001
+            logger.debug("dexscreener token-boosts failed: %s", e)
+            return []
+
+    async def trending_metas(self) -> list[dict[str, Any]]:
+        """Get trending metas/sectors from DexScreener.
+
+        Returns list of meta dicts with name, slug, volume, etc.
+        Useful for identifying which sectors are hot.
+        """
+        await self._ensure_started()
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(
+                    "https://api.dexscreener.com/metas/trending/v1",
+                )
+                if r.status_code != 200:
+                    return []
+                data = r.json()
+                if not isinstance(data, list):
+                    return []
+                return data[:10]
+        except Exception as e:  # noqa: BLE001
+            logger.debug("dexscreener trending-metas failed: %s", e)
+            return []
+
+    async def search_pairs(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        """Search for pairs by token name/symbol/address.
+
+        Returns list of normalized pair dicts.
+        Useful for validating token symbols from Telegram signals.
+        """
+        await self._ensure_started()
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(
+                    "https://api.dexscreener.com/latest/dex/search",
+                    params={"q": query},
+                )
+                if r.status_code != 200:
+                    return []
+                data = r.json()
+                pairs = data.get("pairs") or []
+                return [self._pair_to_dict(p) for p in pairs[:limit]]
+        except Exception as e:  # noqa: BLE001
+            logger.debug("dexscreener search-pairs failed for %s: %s", query, e)
+            return []
