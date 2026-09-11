@@ -348,20 +348,34 @@ class JupiterSwap:
                 pass
 
     async def is_token_banned(self, mint: str) -> bool:
-        """Check if a token is on Jupiter's banned list (known scam)."""
+        """Check if a token is on Jupiter's banned list (known scam).
+
+        DNS/connect failures are transient — retry once with a short delay
+        before disabling the client.  A single DNS blip should not permanently
+        disable the scam check for the rest of the session.
+        """
         if not self._token_client:
             return False
-        try:
-            if not self._token_client_connected:
-                await self._token_client.connect()
-                self._token_client_connected = True
-            return await self._token_client.is_banned(mint)
-        except Exception:  # noqa: BLE001
-            # Disable client on DNS/connect failure to avoid warning spam
-            if not self._token_client_connected:
-                log.debug("TokenClient disabled after connect failure")
-                self._token_client = None
-            return False
+        for attempt in range(2):
+            try:
+                if not self._token_client_connected:
+                    await asyncio.wait_for(
+                        self._token_client.connect(), timeout=5.0)
+                    self._token_client_connected = True
+                return await self._token_client.is_banned(mint)
+            except Exception as exc:  # noqa: BLE001
+                err_str = str(exc).lower()
+                is_dns = any(kw in err_str for kw in ("name or service", "dns", "resolve", "getaddrinfo"))
+                if is_dns and attempt == 0:
+                    # DNS blip — wait briefly and retry once
+                    await asyncio.sleep(1.0)
+                    continue
+                # Non-DNS or second failure — disable client to avoid spam
+                if not self._token_client_connected:
+                    log.debug("TokenClient disabled after connect failure: %s", exc)
+                    self._token_client = None
+                return False
+        return False
 
     @property
     def ready(self) -> bool:
@@ -519,6 +533,7 @@ class JupiterSwap:
         amount: int,
         slippage_bps: int | None,
         taker: str | None = None,
+        _retry_transient: bool = False,
     ) -> dict:
         """Request a swap quote (and, with a taker, an assembled transaction).
 
@@ -540,6 +555,10 @@ class JupiterSwap:
         "does a tradable route exist right now and what would it net" — the
         taker-less quote answers exactly that, and a dead pool fails it with
         the same "Failed to get quotes" as live.
+
+        When ``_retry_transient=True``, transient 5xx/timeout errors are
+        retried up to 2 times with exponential backoff (1s, 2s) before
+        raising — prevents a single Jupiter blip from aborting a sell.
         """
         params = {
             "inputMint": input_mint,
@@ -551,34 +570,54 @@ class JupiterSwap:
         if taker is not None:
             params["taker"] = str(taker)
 
-        async def _get() -> httpx.Response:
-            return await self._client.get(
-                f"{self._base}/swap/v2/order", params=params, headers=self._headers
-            )
+        max_attempts = 3 if _retry_transient else 1
+        last_exc: JupiterError | None = None
+        for attempt in range(max_attempts):
+            async def _get() -> httpx.Response:
+                return await self._client.get(
+                    f"{self._base}/swap/v2/order", params=params, headers=self._headers
+                )
 
-        try:
-            resp = await asyncio.wait_for(_get(), timeout=self._order_timeout_s)
-        except (TimeoutError, httpx.TimeoutException) as exc:
-            raise JupiterError(f"order timed out after {self._order_timeout_s:.0f}s: {exc}",
-                               status=0) from exc
-        if resp.status_code != 200:
-            raise JupiterError(
-                f"order HTTP {resp.status_code}: {resp.text[:200]}",
-                status=resp.status_code,
-            )
-        try:
-            data = resp.json()
-        except ValueError as exc:
-            raise JupiterError(
-                f"order invalid JSON: {resp.text[:200]}", status=200
-            ) from exc
-        transaction = data.get("transaction")
-        if taker is not None and not transaction:
-            raise JupiterError(
-                f"order failed: {data.get('errorMessage') or data.get('error') or data}",
-                status=200,
-            )
-        return data
+            try:
+                resp = await asyncio.wait_for(_get(), timeout=self._order_timeout_s)
+            except (TimeoutError, httpx.TimeoutException) as exc:
+                jexc = JupiterError(
+                    f"order timed out after {self._order_timeout_s:.0f}s: {exc}",
+                    status=0,
+                )
+                if _retry_transient and attempt < max_attempts - 1:
+                    last_exc = jexc
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+                raise jexc from exc
+            if resp.status_code == 503 or (500 <= resp.status_code < 600):
+                if _retry_transient and attempt < max_attempts - 1:
+                    last_exc = JupiterError(
+                        f"order HTTP {resp.status_code}: {resp.text[:200]}",
+                        status=resp.status_code,
+                    )
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+            if resp.status_code != 200:
+                raise JupiterError(
+                    f"order HTTP {resp.status_code}: {resp.text[:200]}",
+                    status=resp.status_code,
+                )
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise JupiterError(
+                    f"order invalid JSON: {resp.text[:200]}", status=200
+                ) from exc
+            transaction = data.get("transaction")
+            if taker is not None and not transaction:
+                raise JupiterError(
+                    f"order failed: {data.get('errorMessage') or data.get('error') or data}",
+                    status=200,
+                )
+            return data
+        # All retries exhausted
+        raise last_exc or JupiterError("order: all retries exhausted", status=0)
 
     # ---------------------------------------------------------------- signing
     def _sign(self, b64_transaction: str) -> str:
@@ -1237,6 +1276,7 @@ class JupiterSwap:
                     amount_raw,
                     slippage,
                     str(self._keypair.pubkey()),
+                    _retry_transient=True,
                 )
             except JupiterError as exc:
                 log.warning("sell order @%dbps failed: %s", slippage, exc)

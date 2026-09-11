@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 # Reconnect backoff: start at 2s, max 60s
 _RECONNECT_MIN = 2.0
 _RECONNECT_MAX = 60.0
-_MAX_RECONNECT_ATTEMPTS = 20   # pause after this many consecutive failures
-_RECONNECT_PAUSE_S = 300.0    # 5 min cooldown before retrying after cap hit
+_MAX_RECONNECT_ATTEMPTS = 10   # pause after this many consecutive failures
+_RECONNECT_PAUSE_S = 120.0    # 2 min cooldown (was 5 min — too long for transient outages)
 _PING_INTERVAL = 30.0
 
 # Stream types

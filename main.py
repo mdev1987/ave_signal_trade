@@ -484,6 +484,14 @@ class ShadowBook:
                         is_dead = True
                         log.warning("dead pool %s (%s): liq=$%.0f < $%d, force-closing",
                                     ca[:10], pos["symbol"], liq, DEAD_LIQ_USD)
+                # Also force-close when Jupiter has been failing for a while
+                # and DexScreener has a price — prevents positions from being
+                # stuck indefinitely when Jupiter API is down.
+                if (not is_dead and jup_mult is None and dex_mult is not None
+                        and pos.get("_quote_fail_count", 0) >= 10):
+                    is_dead = True
+                    log.warning("stuck position %s (%s): %d Jupiter failures, force-closing via DexScreener",
+                                ca[:10], pos["symbol"], pos.get("_quote_fail_count", 0))
 
                 # --- max_hold timeout check (runs even when pricing fails) ---
                 age_s = time.time() - pos["ts"]
@@ -620,6 +628,18 @@ class ShadowBook:
                                     mult <= peak_mult * (1 - trail_pct):
                                 exit_reason = "trail"
                 if exit_reason:
+                    # --- Jupiter sell fallback: retry then force-close ---
+                    # When Jupiter is down (503/timeout) but DexScreener has a
+                    # price and an exit condition is met, force-close using the
+                    # DexScreener price.  This prevents positions from getting
+                    # stuck for hours when Jupiter's API is flaky.
+                    jup_down = (pos.get("_quote_fail_count", 0) >= 3
+                                and jup_mult is None and dex_mult is not None)
+                    if jup_down and exit_reason not in ("dead_liquidity",):
+                        log.warning("JUPITER DOWN %s (%s): force-closing via DexScreener (fails=%d)",
+                                    ca[:10], pos["symbol"],
+                                    pos.get("_quote_fail_count", 0))
+                        exit_reason = "jupiter_down_force_close"
                     # --- PumpAPI sell fallback for bonding curve tokens ---
                     # When position was bought via PumpAPI (entry_mode=pumpapi),
                     # tokens_raw is 0 and Jupiter can't sell it. Use PumpAPI sell.
@@ -1261,11 +1281,26 @@ async def _run_watch(s: cfg.Settings) -> int:
                         log.info("dbotx WARN %s (%s): mint/freeze but liq=$%.0f > $5k — allowing",
                                  ca[:10], sym, _liq)
                     if info["top10"] > s.dbotx_top10_max:
-                        reason = f"skip:unsafe(top10={info['top10']:.0%})"
-                        if _skip_log.get(ca, 0) < time.time() - 300:
-                            _skip_log[ca] = time.time()
-                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-                        return
+                        # Dynamic top10 threshold: pump.fun tokens naturally
+                        # have higher concentration at low MC.  Relax the
+                        # gate for tokens under $500k MC so early consensus
+                        # signals aren't all rejected.
+                        _mc = (snap or {}).get("mcap") or 0
+                        if _mc > 0 and _mc < 100_000:
+                            _top10_limit = 0.80  # very early, high concentration OK
+                        elif _mc > 0 and _mc < 500_000:
+                            _top10_limit = 0.60  # pump.fun graduation range
+                        else:
+                            _top10_limit = s.dbotx_top10_max
+                        if info["top10"] > _top10_limit:
+                            reason = f"skip:unsafe(top10={info['top10']:.0%}>{_top10_limit:.0%},mc=${_mc:.0f})"
+                            if _skip_log.get(ca, 0) < time.time() - 300:
+                                _skip_log[ca] = time.time()
+                                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                            return
+                        else:
+                            log.info("dbotx TOP10 relaxed %s (%s): top10=%.0f%% <= %.0f%% (mc=$%.0f)",
+                                     ca[:10], sym, info["top10"] * 100, _top10_limit * 100, _mc)
                     if info["dev_position"] not in (None, "cleared"):
                         reason = f"skip:unsafe(dev={info['dev_position']})"
                         if _skip_log.get(ca, 0) < time.time() - 300:
