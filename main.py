@@ -1589,7 +1589,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                             down_for = int(now - down_since[name])
                             log.warning("watchdog: %s DOWN for %ds", name, down_for)
                             alerted[name] = now
-                            if notifier is not None:
+                            if notifier is not None and name != "cabalspy":
                                 asyncio.create_task(notifier.send_alert(
                                     f"feed down: {name}",
                                     f"no data for {down_for}s")).add_done_callback(
