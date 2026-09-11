@@ -501,18 +501,21 @@ class ShadowBook:
                     log.info("flat timeout %s (%s): age=%.1fh peak=%.3f",
                              ca[:10], pos["symbol"], age_s / 3600,
                              pos.get("peak_mult", 1.0))
-                elif (age_s < 1800 and pos.get("peak_mult", 1.0) < 1.05
+                elif (age_s < 1800 and pos.get("peak_mult", 1.0) < 1.03
                         and not pos.get("tp_taken")
                         and pos.get("source") != "memetracker"):
                     # Quick bleed guard: force-close positions <30m old that
-                    # never showed >5% gain. Prevents slow-bleed losers from
-                    # holding slots. Winners hit 1.05x+ within minutes.
+                    # never showed >3% gain. Prevents slow-bleed losers from
+                    # holding slots. Winners hit 1.03x+ within minutes.
                     # MemeTracker exempt: bonding curve tokens can't be priced
                     # by DexScreener until migration, so peak stays at 1.0.
                     exit_reason = "quick_bleed"
-                    log.info("quick bleed %s (%s): age=%.0fm peak=%.3f",
-                             ca[:10], pos["symbol"], age_s / 60,
-                             pos.get("peak_mult", 1.0))
+                    _qb_last = pos.get("_qb_log_ts", 0)
+                    if time.time() - _qb_last > 60:
+                        log.info("quick bleed %s (%s): age=%.0fm peak=%.3f",
+                                 ca[:10], pos["symbol"], age_s / 60,
+                                 pos.get("peak_mult", 1.0))
+                        pos["_qb_log_ts"] = time.time()
 
                 # Track peak using ONLY the executable price.
                 best_mult = jup_mult if jup_mult is not None else dex_mult
@@ -525,7 +528,7 @@ class ShadowBook:
                 if mult is None and not exit_reason:
                     continue  # can't price, not dead yet — leave open
                 peak_mult = pos.get("peak_mult", mult)
-                if not is_dead and exit_reason not in ("timeout", "flat_timeout"):
+                if not is_dead and exit_reason not in ("timeout", "flat_timeout", "quick_bleed"):
                     exit_reason = None  # reset; dead_liquidity/timeout already set above
                 # ---- early adverse filter (one-shot at early_filter_window_s):
                 # Track worst/best excursion during the early window, then
@@ -649,10 +652,11 @@ class ShadowBook:
                              "mult": round(trade_mult, 3), "pnl_sol": round(pnl, 5),
                              "hold_min": int((time.time() - pos["ts"]) / 60),
                              "wallets": pos.get("wallets", []),
-                             "source": pos.get("source", "pumpapi")}
+                             "source": pos.get("source", "pumpapi"),
+                             "size_sol": round(pos["size_sol"], 5)}
                     self.closed.append(rec)
                     bal_before = self.balance_sol
-                    self.balance_sol += self.size_sol + pnl
+                    self.balance_sol += pos["size_sol"] + pnl
                     del self.open[ca]
                     # Time-based cooldown: allow re-entry after cooldown_s
                     self._cooldown[ca] = time.time() + self.reentry_cooldown_s
