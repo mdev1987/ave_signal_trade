@@ -323,11 +323,28 @@ class ShadowBook:
                 tokens_raw = q.output_amount
                 entry_note = f"jup impact={q.price_impact_pct:.2f}%"
                 if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
-                    logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                                 reason=f"untradable:impact{q.price_impact_pct:.2f}%")
-                    log.info("shadow skip %s (%s): impact %.2f%%",
-                             ca[:10], symbol, q.price_impact_pct)
-                    return
+                    # PumpAPI fallback: try bonding curve when Jupiter impact is too high
+                    if self.jupiter._pumpapi_enabled():
+                        log.info("Jupiter impact %.2f%% too high for %s (%s), trying PumpAPI",
+                                 q.price_impact_pct, ca[:10], symbol)
+                        p_res = await self.jupiter.buy_via_pumpapi(ca, _size)
+                        if p_res.success:
+                            tokens_raw = 0
+                            entry_note = "pumpapi_impact_fallback"
+                            entry_mode = "pumpapi"
+                            px = signal_price if signal_price > 0 else market_px
+                        else:
+                            logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                         reason=f"impact{q.price_impact_pct:.2f}%:pumpapi_failed:{p_res.error}")
+                            log.info("shadow skip %s (%s): impact %.2f%% and PumpAPI failed: %s",
+                                     ca[:10], symbol, q.price_impact_pct, p_res.error)
+                            return
+                    else:
+                        logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                     reason=f"untradable:impact{q.price_impact_pct:.2f}%")
+                        log.info("shadow skip %s (%s): impact %.2f%%",
+                                 ca[:10], symbol, q.price_impact_pct)
+                        return
                 if self.jupiter.quote_stability_checks > 0:
                     buy_slip = None if self.jupiter._buy_rtse else self.jupiter._slippage_bps
                     stable, stab_reason, stab_info = await self.jupiter.check_quote_stability(

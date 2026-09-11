@@ -321,11 +321,14 @@ class JupiterSwap:
         # Token safety — Jupiter's banned token list for pre-trade scam checks
         self._token_client: TokenClient | None = None
         self._token_client_connected = False
-        try:
-            jup_api_key = config.get(env, "JUPITER_API_KEY", "")
-            self._token_client = TokenClient(api_key=jup_api_key, cache_ttl=300.0)
-        except Exception:  # noqa: BLE001
-            log.debug("TokenClient init skipped")
+        if config.get_bool(env, "JUPITER_TOKEN_CHECK_ENABLED", True):
+            try:
+                jup_api_key = config.get(env, "JUPITER_API_KEY", "")
+                self._token_client = TokenClient(api_key=jup_api_key, cache_ttl=300.0)
+            except Exception:  # noqa: BLE001
+                log.debug("TokenClient init skipped")
+        else:
+            log.debug("TokenClient disabled by JUPITER_TOKEN_CHECK_ENABLED=false")
         self._lat_sum = 0.0
         self._lat_count = 0
         self._lat_max = 0.0
