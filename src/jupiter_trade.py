@@ -1364,10 +1364,12 @@ class JupiterSwap:
     def _pumpapi_enabled(self) -> bool:
         """Check if PumpAPI fallback is enabled and configured."""
         env = config.load_env()
-        return (
-            config.get_bool(env, "PUMPAPI_ENABLED", False)
-            and bool(self._private_key)
-        )
+        if not config.get_bool(env, "PUMPAPI_ENABLED", False):
+            return False
+        # In dry_run mode, allow PumpAPI (paper mode handles it)
+        if self._dry_run:
+            return True
+        return bool(self._private_key)
 
     async def buy_via_pumpapi(
         self, mint: str, amount_sol: float
