@@ -732,12 +732,34 @@ class JupiterSwap:
 
         Returns ``{"ok": True, "units": N, "logs": [...]}`` on success or
         ``{"ok": False, "reason": "...", "logs": [...]}`` on failure.
-        Only called in live mode — paper mode has no real tx to simulate.
+        Uses SIMULATE_PRIVATE_KEY in paper mode for signing.
         """
-        if self._keypair is None:
-            return {"ok": False, "reason": "paper_mode"}
+        # Use real keypair in live mode, throwaway keypair in paper mode
+        sim_keypair = self._keypair
+        if sim_keypair is None:
+            sim_pk = config.get(config.load_env(), "SIMULATE_PRIVATE_KEY", "")
+            if sim_pk:
+                try:
+                    sim_keypair = Keypair.from_base58_string(sim_pk.strip())
+                except Exception:
+                    return {"ok": False, "reason": "bad_simulate_key"}
+            else:
+                return {"ok": False, "reason": "paper_mode_no_sim_key"}
         try:
-            signed_b64 = self._sign(b64_transaction)
+            raw = base64.b64decode(b64_transaction)
+            tx = VersionedTransaction.from_bytes(raw)
+            versioned_message = b"\x80" + bytes(tx.message)
+            signature = sim_keypair.sign_message(versioned_message)
+            sigs = list(tx.signatures)
+            required = tx.message.header.num_required_signatures
+            signer_keys = tx.message.account_keys[:required]
+            try:
+                slot = signer_keys.index(sim_keypair.pubkey())
+            except ValueError:
+                slot = 0  # use first slot if keypair not in signers
+            sigs[slot] = signature
+            signed = VersionedTransaction.populate(tx.message, sigs)
+            signed_b64 = base64.b64encode(bytes(signed)).decode()
         except Exception as e:
             return {"ok": False, "reason": f"sign_failed:{e}"}
 
