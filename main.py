@@ -538,13 +538,13 @@ class ShadowBook:
                 elif (pos.get("source") != "memetracker"
                         and not pos.get("tp_taken")):
                     peak = pos.get("peak_mult", 1.0)
-                    # Tier 1: dead token — no movement at all after 5 min
-                    if age_s > 300 and peak < 1.015:
+                    # Tier 1: dead token — no movement at all after 8 min
+                    if age_s > 480 and peak < 1.015:
                         exit_reason = "quick_bleed"
                         log.info("dead token kill %s (%s): age=%.0fm peak=%.3f",
                                  ca[:10], pos["symbol"], age_s / 60, peak)
-                    # Tier 2: weak token — <3% gain within 30 min
-                    elif age_s < 1800 and peak < 1.03:
+                    # Tier 2: weak token — <3% gain within 45 min
+                    elif age_s < 2700 and peak < 1.03:
                         exit_reason = "quick_bleed"
                         _qb_last = pos.get("_qb_log_ts", 0)
                         if time.time() - _qb_last > 120:
