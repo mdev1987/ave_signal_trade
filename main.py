@@ -501,21 +501,22 @@ class ShadowBook:
                     log.info("flat timeout %s (%s): age=%.1fh peak=%.3f",
                              ca[:10], pos["symbol"], age_s / 3600,
                              pos.get("peak_mult", 1.0))
-                elif (age_s < 1800 and pos.get("peak_mult", 1.0) < 1.03
-                        and not pos.get("tp_taken")
-                        and pos.get("source") != "memetracker"):
-                    # Quick bleed guard: force-close positions <30m old that
-                    # never showed >3% gain. Prevents slow-bleed losers from
-                    # holding slots. Winners hit 1.03x+ within minutes.
-                    # MemeTracker exempt: bonding curve tokens can't be priced
-                    # by DexScreener until migration, so peak stays at 1.0.
-                    exit_reason = "quick_bleed"
-                    _qb_last = pos.get("_qb_log_ts", 0)
-                    if time.time() - _qb_last > 60:
-                        log.info("quick bleed %s (%s): age=%.0fm peak=%.3f",
-                                 ca[:10], pos["symbol"], age_s / 60,
-                                 pos.get("peak_mult", 1.0))
-                        pos["_qb_log_ts"] = time.time()
+                elif (pos.get("source") != "memetracker"
+                        and not pos.get("tp_taken")):
+                    peak = pos.get("peak_mult", 1.0)
+                    # Tier 1: dead token — no movement at all after 5 min
+                    if age_s > 300 and peak < 1.015:
+                        exit_reason = "quick_bleed"
+                        log.info("dead token kill %s (%s): age=%.0fm peak=%.3f",
+                                 ca[:10], pos["symbol"], age_s / 60, peak)
+                    # Tier 2: weak token — <3% gain within 30 min
+                    elif age_s < 1800 and peak < 1.03:
+                        exit_reason = "quick_bleed"
+                        _qb_last = pos.get("_qb_log_ts", 0)
+                        if time.time() - _qb_last > 120:
+                            log.info("quick bleed %s (%s): age=%.0fm peak=%.3f",
+                                     ca[:10], pos["symbol"], age_s / 60, peak)
+                            pos["_qb_log_ts"] = time.time()
 
                 # Track peak using ONLY the executable price.
                 best_mult = jup_mult if jup_mult is not None else dex_mult
