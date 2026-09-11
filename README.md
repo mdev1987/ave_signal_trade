@@ -1,130 +1,137 @@
-# Smart-Watch — Solana trading bot
+# ave_signal_trade — Solana KOL-consensus trading bot
 
-Two modes:
+Track smart-money wallets, filter consensus buys, trade via Jupiter with trailing stops.
 
-1. **TG-first** (`tg-trade`) — Listens to @gmgnsignals Telegram channel in real-time, filters signals, buys via Jupiter, tracks positions with trailing stops.
-2. **Watch** (`watch`) — Tracks KOL/smart-money wallets, opens positions on consensus buys.
-
-## Architecture (TG-first)
+## How it works
 
 ```
-@GMGNsignals (Telegram)
-      |
-      v
-TgSignalFeed (Telethon real-time events)
-      |
-      v
-parse_tg_signal() — extract CA, MC, liq, holders
-      |
-      v
-Quality gates — reject if MC < $5K, liq < $1K, holders < 10
-      |
-      v
-DexScreener — fetch live price, liquidity, 1h change
-      |
-      v
-DexPaprika — cross-validate rug signals (sell ratio, dead tokens)
-      |
-      v
-Secondary gates — reject if dumping (-15% h1), no volume
-      |
-      v
-JupiterSwap — quote + execute buy (paper or live)
-      |
-      v
-PositionManager — track prices, enforce exits
-      |
-      ├── Hard stop: -25% from entry
-      ├── Trailing stop: -25% from peak (activates at 1.4x)
-      ├── Rapid crash: >40% drop in <2min → force exit
-      ├── Breakeven lock: after 1st TP, stop moves to entry
-      ├── TP ladder: +30% (40%) / +80% (30%) / +200% (30%)
-      ├── Stale price: force exit if no update in 5min
-      └── Max hold: 24h
+CabalSpy / Kolexplorer / MemeTracker
+       |
+       v
+Consensus engine — aggregate wallet buys per token
+       |
+       v
+Gate filter — min wallets, min score, early DD, stable symbol
+       |
+       v
+Adaptive sizing — scale by wallet quality + source boost
+       |
+       v
+Jupiter Swap — quote + execute (simulate-first)
+       |
+       v
+Position tracker — trailing stop, TP ladder, dead-token kill
+       |
+       ├── Dead token: peak <1.015 after 5min → force close
+       ├── Quick bleed: peak <1.03 within 30min → force close
+       ├── Hard stop: -30% from entry
+       ├── Trailing stop: -15% from peak (activates at 1.4x)
+       ├── Breakeven lock: after 1st TP, stop moves to entry
+       ├── TP ladder: +20% (40%) / +80% (30%) / +200% (30%)
+       ├── Flat timeout: no price update for 2h
+       └── Max hold: 24h
 ```
 
 ## Running
 
 ```bash
-uv run main.py tg-trade              # TG-first trader (foreground)
-uv run main.py watch                 # KOL consensus watcher (foreground)
+uv run main.py track-wallet          # KOL consensus tracker (primary)
+uv run main.py tg-trade              # TG signal trader (disabled)
+uv run main.py status                # Print status card
+```
+
+## 24/7 via OxMgr
+
+```bash
+oxmgr apply ./oxfile.toml           # deploy / restart
+oxmgr stop track-wallet
+oxmgr logs track-wallet -f
 ```
 
 ## Project structure
 
 ```
-main.py                  # entry point: watch / tg-trade / sim / wallet-new / status
-main_tg.py               # TG-first trader (PositionManager, signal handler)
+main.py                     # entry point + position management
 src/
-  config.py              # .env parser + Settings dataclass
-  tg_signal_feed.py      # Telegram @gmgnsignals listener (real-time events)
-  dexscreener.py         # DexScreener REST oracle
-  jupiter_swap.py        # Jupiter Swap V2 client
-  notifier.py            # Telegram notifications (rich trade cards)
-  watcher.py             # smart-wallet watcher (watch mode)
-  wallet_weights.py      # wallet-quality weights (watch mode)
-  pair_perf.py           # adaptive pair-quality multiplier (watch mode)
-  dbotx.py               # DBotX fail-open rug filter (watch mode)
-  pump_stream.py         # pumpapi.io WebSocket firehose (watch mode)
-  tatum_notify.py        # Tatum push subscriptions (watch mode)
-  wallet_discovery.py    # batch wallet discovery (watch mode)
-  soltracker.py          # SolanaTracker API client (watch mode)
-  logs.py                # logging + journal (JSONL)
+  config.py                 # .env parser + Settings dataclass
+  jupiter_trade.py          # Jupiter Swap V2 + ResilientRPC + TokenClient
+  tg_signal_feed.py         # Telegram @gmgnsignals listener (Telethon)
+  dexscreener_oracle.py     # DexScreener REST wrapper
+  kolexplorer.py            # Kolexplorer KOL token monitor
+  cabalspy.py               # CabalSpy KOL wallet WebSocket
+  helius_ws.py              # Helius WebSocket with key rotation
+  helius_client.py          # Helius REST API client
+  pump_stream.py            # pumpapi.io WebSocket firehose
+  vybe.py                   # Vybe token data API
+  rugcheck.py               # RugCheck rug detection
+  dbotx.py                  # DBotX fail-open rug filter
+  wallet_weights.py         # wallet-quality weighting
+  pair_perf.py              # adaptive pair-quality multiplier
+  wallet_discovery.py       # batch wallet discovery
+  notifier.py               # Telegram notifications
+  tatum_notify.py           # Tatum push subscriptions
+  logs.py                   # logging + journal (JSONL)
 scripts/
-  discover_wallets.py    # expand watchlist from SolanaTracker leaderboard
-  wallet_perf.py         # rank wallets by PnL / win rate
-  seed_pair_perf.py      # seed pair_performance.json from past journal
-  dexscreener_kol.py     # headless scrape Top-Gainers for KOL wallets
-  gen_wallets_from_replay.py  # generate wallet candidates from parquet
+  discover_wallets.py       # expand watchlist from SolanaTracker
+  wallet_perf.py            # rank wallets by PnL / win rate
+  recalc_wallet_weights.py  # recalculate wallet scores
+  seed_pair_perf.py         # seed pair_performance.json from journal
+  dexscreener_kol.py        # scrape KOL wallets from DexScreener
+  gen_wallets_from_replay.py # generate wallet candidates from parquet
 backtests/
-  backtest_consensus.py  # wallet-consensus strategy backtest
-  backtest_ideal.py      # upper-bound test with perfect wallet list
-  backtest_v2.py         # sweep exit ladders x consensus x wallet-quality
+  backtest_consensus.py     # wallet-consensus strategy backtest
+  backtest_ideal.py         # upper-bound test with perfect wallet list
+  backtest_v2.py            # sweep exit ladders x consensus x wallet-quality
+  backtest_excursion.py     # price excursion analysis
+  backtest_live.py          # replay live trades
 tests/
-  test_watcher_core.py   # unit tests: Shyft tx parsing + status card
+  test_watcher_core.py      # unit tests
 ```
-
-## Commands
-
-| Command | What it does |
-|---|---|
-| `uv run main.py tg-trade` | TG-first trader (real-time signals + position tracking) |
-| `uv run main.py watch` | KOL consensus watcher (wallet tracking + shadow book) |
-| `uv run main.py sim <CA>` | Jupiter round-trip quote check (paper) |
-| `uv run main.py sim <CA> --live --yes` | Execute real buy+sell on throwaway wallet |
-| `uv run main.py wallet-new` | Create throwaway trading wallet |
-| `uv run main.py wallet-show` | Show throwaway address/balance |
-| `uv run main.py status` | Print status card |
-| `uv run main.py tatum-setup` | Register push subscriptions (watch mode) |
-| `uv run scripts/wallet_perf.py` | Rank wallets by PnL / win rate |
 
 ## Configuration
 
-Everything lives in `.env` (template: `.env.example`). Key groups:
+All config in `.env` (template: `.env.example`). Key groups:
 
-- **Telegram signal feed**: `TG_API_ID`, `TG_API_HASH`, `TG_PHONE`, `TG_SESSION_NAME`, `TG_MIN_MC`, `TG_MIN_LIQ`, `TG_MIN_HOLDERS`
-- **Position management**: `SIZE_SOL`, `TP_LADDER`, `TRAIL_RETRACE_PCT`, `HARD_STOP_PCT`, `MAX_HOLD_H`
-- **Trading mode**: `DRY_RUN=true` (paper) / `DRY_RUN=false` (live)
-- **Jupiter**: `JUPITER_API_KEY`, `JUPITER_SLIPPAGE_BPS`, `JUPITER_MAX_IMPACT_PCT`
-- **Data providers**: `DEXSCREENER_BASE_URL`, `DEXSCREENER_RPM`, `HELIUS_API_KEYS`
-- **Wallet weighting** (watch mode): `CONSENSUS_WEIGHT_THRESHOLD`, `REQUIRE_STRONG_WALLET`
-- **Shadow book** (watch mode): `MAX_OPEN_POSITIONS`, `PER_WALLET_MAX_POSITIONS`
+| Group | Key params |
+|-------|-----------|
+| **Wallets** | `CONSENSUS_WEIGHT_THRESHOLD`, `OPEN_MIN_WALLETS`, `WALLET_PERF_PATH` |
+| **Entry** | `OPEN_MAX_IMPACT_PCT`, `OPEN_MIN_H1_PCT`, `OPEN_MIN_M5_PCT`, `EARLY_FILTER_*` |
+| **Sizing** | `ADAPTIVE_SIZING`, `SIZE_SOL`, `SIZE_SOL_MIN/MAX` |
+| **Exit** | `TP_LADDER`, `TRAIL_RETRACE_PCT`, `HARD_STOP_PCT`, `FLAT_TIMEOUT_H`, `MAX_HOLD_H` |
+| **Risk** | `MAX_OPEN_POSITIONS`, `PER_WALLET_MAX_POSITIONS`, `REENTRY_COOLDOWN_S` |
+| **Trading** | `DRY_RUN`, `JUPITER_SLIPPAGE_BPS`, `PRIVATE_KEY` |
+| **Data** | `HELIUS_API_KEYS`, `SHYFT_API_KEY`, `CABALSPY_API_KEY` |
 
 ## State files
 
-- `tg_positions.json` — open positions (TG-first mode)
-- `tg_closed.json` — closed trade history
-- `shadow_book.json` — virtual positions/closed trades (watch mode)
-- `watcher_state.json` — per-wallet last-seen signatures (watch mode)
-- `wallet_performance.json` — wallet PnL/win-rate data
-- `pair_performance.json` — adaptive pair-quality multiplier store
-- `bot_logs/bot.log` — runtime log
-- `bot_logs/journal.jsonl` — structured event journal (JSONL)
+| File | Description |
+|------|-------------|
+| `shadow_book.json` | Virtual positions + closed trades |
+| `wallet_performance.json` | Per-wallet PnL / win rate |
+| `smart_money_wallets.json` | Tracked wallet addresses |
+| `pair_performance.json` | Adaptive pair-quality store |
+| `watcher_state.json` | Per-wallet last-seen signatures |
+| `bot_logs/watcher.log` | Runtime log |
+| `bot_logs/journal.json` | Structured event journal |
 
-## Running 24/7 (OxMgr)
+## Key tuning parameters
 
-```bash
-oxmgr apply ./oxfile.toml        # supervised, auto-restart, health-checked
-oxmgr status tg-trade            # or: oxmgr logs tg-trade -f
-oxmgr status track-wallet        # watch mode
-```
+| Parameter | Current | Effect |
+|-----------|---------|--------|
+| `CONSENSUS_WEIGHT_THRESHOLD` | 2.0 | Higher = fewer but stronger entries |
+| `OPEN_MIN_WALLETS` | 3 | Min wallets before opening |
+| `HARD_STOP_PCT` | 0.30 | Max loss per trade |
+| `TRAIL_RETRACE_PCT` | 0.15 | Trail sensitivity (tighter = lock gains faster) |
+| `EARLY_FILTER_DD_PCT` | 10.0 | Early drawdown kill threshold |
+| `FLAT_TIMEOUT_H` | 2 | Force close if no price updates |
+| `ADAPTIVE_SIZING` | true | Scale size by wallet quality |
+
+## Dependencies
+
+- Python 3.11+
+- `solana-rpc-resilient` — Solana RPC with retry + key rotation
+- `jupiter-swap-python` — Jupiter DEX swap client
+- `dexscreener-python` — DexScreener API wrapper
+- `telethon` — Telegram client for signal feeds
+- `websockets` — WebSocket clients for CabalSpy, pumpapi
+- `requests` — HTTP client for RugCheck, DBotX, Kolexplorer
