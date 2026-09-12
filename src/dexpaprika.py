@@ -1,16 +1,12 @@
 """DexPaprika client — Solana pool data and token prices.
 
-Used as a fallback when DexScreener is unavailable or rate-limited.
-DexPaprika provides richer data for Solana (102K+ pools, 31M+ txns)
-with free tier: 15 req/min, 50K credits/month.
-
-Key endpoints used:
-  - getNetworkPoolsFilter: find pools by volume/liquidity/price change
-  - getPoolDetails: get pool snapshot (price, liquidity, volume)
-  - getPoolOHLCV: historical candles (1m, 5m, 1h, etc.)
-  - getTokenDetails: token data by contract address
-  - getTokenMultiPrices: batch price lookup (up to 10 tokens)
-  - search: cross-network token/pool search
+Fallback when DexScreener is unavailable. Kept methods map to verified
+DexPaprika tools: getPoolDetails, getPoolOHLCV, getTokenDetails.
+Removed 2026-09-12: search_token (/networks/search), get_token_multi_prices,
+get_new_pools / get_trending_tokens (guessed /pools/search params incl. a
+"created_after": "1" placeholder) — unverified, unused in main.py, silently
+returned [] / garbage. Re-add only with a captured 200 response.
+Free tier: 15 req/min, 50K credits/month — fallback only, never hot path.
 """
 
 from __future__ import annotations
@@ -79,27 +75,10 @@ class DexPaprikaClient:
             return None
         return self._normalize_pool(data)
 
-    async def search_token(self, query: str) -> dict[str, Any] | None:
-        """Search for a token by name/symbol/address.
-
-        Returns first matching token's pool data normalized to DexScreener format.
-        """
-        data = await self._get(
-            "/networks/search",
-            params={"query": query, "limit": 5},
-        )
-        if not data:
-            return None
-        # Search returns tokens, pools, and dexes — find first Solana pool
-        pools = data.get("pools", []) if isinstance(data, dict) else []
-        for pool in pools:
-            if pool.get("network") == _NETWORK:
-                return self._normalize_pool(pool)
-        return None
-
     async def get_token_details(self, token_address: str) -> dict[str, Any] | None:
         """Get token data by contract address on Solana.
 
+        Used as the DexScreener fallback in ShadowBook.open_position.
         Returns token info with multi-timeframe price/volume metrics.
         """
         data = await self._get(
@@ -119,29 +98,6 @@ class DexPaprikaClient:
             "price_change_24h": data.get("price_change_percentage_24h"),
             "holder_count": data.get("holder_count"),
         }
-
-    async def get_token_multi_prices(
-        self, token_addresses: list[str]
-    ) -> dict[str, float]:
-        """Batch price lookup for up to 10 tokens on the same network.
-
-        Returns {token_address: price_usd} dict.
-        """
-        if not token_addresses or len(token_addresses) > 10:
-            return {}
-        data = await self._get(
-            f"/networks/{_NETWORK}/tokens/multi-prices",
-            params={"tokens": ",".join(token_addresses)},
-        )
-        if not data:
-            return {}
-        prices = {}
-        for item in (data.get("prices") or []):
-            addr = item.get("token_address")
-            price = item.get("price_usd")
-            if addr and price is not None:
-                prices[addr] = float(price)
-        return prices
 
     async def get_pool_ohlcv(
         self,
@@ -172,55 +128,6 @@ class DexPaprikaClient:
             }
             for c in candles
         ]
-
-    async def get_new_pools(
-        self,
-        min_liquidity: float = 0,
-        limit: int = 20,
-    ) -> list[dict[str, Any]]:
-        """Find newly created pools on Solana.
-
-        Returns list of normalized pool dicts sorted by creation time.
-        """
-        data = await self._get(
-            f"/networks/{_NETWORK}/pools/search",
-            params={
-                "created_after": "1",  # Unix timestamp placeholder
-                "liquidity_usd_min": min_liquidity,
-                "limit": limit,
-                "sort_by": "created_at",
-                "sort_dir": "desc",
-            },
-        )
-        if not data:
-            return []
-        pools = data.get("results", []) if isinstance(data, dict) else []
-        return [self._normalize_pool(p) for p in pools]
-
-    async def get_trending_tokens(
-        self,
-        min_volume_24h: float = 10000,
-        min_liquidity: float = 5000,
-        limit: int = 20,
-    ) -> list[dict[str, Any]]:
-        """Find trending tokens by 24h volume on Solana.
-
-        Returns list of normalized pool dicts sorted by volume.
-        """
-        data = await self._get(
-            f"/networks/{_NETWORK}/pools/search",
-            params={
-                "volume_24h_min": min_volume_24h,
-                "liquidity_usd_min": min_liquidity,
-                "limit": limit,
-                "sort_by": "volume_usd_24h",
-                "sort_dir": "desc",
-            },
-        )
-        if not data:
-            return []
-        pools = data.get("results", []) if isinstance(data, dict) else []
-        return [self._normalize_pool(p) for p in pools]
 
     @staticmethod
     def _normalize_pool(pool: dict) -> dict[str, Any]:

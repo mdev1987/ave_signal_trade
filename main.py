@@ -538,20 +538,15 @@ class ShadowBook:
                 elif (pos.get("source") != "memetracker"
                         and not pos.get("tp_taken")):
                     peak = pos.get("peak_mult", 1.0)
-                    # Tier 1: dead token — no movement at all after 8 min
+                    # Dead-token kill only: no movement at all after 8 min.
+                    # Tier-2 ("weak", <3% in 8-45m) REMOVED 2026-09-12: it
+                    # overlapped early_filter + hard_stop + trail and killed
+                    # 33/63 paper trades, most at hold=0m pre-fix. Let the
+                    # dedicated exits decide once a position has 8 min of life.
                     if age_s > 480 and peak < 1.015:
                         exit_reason = "quick_bleed"
                         log.info("dead token kill %s (%s): age=%.0fm peak=%.3f",
                                  ca[:10], pos["symbol"], age_s / 60, peak)
-                    # Tier 2: weak token — <3% gain between 8-45 min
-                    # (must have at least 8 min to avoid instant kills)
-                    elif age_s > 480 and age_s < 2700 and peak < 1.03:
-                        exit_reason = "quick_bleed"
-                        _qb_last = pos.get("_qb_log_ts", 0)
-                        if time.time() - _qb_last > 120:
-                            log.info("quick bleed %s (%s): age=%.0fm peak=%.3f",
-                                     ca[:10], pos["symbol"], age_s / 60, peak)
-                            pos["_qb_log_ts"] = time.time()
 
                 # Track peak using ONLY the executable price.
                 best_mult = jup_mult if jup_mult is not None else dex_mult
@@ -689,6 +684,10 @@ class ShadowBook:
                                 pos["exit_note"] = f"pumpapi_sell_fail:{sell_res.error}"
                     # For dead tokens (mult=None), remaining tokens are
                     # worthless: mult = 0.0.  Banked TP is already counted.
+                    # oracle_fail=True marks infra failures (both pricers
+                    # down) so they can be excluded from strategy stats —
+                    # they are not trading losses.
+                    oracle_fail = mult is None
                     eff_mult = mult if mult is not None else 0.0
                     pnl = pos.get("banked_pnl", 0.0) + \
                         pos["remaining"] * pos["size_sol"] * (eff_mult - 1.0)
@@ -701,7 +700,8 @@ class ShadowBook:
                              "hold_min": int((time.time() - pos["ts"]) / 60),
                              "wallets": pos.get("wallets", []),
                              "source": pos.get("source", "pumpapi"),
-                             "size_sol": round(pos["size_sol"], 5)}
+                             "size_sol": round(pos["size_sol"], 5),
+                             "oracle_fail": oracle_fail}
                     self.closed.append(rec)
                     bal_before = self.balance_sol
                     self.balance_sol += pos["size_sol"] + pnl
@@ -1191,16 +1191,25 @@ async def _run_watch(s: cfg.Settings) -> int:
     def _adaptive_size(settings, effective_score: float, source: str = "") -> float:
         """Scale position size linearly between min/max based on consensus quality.
 
-        Weak consensus (effective ~1.5) -> size_sol_min
-        Strong consensus (effective ~3.0+) -> size_sol_max
-        CabalSpy gets 1.3x boost (67% win rate, best source).
+        Weak consensus (effective ~threshold) -> size_sol_min.
+        Strong consensus (effective ~2x threshold) -> size_sol_max.
+        Per-source multipliers from paper expectancy (2026-09-12, 63 trades):
+          memetracker 1.0x (only profitable source, +0.043/5),
+          kolexplorer 1.0x, cabalspy 1.3x (best hit rate on winners),
+          pumpapi 0.5x (-0.11/19, worst), avesignalmonitor 0.6x (-0.06/10).
         """
         score_min = settings.consensus_weight_threshold
         score_max = score_min * 2.0  # strong signal ~2x threshold
         t = max(0.0, min(1.0, (effective_score - score_min) / (score_max - score_min)))
         size = settings.size_sol_min + t * (settings.size_sol_max - settings.size_sol_min)
-        if source == "cabalspy":
-            size *= 1.3
+        _src_mult = {
+            "cabalspy": 1.3,
+            "memetracker": 1.0,
+            "kolexplorer": 1.0,
+            "pumpapi": 0.5,
+            "avesignalmonitor": 0.6,
+        }
+        size *= _src_mult.get((source or "").lower(), 0.8)
         return round(min(size, settings.size_sol_max), 4)
 
     _stable_syms = {x.strip().upper() for x in (s.stable_symbols or "").split(",") if x.strip()}
@@ -1442,7 +1451,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                     log.debug("cabalspy holder/bundle check failed for %s: %s", ca[:10], exc)
             # Jupiter Token Audit: pre-trade safety via /tokens/v2/search
             # Checks mint/freeze authority, dev balance, holder concentration,
-            # organic score, and suspicious flags. Fail-open on errors.
+            # organic flow (buyers/vol 5m — preferred over the relative
+            # organicScore), and suspicious flags. Fail-open on errors.
             if s.jup_audit_enabled and jupiter is not None:
                 try:
                     audit = await jupiter.token_audit(ca)
@@ -1473,15 +1483,21 @@ async def _run_watch(s: cfg.Settings) -> int:
                             _reject_reasons.append(
                                 f"holders={audit['holder_count']}"
                                 f"<{s.jup_audit_min_holder_count}")
+                        _min_ob = getattr(s, "jup_audit_min_organic_buyers_5m", 0)
+                        if _min_ob and audit.get("organic_buyers_5m", 0) < _min_ob:
+                            _reject_reasons.append(
+                                f"org_buyers5m={audit.get('organic_buyers_5m', 0)}"
+                                f"<{_min_ob}")
                         if _reject_reasons:
                             reason = f"skip:jup_audit({';'.join(_reject_reasons)})"
                             if _skip_log.get(ca, 0) < time.time() - 300:
                                 _skip_log[ca] = time.time()
                                 log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
                             return
-                        log.debug("jup_audit OK %s (%s): org=%d holders=%d",
+                        log.debug("jup_audit OK %s (%s): org=%d holders=%d ob5m=%d",
                                   ca[:10], sym, audit.get("organic_score", 0),
-                                  audit.get("holder_count", 0))
+                                  audit.get("holder_count", 0),
+                                  audit.get("organic_buyers_5m", 0))
                 except Exception as exc:
                     log.debug("jup_audit failed for %s: %s", ca[:10], exc)
             pc = (snap or {}).get("price_change") or {}

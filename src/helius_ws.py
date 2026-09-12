@@ -307,6 +307,12 @@ class HeliusWS:
                 "params": [
                     {
                         "accountInclude": batch,
+                        # ATA expansion: plain accountInclude only matches txs
+                        # where the wallet pubkey is in account keys. SPL
+                        # receives touch the ATA, not the wallet — without
+                        # this the bot sees msgs but buys=0. balanceChanged =
+                        # narrow, low-volume, correct per Helius docs.
+                        "tokenAccounts": "balanceChanged",
                         "vote": False,
                         "failed": False,
                     },
@@ -338,6 +344,7 @@ class HeliusWS:
                     "params": [
                         {
                             "accountInclude": batch,
+                            "tokenAccounts": "balanceChanged",
                             "vote": False,
                             "failed": False,
                         },

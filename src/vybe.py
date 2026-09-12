@@ -118,8 +118,15 @@ class VybeClient:
         return []
 
     async def token_trader_activity(self, mint: str, resolution: str = "1d",
-                                     limit: int = 50) -> list[dict]:
-        """Get trader activity: buy/sell volumes, PnL per trader."""
+                                      limit: int = 50) -> list[dict]:
+        """Get trader activity: buy/sell volumes, PnL per trader.
+
+        UNVERIFIED endpoint (not in Vybe MCP spec which lists only
+        liquidity / transfers / top-holders / holders-count-ts /
+        token-balance). Fail-open: [] on any error, and the buy/sell
+        gate below treats no-data as pass. Do not tighten
+        VYBE_MIN_BUY_SELL_RATIO until a 200 response is captured.
+        """
         data = await self._get(
             f"/v4/tokens/{mint}/trader-activity",
             {"resolution": resolution, "limit": limit},
@@ -167,7 +174,11 @@ class VybeClient:
         return True, top5_pct, ""
 
     async def check_buy_sell_ratio(self, mint: str) -> tuple[bool, float, str]:
-        """Check buy/sell ratio from trader activity. Returns (safe, ratio, reason)."""
+        """Check buy/sell ratio from trader activity. Returns (safe, ratio, reason).
+
+        Soft gate: endpoint is UNVERIFIED (see token_trader_activity), so
+        no-data always passes and this never blocks on infra failure.
+        """
         if not self.enabled:
             return True, 1.0, ""
         activity = await self.token_trader_activity(mint, resolution="1d", limit=100)

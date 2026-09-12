@@ -402,9 +402,15 @@ class JupiterSwap:
           - top_holders_pct: float (0-100, lower is safer)
           - dev_balance_pct: float (0-100, lower is safer)
           - dev_mints: int (number of developer mint events)
-          - organic_score: int (0-100, higher is safer)
+          - organic_score: int (0-100, higher is safer; RELATIVE not
+            absolute per Jupiter docs — prefer flow fields below)
           - organic_score_label: str ("high"/"medium"/"low")
           - holder_count: int
+          - organic_buyers_5m: int (numOrganicBuyers 5m — genuine buyers)
+          - organic_buy_vol_5m: float (buyOrganicVolume 5m USD)
+          - organic_sell_vol_5m: float (sellOrganicVolume 5m USD)
+          - net_buyers_5m: int (numNetBuyers 5m)
+          - traders_5m: int (numTraders 5m)
           - available: bool (True if API responded successfully)
 
         Fail-open: returns available=False on any error so callers never block.
@@ -429,6 +435,17 @@ class JupiterSwap:
                 return result
             item = items[0]
             audit = item.get("audit") or {}
+            s5 = item.get("stats5m") or {}
+            def _fi(v: Any) -> int:
+                try:
+                    return int(v or 0)
+                except (TypeError, ValueError):
+                    return 0
+            def _ff(v: Any) -> float:
+                try:
+                    return float(v or 0)
+                except (TypeError, ValueError):
+                    return 0.0
             result.update({
                 "available": True,
                 "mint_authority_disabled": audit.get("mintAuthorityDisabled", True),
@@ -441,6 +458,11 @@ class JupiterSwap:
                 "organic_score_label": str(item.get("organicScoreLabel") or ""),
                 "holder_count": int(item.get("holderCount") or 0),
                 "is_verified": bool(item.get("isVerified")),
+                "organic_buyers_5m": _fi(s5.get("numOrganicBuyers")),
+                "organic_buy_vol_5m": _ff(s5.get("buyOrganicVolume")),
+                "organic_sell_vol_5m": _ff(s5.get("sellOrganicVolume")),
+                "net_buyers_5m": _fi(s5.get("numNetBuyers")),
+                "traders_5m": _fi(s5.get("numTraders")),
             })
         except asyncio.TimeoutError:
             log.debug("jupiter token audit timed out %s", mint[:8])

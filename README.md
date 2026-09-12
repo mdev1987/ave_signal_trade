@@ -1,52 +1,68 @@
 # ave_signal_trade — Solana KOL-consensus trading bot
 
 Track smart-money wallets, filter consensus buys, trade via Jupiter with trailing stops.
+Paper mode (`DRY_RUN=true`) shadows every signal into `shadow_book.json` — no live
+funds move. Current paper record needs repair: 63 trades, -0.18 SOL, 25% win
+(2026-09-12). Sizes are cut to minimum until 30 post-fix trades turn positive.
 
 ## How it works
 
 ```
-CabalSpy / Kolexplorer / MemeTracker
+CabalSpy / Kolexplorer / MemeTracker / PumpAPI
        |
        v
-Consensus engine — aggregate wallet buys per token
+Consensus engine — weighted wallet buys per token (needs strong wallet)
        |
        v
-Gate filter — min wallets, min score, early DD, stable symbol
+Gate filter — wallets, score, liq, momentum (m5≥0.5, h1≥2.0), safety stack
+(DBotX pair_safety → RugCheck → Helius rugger → Vybe liq/top5 → CabalSpy
+holder/bundle → Jupiter audit incl. 5m organic flow)
        |
        v
-Adaptive sizing — scale by wallet quality + source boost
+Adaptive sizing — quality × per-source multiplier
+(pumpapi 0.5x, avesignalmonitor 0.6x, cabalspy 1.3x, else ≤1.0x; max 0.06 SOL)
        |
        v
-Jupiter Swap — quote + execute (simulate-first)
+Jupiter Swap — /swap/v2/order + /swap/v2/execute (simulate-first, RTSE buys)
        |
        v
-Position tracker — trailing stop, TP ladder, dead-token kill
+Position tracker — TP ladder, trail, dead-token kill, oracle-fail tagging
        |
-       ├── Dead token: peak <1.015 after 5min → force close
-       ├── Quick bleed: peak <1.03 within 30min → force close
-       ├── Hard stop: -30% from entry
-       ├── Trailing stop: -15% from peak (activates at 1.4x)
-       ├── Breakeven lock: after 1st TP, stop moves to entry
+       ├── Dead token: peak <1.015 after 8min → force close
+       ├── Hard stop: -25% from entry
+       ├── Trailing stop: -15% from peak (arms at 1.3x)
+       ├── Breakeven lock: arms at 1.15x, stop → entry
        ├── TP ladder: +20% (40%) / +80% (30%) / +200% (30%)
-       ├── Flat timeout: no price update for 2h
-       └── Max hold: 24h
+       ├── Early filter: >10% DD with <5% gain in first 30s → kill
+       ├── Flat timeout: peak <1.05 after 1h → close
+       ├── Max hold: 24h
+       └── Oracle fail: both pricers down → close tagged, excluded from stats
 ```
 
 ## Running
 
 ```bash
-uv run main.py track-wallet          # KOL consensus tracker (primary)
-uv run main.py tg-trade              # TG signal trader (disabled)
-uv run main.py status                # Print status card
+uv run main.py watch                  # KOL consensus tracker (primary)
+uv run main.py status                 # Print status card
 ```
 
 ## 24/7 via OxMgr
 
 ```bash
-oxmgr apply ./oxfile.toml           # deploy / restart
-oxmgr stop track-wallet
+oxmgr rm track-wallet                 # full stop + remove (fresh start)
+oxmgr apply ./oxfile.yaml             # deploy / restart
 oxmgr logs track-wallet -f
 ```
+
+Fresh start = archive `bot_logs/` + reset `shadow_book.json`, then the two
+commands above. Health check watches `bot_logs/watcher.log -mmin -3`.
+
+## Docs
+
+`doc/` holds only verified notes: `dexscreener_api.md`, `dbot.llm.md`
+(index), `pumpapi_doc.md`, `shyft_*.md`, plus `jupiter_tokens_search.md`
+(audit + organic-flow fields) and `helius_transactionSubscribe.md`
+(ATA expansion). Empty stubs were deleted 2026-09-12.
 
 ## Project structure
 
@@ -118,13 +134,17 @@ All config in `.env` (template: `.env.example`). Key groups:
 
 | Parameter | Current | Effect |
 |-----------|---------|--------|
-| `CONSENSUS_WEIGHT_THRESHOLD` | 2.0 | Higher = fewer but stronger entries |
-| `OPEN_MIN_WALLETS` | 3 | Min wallets before opening |
-| `HARD_STOP_PCT` | 0.30 | Max loss per trade |
+| `CONSENSUS_WEIGHT_THRESHOLD` | 1.8 | Higher = fewer but stronger entries |
+| `OPEN_MIN_WALLETS` | 2 | Min wallets before opening |
+| `OPEN_MIN_H1_PCT` | 2.0 | Require 1h uptrend (no knife-catching) |
+| `OPEN_MIN_M5_PCT` | 0.5 | Require positive 5m momentum |
+| `HARD_STOP_PCT` | 0.25 | Max loss per trade |
+| `TRAIL_START_MULT` | 1.3 | Trail arms earlier to lock winners |
 | `TRAIL_RETRACE_PCT` | 0.15 | Trail sensitivity (tighter = lock gains faster) |
 | `EARLY_FILTER_DD_PCT` | 10.0 | Early drawdown kill threshold |
-| `FLAT_TIMEOUT_H` | 2 | Force close if no price updates |
-| `ADAPTIVE_SIZING` | true | Scale size by wallet quality |
+| `FLAT_TIMEOUT_H` | 1 | Free dead slots fast (was 2h tail bleed) |
+| `SIZE_SOL` | 0.025 | Minimum until edge proven |
+| `ADAPTIVE_SIZING` | true | Quality × per-source multiplier |
 
 ## Dependencies
 

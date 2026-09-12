@@ -34,6 +34,12 @@ class DexScreenerClient:
         rate_limit = max(1.0, rpm / 50.0)
         self._client = _DsClient(rate_limit=rate_limit, cache_ttl=8.0)
         self._started = False
+        # Shared httpx client for the plain-REST endpoints below (boosts,
+        # metas, search). Previously each call spun a new AsyncClient,
+        # bypassing rate limits and leaking connections.
+        import httpx as _httpx
+        self._http = _httpx.AsyncClient(
+            timeout=timeout_s, headers={"accept": "application/json"})
 
     async def _ensure_started(self) -> None:
         if not self._started:
@@ -41,6 +47,10 @@ class DexScreenerClient:
             self._started = True
 
     async def close(self) -> None:
+        try:
+            await self._http.aclose()
+        except Exception:  # noqa: BLE001
+            pass
         if self._started:
             await self._client.shutdown()
             self._started = False
@@ -117,51 +127,107 @@ class DexScreenerClient:
             logger.warning("dexscreener token-pairs failed %s: %s %s", ca[:8], type(e).__name__, e)
             return None
 
+    @staticmethod
+    def _dict_to_normalized(pair: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a raw DexScreener search-API dict (not a DexPairData).
+
+        ``search_pairs()`` receives plain JSON; the object-based
+        ``_pair_to_dict()`` would raise AttributeError on it (previously
+        swallowed → silent []). Field names follow doc/dexscreener_api.md.
+        """
+        def _f(v: Any) -> float | None:
+            try:
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        base = pair.get("baseToken") or {}
+        liq = pair.get("liquidity") or {}
+        vol = pair.get("volume") or {}
+        txns = pair.get("txns") or {}
+        m5 = txns.get("m5") or {}
+        pc = pair.get("priceChange") or {}
+        return {
+            "symbol": base.get("symbol"),
+            "liq": _f(liq.get("usd")),
+            "mcap": _f(pair.get("marketCap") or pair.get("fdv")),
+            "price_usd": _f(pair.get("priceUsd")),
+            "vol_m5": _f(vol.get("m5")),
+            "vol_h1": _f(vol.get("h1")),
+            "vol_h24": _f(vol.get("h24")),
+            "txns_m5": int(m5.get("buys") or 0) + int(m5.get("sells") or 0),
+            "dex_id": pair.get("dexId"),
+            "pair_address": pair.get("pairAddress"),
+            "pair_created_ms": pair.get("pairCreatedAt"),
+            "price_change": {
+                "m5": _f(pc.get("m5")),
+                "h1": _f(pc.get("h1")),
+                "h6": _f(pc.get("h6")),
+                "h24": _f(pc.get("h24")),
+            },
+        }
+
     async def token_boosts(self, limit: int = 20) -> list[dict[str, Any]]:
-        """Get latest boosted tokens from DexScreener.
+        """Get latest boosted tokens from DexScreener (60 RPM endpoint).
 
         Returns list of token dicts with address, name, symbol, boost amount, etc.
-        Useful as a social signal for what's trending.
+        Social-signal only — boosts are paid visibility, NOT endorsement
+        (per DexScreener boosting terms). Never gate entries on this alone.
         """
         await self._ensure_started()
         try:
-            # DexScreener token boosts endpoint
-            import httpx
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                r = await client.get(
-                    "https://api.dexscreener.com/token-boosts/latest/v1",
-                )
-                if r.status_code != 200:
-                    return []
-                data = r.json()
-                if not isinstance(data, list):
-                    return []
-                return data[:limit]
+            r = await self._http.get(
+                "https://api.dexscreener.com/token-boosts/latest/v1",
+            )
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            if not isinstance(data, list):
+                return []
+            return data[:limit]
         except Exception as e:  # noqa: BLE001
             logger.debug("dexscreener token-boosts failed: %s", e)
             return []
 
     async def trending_metas(self) -> list[dict[str, Any]]:
-        """Get trending metas/sectors from DexScreener.
+        """Get trending metas/sectors from DexScreener (60 RPM endpoint).
 
         Returns list of meta dicts with name, slug, volume, etc.
-        Useful for identifying which sectors are hot.
+        Sector context only — not an entry signal.
         """
         await self._ensure_started()
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                r = await client.get(
-                    "https://api.dexscreener.com/metas/trending/v1",
-                )
-                if r.status_code != 200:
-                    return []
-                data = r.json()
-                if not isinstance(data, list):
-                    return []
-                return data[:10]
+            r = await self._http.get(
+                "https://api.dexscreener.com/metas/trending/v1",
+            )
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            if not isinstance(data, list):
+                return []
+            return data[:10]
         except Exception as e:  # noqa: BLE001
             logger.debug("dexscreener trending-metas failed: %s", e)
+            return []
+
+    async def token_orders(self, chain: str, token_address: str) -> list[dict[str, Any]]:
+        """Get paid orders for one token (60 RPM, /orders/v1/{chain}/{token}).
+
+        Per-token boost validation — prefer over the global boosts firehose
+        when checking whether a *specific* signal token is promoted.
+        Fail-open: [] on any error.
+        """
+        await self._ensure_started()
+        try:
+            r = await self._http.get(
+                f"https://api.dexscreener.com/orders/v1/{chain}/{token_address}",
+            )
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            return data if isinstance(data, list) else []
+        except Exception as e:  # noqa: BLE001
+            logger.debug("dexscreener token-orders failed for %s: %s", token_address[:8], e)
             return []
 
     async def search_pairs(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
@@ -172,17 +238,16 @@ class DexScreenerClient:
         """
         await self._ensure_started()
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                r = await client.get(
-                    "https://api.dexscreener.com/latest/dex/search",
-                    params={"q": query},
-                )
-                if r.status_code != 200:
-                    return []
-                data = r.json()
-                pairs = data.get("pairs") or []
-                return [self._pair_to_dict(p) for p in pairs[:limit]]
+            r = await self._http.get(
+                "https://api.dexscreener.com/latest/dex/search",
+                params={"q": query},
+            )
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            pairs = data.get("pairs") or []
+            return [self._dict_to_normalized(p) for p in pairs[:limit]
+                    if isinstance(p, dict)]
         except Exception as e:  # noqa: BLE001
             logger.debug("dexscreener search-pairs failed for %s: %s", query, e)
             return []
