@@ -1441,8 +1441,8 @@ class JupiterSwap:
         env = config.load_env()
         if not config.get_bool(env, "PUMPAPI_ENABLED", False):
             return False
-        # In dry_run mode, allow PumpAPI (paper mode handles it)
-        if self._dry_run:
+        # In paper mode (not live), allow PumpAPI (paper mode handles it)
+        if not self.live:
             return True
         return bool(self._private_key)
 
@@ -1455,7 +1455,7 @@ class JupiterSwap:
         """
         if not self._pumpapi_enabled():
             return SwapResult(False, "", 0, 0, "pumpapi disabled or no api key")
-        if self._dry_run:
+        if not self.live:
             log.info("PAPER buy via pumpapi %s (%.4f SOL)", mint[:10], amount_sol)
             return SwapResult(True, f"paper_pumpapi_{mint[:8]}", 0, amount_sol, "paper")
 
@@ -1507,7 +1507,7 @@ class JupiterSwap:
         """
         if not self._pumpapi_enabled():
             return SwapResult(False, "", 0, 0, "pumpapi disabled or no api key")
-        if self._dry_run:
+        if not self.live:
             log.info("PAPER sell via pumpapi %s (%d%%)", mint[:10], amount_pct)
             return SwapResult(True, f"paper_pumpapi_sell_{mint[:8]}", 0, 0, "paper")
 

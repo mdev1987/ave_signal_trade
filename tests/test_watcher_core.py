@@ -18,6 +18,21 @@ from main import build_status        # noqa: E402
 
 assert WSOL == H_WSOL == "So11111111111111111111111111111111111111112"
 
+
+def test_pumpapi_paper_mode_no_crash():
+    """Regression: _pumpapi_enabled/buy/sell used self._dry_run (never set).
+
+    Killed every gate-passing open with AttributeError (ZLOOP, LAUNCH).
+    """
+    import asyncio
+    from jupiter_trade import JupiterSwap  # noqa: E402
+    j = JupiterSwap(dry_run=True)
+    assert j._pumpapi_enabled() in (True, False)  # must not raise
+    res = asyncio.run(j.buy_via_pumpapi(MINT, 0.025))
+    assert res.success is True and res.error == "paper"
+    res = asyncio.run(j.sell_via_pumpapi(MINT, 100))
+    assert res.success is True and res.error == "paper"
+
 W = "64hP97Bwr5PubotcTeGgfhkFrGiLVVxT2kVo9M9b4AEz"
 MINT = "8LPbe61qTA7r7QzVzEs57DSnEoXACvLUE1c45LTSpump"
 
@@ -141,5 +156,6 @@ if __name__ == "__main__":
     test_helius_unknown_wallet_ignored()
     test_pair_multiplier_unknown_pair_neutral()
     test_madeonsol_footprint_empty()
+    test_pumpapi_paper_mode_no_crash()
     test_status_card_compact()
     print("watcher-core tests passed (live pipeline)")
