@@ -46,6 +46,7 @@ from watcher import SmartWalletWatcher  # noqa: E402
 from wallet_discovery import WalletDiscovery  # noqa: E402
 from wallet_weights import build_weights  # noqa: E402
 from cabalspy import CabalSpyClient, HolderCache  # noqa: E402
+from cabalspy_rest import CabalSpyREST  # noqa: E402 (history/bundle/lookup)
 from kolexplorer import KolexplorerFeed  # noqa: E402
 from madeonsol import MadeOnSolClient  # noqa: E402 (read-only validator)
 from tg_signal_feed import TgSignalFeed, parse_memetracker_signal, parse_avesignalmonitor  # noqa: E402
@@ -827,6 +828,10 @@ async def _run_watch(s: cfg.Settings) -> int:
     if cabalspy_keys and s.cabalspy_enabled:
         log.info("cabalspy: enabled (min_buy=%.1f, min_win_rate=%.0f)",
                  s.cabalspy_signal_min_buy, s.cabalspy_signal_min_win_rate)
+    # CabalSpy REST companion (history backtest, bundle detail, lookup).
+    # Fail-open; rotation skips exhausted keys (key1 dead as of 2026-09-12).
+    cabalspy_rest = CabalSpyREST(api_keys=cabalspy_keys) if cabalspy_keys else None
+    _bundle_detail_cache: dict[str, float] = {}  # ca -> ts of last bundle_get
 
     weights, default_weight = build_weights(
         s.wallet_perf_path,
@@ -1498,10 +1503,30 @@ async def _run_watch(s: cfg.Settings) -> int:
                             _skip_log[ca] = time.time()
                             log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
                         return
-                    # Bundle block: reject if coordinated bundle detected recently
+                    # Bundle block: reject if coordinated bundle detected recently.
+                    # Enrichment (rare, credit-cheap): one bundle_get per CA per
+                    # hour journals confidence/jito/side-wallet detail. The
+                    # block itself never depends on the fetch (fail-open).
                     if s.cabalspy_bundle_block and ca in _bundle_flags:
                         bundle_age = time.time() - _bundle_flags[ca].get("detected_at", 0)
                         if bundle_age < 600:  # block for 10 minutes
+                            if (cabalspy_rest is not None and _bundle_detail_cache.get(ca, 0)
+                                    < time.time() - 3600):
+                                _bundle_detail_cache[ca] = time.time()
+                                try:
+                                    _bd = await cabalspy_rest.bundle_get(ca)
+                                    if _bd:
+                                        _bs = (_bd.get("bundles") or [])
+                                        _top = max(_bs, key=lambda b: b.get("confidence", 0),
+                                                   default=None)
+                                        logs.journal(
+                                            "cabalspy_bundle_detail", ca=ca, symbol=sym,
+                                            bundles=len(_bs),
+                                            confidence=(_top or {}).get("confidence"),
+                                            jito=(_top or {}).get("jito_confirmed"),
+                                            wallets=(_top or {}).get("wallet_count"))
+                                except Exception:  # noqa: BLE001
+                                    pass
                             reason = f"skip:bundle_detected({bundle_age:.0f}s ago)"
                             if _skip_log.get(ca, 0) < time.time() - 300:
                                 _skip_log[ca] = time.time()
@@ -1866,6 +1891,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             await vybe.close()
         if cabalspy_client is not None:
             await cabalspy_client.stop()
+        if cabalspy_rest is not None:
+            await cabalspy_rest.close()
         if kolexplorer_feed is not None:
             await kolexplorer_feed.stop()
         await jupiter.close()
