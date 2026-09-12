@@ -70,8 +70,8 @@ commands above. Health check watches `bot_logs/watcher.log -mmin -3`.
 main.py                     # entry point + position management
 src/
   config.py                 # .env parser + Settings dataclass
-  jupiter_trade.py          # Jupiter Swap V2 + ResilientRPC + TokenClient
-  tg_signal_feed.py         # Telegram @gmgnsignals listener (Telethon)
+  jupiter_trade.py          # Jupiter Swap V2 + ResilientRPC + token audit
+  tg_signal_feed.py         # Telegram MemeTracker/AveSM listeners (Telethon)
   dexscreener_oracle.py     # DexScreener REST wrapper
   kolexplorer.py            # Kolexplorer KOL token monitor
   cabalspy.py               # CabalSpy KOL wallet WebSocket
@@ -85,7 +85,6 @@ src/
   pair_perf.py              # adaptive pair-quality multiplier
   wallet_discovery.py       # batch wallet discovery
   notifier.py               # Telegram notifications
-  tatum_notify.py           # Tatum push subscriptions
   logs.py                   # logging + journal (JSONL)
 scripts/
   discover_wallets.py       # expand watchlist from SolanaTracker

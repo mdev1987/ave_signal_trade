@@ -1,15 +1,14 @@
 """Smart-money watcher — the only strategy.
 
     uv run main.py watch          # 24/7: alerts + shadow paper book + status
-    uv run main.py tatum-setup    # register push subscriptions (needs public URL)
     uv run main.py status         # one-shot status card
 
 Pipeline:
-  Tatum ADDRESS_EVENT push (or Helius/Moralis polling fallback)
+  Helius WS + PumpAPI firehose + CabalSpy streams
     → smart wallet bought something new
       → 🕵️/🔥 Telegram alert
-      → shadow paper position opens at DexScreener price
-        → trailing 40% / hard stop managed virtually → paper PnL stats
+      → shadow paper position opens at Jupiter executable price
+        → TP ladder / trail / hard stop managed virtually → paper PnL stats
 """
 
 from __future__ import annotations
@@ -43,7 +42,6 @@ from pair_perf import (load as load_pair_perf, save as save_pair_perf,  # noqa: 
 from notifier import TelegramNotifier  # noqa: E402
 from pump_stream import PumpApiStream  # noqa: E402
 from helius_ws import HeliusWS  # noqa: E402
-from tatum_notify import TatumNotifications  # noqa: E402
 from watcher import SmartWalletWatcher  # noqa: E402
 from wallet_discovery import WalletDiscovery  # noqa: E402
 from wallet_weights import build_weights  # noqa: E402
@@ -1446,14 +1444,13 @@ async def _run_watch(s: cfg.Settings) -> int:
                             _skip_log[ca] = time.time()
                             log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
                         return
-                    # Buy/sell ratio check
+                    # Buy/sell ratio: journal-only (endpoint UNVERIFIED — see
+                    # vybe.py. Never blocks; offline analysis decides if the
+                    # ratio predicts anything before it may gate).
                     bs_safe, bs_ratio, bs_reason = await vybe.check_buy_sell_ratio(ca)
                     if not bs_safe:
-                        reason = f"skip:{bs_reason}"
-                        if _skip_log.get(ca, 0) < time.time() - 300:
-                            _skip_log[ca] = time.time()
-                            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-                        return
+                        logs.journal("vybe_sell_pressure", ca=ca, symbol=sym,
+                                     ratio=round(bs_ratio, 3), note=bs_reason)
                 except Exception as exc:
                     log.warning("vybe check failed for %s: %s", ca[:10], exc)
             # CabalSpy holder concentration check: if we have holder data from
@@ -1616,14 +1613,13 @@ async def _run_watch(s: cfg.Settings) -> int:
             helius_ok = helius_ws.connected if helius_ws else False
             snap = book.snapshot(len(w.wallets), alerts["n"],
                                  w.consensus_fired, time.time() - started,
-                                  {"tatum": bool(w.tatum_push),
-                                   "dexscreener": True,
-                                   "pumpapi": pump_stream.connected,
-                                   "helius_ws": helius_ok,
-                                   "vybe": vybe is not None and vybe.enabled,
-                                    "cabalspy": cabalspy_client is not None and cabalspy_client.connected,
-                                    "kolexplorer": kolexplorer_feed is not None and kolexplorer_feed._running,
-                                     "memetracker": memetracker_feed is not None and memetracker_feed.health()["connected"]})
+                                 {"dexscreener": True,
+                                  "pumpapi": pump_stream.connected,
+                                  "helius_ws": helius_ok,
+                                  "vybe": vybe is not None and vybe.enabled,
+                                  "cabalspy": cabalspy_client is not None and cabalspy_client.connected,
+                                  "kolexplorer": kolexplorer_feed is not None and kolexplorer_feed._running,
+                                  "memetracker": memetracker_feed is not None and memetracker_feed.health()["connected"]})
             log.info("status: %s", build_status(snap))
             if helius_ws:
                 hs = helius_ws.stats
@@ -1640,49 +1636,12 @@ async def _run_watch(s: cfg.Settings) -> int:
                          cs["connected"], cs["total_signals"], cs["total_txs"],
                          cs["total_holders"], cs["total_bundles"], cs["reconnects"])
 
-    # tatum push (optional) ----------------------------------------------
-    tatum_url = cfg.get(env, "WATCH_WEBHOOK_URL", "")
-    tatum_key = (cfg.get(env, "TATUM_API_KEY") or "").strip()
-    w.tatum_push = False
-
-    from aiohttp import web
-
-    async def _hook(request: web.Request) -> web.Response:
-        try:
-            payload = await request.json()
-            data = payload.get("data") or {}
-            cand = {data.get("from"), data.get("to"),
-                    payload.get("address")}
-            hit = next((x for x in cand if x in set(w.wallets)), None)
-            if hit:
-                w.tatum_push = True
-                asyncio.create_task(w.process_now(hit)).add_done_callback(
-                    _log_task_result)
-        except Exception:
-            log.exception("webhook parse failed")
-        return web.Response(text="ok")
-
-    app = web.Application()
-    app.router.add_post("/tatum", _hook)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(cfg.get_float(env, "WATCH_WEBHOOK_PORT", 8787))
-    await web.TCPSite(runner, "0.0.0.0", port).start()
-    log.info("webhook receiver on :%d/tatum", port)
-
-    # register subscriptions once (idempotent)
-    if tatum_key and tatum_url:
-        try:
-            t = TatumNotifications(tatum_key, tatum_url)
-            created, present = t.ensure_subscriptions(w.wallets)
-            w.tatum_push = True
-            log.info("tatum subs ready (%d created / %d present)",
-                     created, present)
-        except Exception:
-            log.exception("tatum registration failed — polling fallback only")
+    # Live feeds are push-based (Helius WS, PumpAPI WS, CabalSpy WS,
+    # Kolexplorer poll, MemeTracker TG) — no webhook receiver needed
+    # (Tatum push removed 2026-09-12: never configured, dead port :8787).
 
     log.info("bot started: %s", build_status(book.snapshot(
-        len(w.wallets), 0, 0, 0, {"tatum": w.tatum_push, "dexscreener": True,
+        len(w.wallets), 0, 0, 0, {"dexscreener": True,
                                    "memetracker": memetracker_feed.health()["connected"] if memetracker_feed else False,
                                     "pumpapi": True,
                                     "vybe": vybe is not None and vybe.enabled})))
@@ -1808,7 +1767,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                 asyncio.create_task(notifier.send_stopped(book.snapshot(
                     len(w.wallets), alerts["n"], w.consensus_fired,
                     time.time() - started,
-                    {"tatum": w.tatum_push, "dexscreener": True}))
+                    {"dexscreener": True}))
                 ).add_done_callback(_log_task_result)
         except Exception:
             log.exception("send_stopped failed")
@@ -1816,7 +1775,6 @@ async def _run_watch(s: cfg.Settings) -> int:
         pump_stream.stop()
         pump_task.cancel()
         await w.stop()
-        await runner.cleanup()
         await ds.close()
         await dp.close()
         await dbx.close()
@@ -1882,22 +1840,6 @@ async def _run_discover(s: cfg.Settings, args=None) -> int:
 
 def cmd_discover(args) -> int:
     return asyncio.run(_run_discover(cfg.load_settings(), args))
-
-
-def cmd_tatum_setup(_args) -> int:
-    from tatum_notify import TatumNotifications
-    env = cfg.load_env()
-    url = cfg.get(env, "WATCH_WEBHOOK_URL", "")
-    key = (cfg.get(env, "TATUM_API_KEY") or "").strip()
-    wallets_path = Path("smart_money_wallets.json")
-    if not (url and key):
-        print("set TATUM_API_KEY + WATCH_WEBHOOK_URL in .env first")
-        return 1
-    wallets = list(json.loads(wallets_path.read_text()).keys()) \
-        if wallets_path.exists() else []
-    created, present = TatumNotifications(key, url).ensure_subscriptions(wallets)
-    print(f"tatum alerts ready: {created} created, {present} present")
-    return 0
 
 
 def cmd_status(_args) -> int:
@@ -2037,8 +1979,6 @@ def build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="cmd", required=True)
     watch = sub.add_parser("watch", help="run the 24/7 watcher")
     watch.set_defaults(func=cmd_watch)
-    ts = sub.add_parser("tatum-setup", help="register Tatum push alerts")
-    ts.set_defaults(func=cmd_tatum_setup)
     st = sub.add_parser("status", help="print status card")
     st.set_defaults(func=cmd_status)
     disc = sub.add_parser(

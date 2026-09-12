@@ -214,7 +214,6 @@ class SmartWalletWatcher:
         self._consensus_ts: dict[str, float] = {}  # ca -> timestamp for persistence
         self.wallet_perf: dict[str, dict] = {}   # addr -> {picks, hits} (live learning)
         self.on_smart_buy = on_smart_buy
-        self.tatum_push = False
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._price_cache: dict[str, tuple[float, float, str | None]] = {}

@@ -44,7 +44,6 @@ import httpx
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 from solana_rpc_resilient import ResilientRPCClient, Ok, Err
-from jupiter_swap.tokens import TokenClient
 
 import config
 import logs
@@ -324,17 +323,10 @@ class JupiterSwap:
             "quote_exception": 0,
         }
 
-        # Token safety — Jupiter's banned token list for pre-trade scam checks
-        self._token_client: TokenClient | None = None
-        self._token_client_connected = False
-        if config.get_bool(env, "JUPITER_TOKEN_CHECK_ENABLED", True):
-            try:
-                jup_api_key = config.get(env, "JUPITER_API_KEY", "")
-                self._token_client = TokenClient(api_key=jup_api_key, cache_ttl=300.0)
-            except Exception:  # noqa: BLE001
-                log.debug("TokenClient init skipped")
-        else:
-            log.debug("TokenClient disabled by JUPITER_TOKEN_CHECK_ENABLED=false")
+        # Token safety — local banned-token list only. The Jupiter
+        # TokenClient DNS list was removed 2026-09-12 (flaky DNS, always
+        # disabled via JUPITER_TOKEN_CHECK_ENABLED=false). Bans live in
+        # banned_tokens.json with TTL; add via LocalBanList.ban().
         self._lat_sum = 0.0
         self._lat_count = 0
         self._lat_max = 0.0
@@ -350,47 +342,18 @@ class JupiterSwap:
         await self._client.aclose()
         if self._rpc_client:
             await self._rpc_client.shutdown()
-        if self._token_client and self._token_client_connected:
-            try:
-                await self._token_client.close()
-            except Exception:  # noqa: BLE001
-                pass
 
     async def is_token_banned(self, mint: str) -> bool:
-        """Check if a token is on Jupiter's banned list (known scam).
+        """Check the local banned-token list (operator + auto bans, TTL'd).
 
-        DNS/connect failures are transient — retry once with a short delay
-        before disabling the client.  A single DNS blip should not permanently
-        disable the scam check for the rest of the session.
-
-        Also checks the local banned token list as a fallback.
+        The Jupiter DNS banned list was removed (flaky, always disabled).
+        Fail-open: missing/empty file = nothing banned.
         """
-        # Check local ban list first (always available)
-        if self._local_ban_list and self._local_ban_list.is_banned(mint):
-            return True
-
-        if not self._token_client:
+        try:
+            return bool(self._local_ban_list
+                        and self._local_ban_list.is_banned(mint))
+        except Exception:  # noqa: BLE001
             return False
-        for attempt in range(2):
-            try:
-                if not self._token_client_connected:
-                    await asyncio.wait_for(
-                        self._token_client.connect(), timeout=5.0)
-                    self._token_client_connected = True
-                return await self._token_client.is_banned(mint)
-            except Exception as exc:  # noqa: BLE001
-                err_str = str(exc).lower()
-                is_dns = any(kw in err_str for kw in ("name or service", "dns", "resolve", "getaddrinfo"))
-                if is_dns and attempt == 0:
-                    # DNS blip — wait briefly and retry once
-                    await asyncio.sleep(1.0)
-                    continue
-                # Non-DNS or second failure — disable client to avoid spam
-                if not self._token_client_connected:
-                    log.debug("TokenClient disabled after connect failure: %s", exc)
-                    self._token_client = None
-                return False
-        return False
 
     async def token_audit(self, mint: str) -> dict[str, Any]:
         """Fetch token audit data from Jupiter's /tokens/v2/search endpoint.
