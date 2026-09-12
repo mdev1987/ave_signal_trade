@@ -262,7 +262,11 @@ class Settings:
     jup_audit_min_organic_score: int = 20     # reject if organic score < this (relative metric — prefer flow gate below)
     jup_audit_min_holder_count: int = 50      # reject if fewer holders than this
     jup_audit_min_organic_buyers_5m: int = 0  # reject if 5m organic buyers < this (0=off; 3+ recommended once flow proven)
-
+    # --- MadeOnSol KOL validator (read-only, journal-only, never gates) ---
+    madeonsol_enabled: bool = True        # background /kol/feed overlap journal
+    madeonsol_api_key: str = ""           # msk_ key; empty = public demo key (20/hr)
+    madeonsol_poll_s: float = 200.0       # min 180s — protects demo quota
+    madeonsol_window_s: float = 1800.0    # KOL-buy lookback for overlap check
 
 def load_settings(path: str = ".env") -> Settings:
     env = load_env(path)
@@ -408,4 +412,8 @@ def load_settings(path: str = ".env") -> Settings:
         jup_audit_min_organic_score=get_int(env, "JUP_AUDIT_MIN_ORGANIC_SCORE", _d.jup_audit_min_organic_score),
         jup_audit_min_holder_count=get_int(env, "JUP_AUDIT_MIN_HOLDER_COUNT", _d.jup_audit_min_holder_count),
         jup_audit_min_organic_buyers_5m=get_int(env, "JUP_AUDIT_MIN_ORGANIC_BUYERS_5M", _d.jup_audit_min_organic_buyers_5m),
+        madeonsol_enabled=get_bool(env, "MADEONSOL_ENABLED", _d.madeonsol_enabled),
+        madeonsol_api_key=get(env, "MADEONSOL_API_KEY", _d.madeonsol_api_key),
+        madeonsol_poll_s=get_float(env, "MADEONSOL_POLL_S", _d.madeonsol_poll_s),
+        madeonsol_window_s=get_float(env, "MADEONSOL_WINDOW_S", _d.madeonsol_window_s),
     )

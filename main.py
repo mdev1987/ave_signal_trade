@@ -49,6 +49,7 @@ from wallet_discovery import WalletDiscovery  # noqa: E402
 from wallet_weights import build_weights  # noqa: E402
 from cabalspy import CabalSpyClient, HolderCache  # noqa: E402
 from kolexplorer import KolexplorerFeed  # noqa: E402
+from madeonsol import MadeOnSolClient  # noqa: E402 (read-only validator)
 from tg_signal_feed import TgSignalFeed, parse_memetracker_signal, parse_avesignalmonitor  # noqa: E402
 
 log = logging.getLogger("main")
@@ -751,6 +752,21 @@ async def _run_watch(s: cfg.Settings) -> int:
                            rpm=s.dexscreener_rpm)
     # DexPaprika fallback: richer Solana data when DexScreener is unavailable
     dp = DexPaprikaClient(enabled=True)
+    # MadeOnSol KOL validator: background /kol/feed overlap journal.
+    # Read-only, never gates/skips/sizes — evaluation only.
+    madeonsol = None
+    if s.madeonsol_enabled:
+        try:
+            madeonsol = MadeOnSolClient(
+                api_key=s.madeonsol_api_key,
+                poll_s=s.madeonsol_poll_s,
+                window_s=s.madeonsol_window_s)
+            madeonsol.start()
+            log.info("madeonsol: validator enabled (poll=%.0fs, window=%.0fs)",
+                     s.madeonsol_poll_s, s.madeonsol_window_s)
+        except Exception:
+            log.exception("madeonsol init failed — disabled")
+            madeonsol = None
     # Fail-open rug/safety filter (DBotX). Degrades to allow on any error.
     dbx = DBotXClient(api_key=s.dbotx_api_key, base_url=s.dbotx_base_url)
 
@@ -1217,6 +1233,20 @@ async def _run_watch(s: cfg.Settings) -> int:
     async def _on_smart_buy(ca, sym, usd, score, wallets=None, tg_liq=0.0,
                             source="pumpapi", signal_price=0.0):
         last_detection_ts["t"] = time.time()
+        # MadeOnSol validator (read-only, journal-only): independent KOL
+        # footprint for this mint. In-memory lookup — never blocks, skips,
+        # or sizes. Used offline to score the validator before any gating.
+        try:
+            if madeonsol is not None:
+                _fp = madeonsol.kol_footprint(ca)
+                if _fp["buys"] > 0:
+                    logs.journal("madeonsol_overlap", ca=ca, symbol=sym,
+                                 source=source, score=round(score, 2),
+                                 kol_buys=_fp["buys"], kol_wallets=_fp["kols"],
+                                 max_winrate_7d=_fp["max_winrate_7d"],
+                                 top_kol=_fp["top_kol"])
+        except Exception:  # noqa: BLE001
+            pass
         n = len(wallets or [])
         # Concentration guard: cap how many open positions may share any one
         # triggering wallet so we don't stack correlated bets and so slots stay
@@ -1790,6 +1820,8 @@ async def _run_watch(s: cfg.Settings) -> int:
         await ds.close()
         await dp.close()
         await dbx.close()
+        if madeonsol is not None:
+            await madeonsol.stop()
         if rugcheck is not None:
             await rugcheck.close()
         if helius is not None:
