@@ -543,8 +543,9 @@ class ShadowBook:
                         exit_reason = "quick_bleed"
                         log.info("dead token kill %s (%s): age=%.0fm peak=%.3f",
                                  ca[:10], pos["symbol"], age_s / 60, peak)
-                    # Tier 2: weak token — <3% gain within 45 min
-                    elif age_s < 2700 and peak < 1.03:
+                    # Tier 2: weak token — <3% gain between 8-45 min
+                    # (must have at least 8 min to avoid instant kills)
+                    elif age_s > 480 and age_s < 2700 and peak < 1.03:
                         exit_reason = "quick_bleed"
                         _qb_last = pos.get("_qb_log_ts", 0)
                         if time.time() - _qb_last > 120:
