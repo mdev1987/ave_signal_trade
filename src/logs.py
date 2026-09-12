@@ -7,6 +7,10 @@ All artifacts land in ``bot_logs/``:
                      open, close) for machine-readable history.
 - ``trade_log.csv``  per-trade rows appended on position close (for analysis).
 
+All three rotate on size into timestamped archives with bounded
+generations, so multi-week runs can't fill the disk (and the health
+check that watches the log file can't be killed by a full disk).
+
 ``setup_logging`` must be called once at process start; the journal and trade
 CSV writers are plain functions so they can be used without re-configuring.
 """
@@ -26,6 +30,14 @@ BOT_LOG = LOG_DIR / "bot.log"
 JOURNAL_LOG = LOG_DIR / "journal.json"
 TRADE_CSV = LOG_DIR / "trade_log.csv"
 STOP_MARKER = LOG_DIR / ".stop"
+
+# Rotation caps: bounded disk use for multi-week runs. watcher.log is covered
+# by RotatingFileHandler in setup_logging (10MB x 5). Journal archives keep
+# the last 10 generations (was: single journal.old, silently deleted).
+JOURNAL_MAX_BYTES = 5 * 1024 * 1024
+JOURNAL_KEEP = 10
+TRADE_CSV_MAX_BYTES = 5 * 1024 * 1024
+TRADE_CSV_KEEP = 10
 
 TRADE_CSV_FIELDS = [
     # identity + outcome (original schema)
@@ -139,6 +151,27 @@ def _collect_secrets(settings) -> tuple[str, ...]:
     return tuple(v for v in candidates if v)
 
 
+def _rotate_capped(path: Path, keep: int) -> None:
+    """Rotate ``path`` to a timestamped sibling, keeping newest ``keep``.
+
+    ``path`` must exist. Oldest generations beyond ``keep`` are deleted so
+    disk use stays bounded. Safe to call any time — nothing reads these
+    files at startup.
+    """
+    try:
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        path.rename(path.with_name(f"{path.stem}-{stamp}{''.join(path.suffixes)}"))
+        gens = sorted(path.parent.glob(f"{path.stem}-*{''.join(path.suffixes)}"),
+                      reverse=True)
+        for old in gens[keep:]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    except OSError:
+        logging.getLogger("logs").exception("failed to rotate %s", path.name)
+
+
 def journal(event: str, **fields) -> None:
     """Append one JSON line to ``bot_logs/journal.json``.
 
@@ -151,16 +184,11 @@ def journal(event: str, **fields) -> None:
         row = {"ts": time.time(), "event": event, **fields}
         with JOURNAL_LOG.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
-        # Rotate when the journal exceeds ~5 MB so a multi-week live run never
-        # fills the disk: keep the newest lines in journal.json, archive the
-        # rest once (journal.old), then truncate. Nothing reads the journal at
-        # startup, so rotation is safe at any point.
-        if JOURNAL_LOG.stat().st_size > 5 * 1024 * 1024:
-            old = JOURNAL_LOG.with_suffix(".old")
-            if old.exists():
-                old.unlink()
-            JOURNAL_LOG.rename(old)
-            JOURNAL_LOG.write_text("", encoding="utf-8")
+        # Rotate past the size cap into timestamped archives (bounded
+        # generations). Nothing reads the journal at startup, so rotation
+        # is safe at any point.
+        if JOURNAL_LOG.stat().st_size > JOURNAL_MAX_BYTES:
+            _rotate_capped(JOURNAL_LOG, JOURNAL_KEEP)
     except OSError:
         logging.getLogger("logs").exception("failed to write journal entry")
 
@@ -198,5 +226,8 @@ def log_trade(row: dict) -> None:
             if isinstance(feat, dict):
                 flat.update(feat)
             writer.writerow({k: flat.get(k) for k in TRADE_CSV_FIELDS})
+        # Size rotation (was unbounded): timestamped archives, bounded count.
+        if TRADE_CSV.stat().st_size > TRADE_CSV_MAX_BYTES:
+            _rotate_capped(TRADE_CSV, TRADE_CSV_KEEP)
     except OSError:
         logging.getLogger("logs").exception("failed to write trade row")
