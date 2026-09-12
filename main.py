@@ -1229,8 +1229,32 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     _stable_syms = {x.strip().upper() for x in (s.stable_symbols or "").split(",") if x.strip()}
 
+    _SIGNAL_TIMEOUT_S = 150.0  # hung-signal watchdog (see below)
+
     async def _on_smart_buy(ca, sym, usd, score, wallets=None, tg_liq=0.0,
                             source="pumpapi", signal_price=0.0):
+        # Watchdog: a gate evaluation must never hang silently (2026-09-12:
+        # two GME cabalspy signals vanished with no outcome line, no error).
+        # On timeout, dump the stuck frames + lock state, then cancel.
+        inner = asyncio.ensure_future(
+            _on_smart_buy_inner(ca, sym, usd, score, wallets, tg_liq,
+                                source, signal_price))
+        try:
+            await asyncio.wait_for(asyncio.shield(inner), _SIGNAL_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            frames = ["%s:%s in %s" % (f.filename.split("/")[-1], f.lineno, f.name)
+                      for f in inner.get_stack(limit=8)]
+            log.error("WATCHDOG hung signal %s (%s) src=%s lock=%s frames=%s",
+                      ca[:10], sym, source, book._lock.locked(), " <- ".join(frames))
+            logs.journal("signal_watchdog", ca=ca, symbol=sym, source=source,
+                         lock_held=book._lock.locked(), frames=frames)
+            inner.cancel()
+        except asyncio.CancelledError:
+            inner.cancel()
+            raise
+
+    async def _on_smart_buy_inner(ca, sym, usd, score, wallets=None, tg_liq=0.0,
+                                  source="pumpapi", signal_price=0.0):
         last_detection_ts["t"] = time.time()
         # MadeOnSol validator (read-only, journal-only): independent KOL
         # footprint for this mint. In-memory lookup — never blocks, skips,
