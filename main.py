@@ -1201,6 +1201,7 @@ async def _run_watch(s: cfg.Settings) -> int:
     open_gap_s = s.open_gap_s
 
     _skip_log = {}
+    _pullback: dict[str, dict] = {}  # ca -> {t, ref} pending vertical-breakout holds
 
     def _adaptive_size(settings, effective_score: float, source: str = "") -> float:
         """Scale position size linearly between min/max based on consensus quality.
@@ -1296,6 +1297,14 @@ async def _run_watch(s: cfg.Settings) -> int:
                 reason = None  # override — will proceed to open
             else:
                 reason = "skip:open_spacing"
+        elif source == "pumpapi" and s.pumpapi_journal_only:
+            # Journal-only mode (worst paper source, -0.11/19): pumpapi sees
+            # everything first, so its signals still feed consensus, journal,
+            # wallet tracking and the MadeOnSol validator above — but never
+            # open positions. Re-enable by setting PUMPAPI_JOURNAL_ONLY=false.
+            logs.journal("pumpapi_journal_only", ca=ca, symbol=sym,
+                         score=round(score, 2), wallets=n)
+            reason = "skip:pumpapi_journal_only"
         elif source == "memetracker":
             # MemeTracker bypass: use signal price directly (no Jupiter/DexScreener needed)
             px = signal_price
@@ -1575,6 +1584,51 @@ async def _run_watch(s: cfg.Settings) -> int:
                 reason = f"skip:dumping(m5={pc.get('m5')})"
             elif (pc.get("m5") or 0) < s.open_min_m5_pct:
                 reason = f"skip:weak_m5(m5={pc.get('m5')})"
+            elif (pc.get("m5") or 0) > s.pullback_m5_pct:
+                # Pullback entry: candle already vertical — don't chase.
+                # Defer; a later signal in [wait, expire] may open if price
+                # held within tol of the defer price. Falls through to the
+                # normal open branch below only on a confirmed hold.
+                _now_pb = time.time()
+                _ref = snap.get("price_usd") or 0
+                _pend = _pullback.get(ca)
+                # Prune stale pendings opportunistically
+                for _k in [k for k, v in _pullback.items()
+                           if _now_pb - v.get("t", 0) > s.pullback_expire_s]:
+                    _pullback.pop(_k, None)
+                _age = _now_pb - (_pend.get("t", 0) if _pend else 0)
+                if (_pend and _ref > 0 and (_pend.get("ref") or 0) > 0
+                        and s.pullback_wait_s <= _age <= s.pullback_expire_s
+                        and _ref / _pend["ref"] >= 1.0 - s.pullback_tol_pct / 100.0):
+                    _pullback.pop(ca, None)
+                    logs.journal("pullback_hold", ca=ca, symbol=sym,
+                                 m5=pc.get("m5"), held=round(_ref / _pend["ref"], 4),
+                                 wait_s=int(_age), source=source)
+                    last_open["t"] = time.time()
+                    last_open["score"] = score
+                    logs.journal("open_signal_momentum", ca=ca, symbol=sym,
+                                 score=score, effective=round(effective, 3),
+                                 pmult=pmult, align=align, price_change=pc,
+                                 source=source, note="pullback_hold")
+                    _open_size = _adaptive_size(s, effective, source) if s.adaptive_sizing else None
+                    await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
+                                             source=source,
+                                             mc=(snap or {}).get("mcap") or 0, score=score)
+                    return
+                if _pend and _age > s.pullback_expire_s:
+                    _pullback.pop(ca, None)
+                    reason = f"skip:pullback_expired(m5={pc.get('m5')})"
+                elif _pend and _ref > 0 and (_pend.get("ref") or 0) > 0:
+                    _held = _ref / _pend["ref"]
+                    if _held < 1.0 - s.pullback_tol_pct / 100.0:
+                        _pullback.pop(ca, None)
+                        reason = f"skip:pullback_failed(held={_held:.3f})"
+                    else:
+                        reason = f"skip:vertical_hold(m5={pc.get('m5')},wait={int(_age)}s)"
+                else:
+                    if _ref > 0:
+                        _pullback[ca] = {"t": _now_pb, "ref": _ref}
+                    reason = f"skip:vertical_hold(m5={pc.get('m5')})"
             else:
                 last_open["t"] = time.time()
                 last_open["score"] = score

@@ -150,6 +150,10 @@ class Settings:
     flat_timeout_peak: float = 1.10     # peak multiple below which a position counts as "flat" (0=disable via flat_timeout_h=0)
     stable_symbols: str = "USDC,USDT,USD1,PYUSD,USDS,DAI,SOL,WSOL,WETH,WBTC,CBTC,JUP,RAY,ORCA"  # impostor/stable symbols to never open (comma-separated)
     open_min_m5_pct: float = -2.0       # skip if 5m price change < this (don't enter active dumps)
+    pullback_m5_pct: float = 15.0        # m5 above this = vertical candle: defer, don't chase
+    pullback_wait_s: float = 60.0        # re-enter only on a signal at least this old
+    pullback_expire_s: float = 90.0      # pending pullback expires after this (don't chase late)
+    pullback_tol_pct: float = 3.0        # entry proceeds if price held within this % of defer price
     max_open_positions: int = 18        # hard cap on concurrent shadow positions (raised: book saturates at 12 in ~30m)
     start_balance_sol: float = 4.0      # larger paper book so the cap is capital-bound
     shadow_state_file: str = "shadow_book.json"
@@ -250,6 +254,7 @@ class Settings:
     kolexplorer_heatmap_tf: str = "2h"      # heatmap timeframe (2h, 6h, 12h, 1d, 3d, 7d)
     # --- PumpAPI (bonding curve buy/sell fallback for non-migrated tokens) ---
     pumpapi_enabled: bool = True            # enable PumpAPI Trade API fallback
+    pumpapi_journal_only: bool = True       # pumpapi signals journal only, never open (worst paper source)
     pumpapi_fee_pct: float = 0.25           # PumpAPI fee percentage (0.25%)
     pumpapi_slippage: int = 99              # slippage percent (high = guaranteed fill)
     pumpapi_priority_fee: float = 0.00023   # priority fee in SOL (>=0.00023 triggers Jito split)
@@ -307,6 +312,10 @@ def load_settings(path: str = ".env") -> Settings:
         flat_timeout_peak=get_float(env, "FLAT_TIMEOUT_PEAK", _d.flat_timeout_peak),
         stable_symbols=get(env, "STABLE_SYMBOLS", _d.stable_symbols),
         open_min_m5_pct=get_float(env, "OPEN_MIN_M5_PCT", _d.open_min_m5_pct),
+        pullback_m5_pct=get_float(env, "PULLBACK_M5_PCT", _d.pullback_m5_pct),
+        pullback_wait_s=get_float(env, "PULLBACK_WAIT_S", _d.pullback_wait_s),
+        pullback_expire_s=get_float(env, "PULLBACK_EXPIRE_S", _d.pullback_expire_s),
+        pullback_tol_pct=get_float(env, "PULLBACK_TOL_PCT", _d.pullback_tol_pct),
         max_open_positions=get_int(env, "MAX_OPEN_POSITIONS", _d.max_open_positions),
         per_wallet_max_positions=get_int(env, "PER_WALLET_MAX_POSITIONS", _d.per_wallet_max_positions),
         open_max_impact_pct=get_float(env, "OPEN_MAX_IMPACT_PCT", _d.open_max_impact_pct),
@@ -401,6 +410,7 @@ def load_settings(path: str = ".env") -> Settings:
         kolexplorer_mode=get_int(env, "KOLEXPLORER_MODE", _d.kolexplorer_mode),
         kolexplorer_heatmap_tf=get(env, "KOLEXPLORER_HEATMAP_TF", _d.kolexplorer_heatmap_tf),
         pumpapi_enabled=get_bool(env, "PUMPAPI_ENABLED", _d.pumpapi_enabled),
+        pumpapi_journal_only=get_bool(env, "PUMPAPI_JOURNAL_ONLY", _d.pumpapi_journal_only),
         pumpapi_fee_pct=get_float(env, "PUMPAPI_FEE_PCT", _d.pumpapi_fee_pct),
         pumpapi_slippage=get_int(env, "PUMPAPI_SLIPPAGE", _d.pumpapi_slippage),
         pumpapi_priority_fee=get_float(env, "PUMPAPI_PRIORITY_FEE", _d.pumpapi_priority_fee),
