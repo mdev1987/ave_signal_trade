@@ -50,7 +50,7 @@ uv run main.py status                 # Print status card
 
 ```bash
 oxmgr rm track-wallet                 # full stop + remove (fresh start)
-oxmgr apply ./oxfile.yaml             # deploy / restart
+oxmgr apply ./oxfile.toml             # deploy / restart (TOML — daemon rejects YAML)
 oxmgr logs track-wallet -f
 ```
 
