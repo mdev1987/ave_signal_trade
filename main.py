@@ -1602,6 +1602,11 @@ async def _run_watch(s: cfg.Settings) -> int:
             # market confirms hard — so we don't overfit to a 6-trade sample.
             pmult, pnote = pair_multiplier(pair_perf, wallets)
             effective = (score + mkt_bonus) * pmult
+            # Fresh-token flag: DexScreener has no m5/h1 history yet, so the
+            # momentum gates below cannot evaluate. Such tokens route into
+            # the pullback deferral (confirm-on-hold) instead of being
+            # hard-skipped by gates that read missing data as 0.
+            _nohist = pc.get("m5") is None and pc.get("h1") is None
             # Weak pair -> require strong confirmation: every AVAILABLE timeframe
             # positive (m5>0 & h1>0 at minimum) before it may open at all.
             if pmult < 1.0 and not all((pc.get(k) or 0) > 0 for k in avail):
@@ -1627,13 +1632,13 @@ async def _run_watch(s: cfg.Settings) -> int:
                 return
             elif (snap.get("liq") or tg_liq or 0) < s.open_min_liq_usd:
                 reason = "skip:low_liq"
-            elif (pc.get("h1") or 0) < s.open_min_h1_pct:
+            elif (pc.get("h1") or 0) < s.open_min_h1_pct and not _nohist:
                 reason = f"skip:no_momentum(h1={pc.get('h1')})"
-            elif (pc.get("m5") or 0) < s.open_max_m5_dump_pct:
+            elif (pc.get("m5") or 0) < s.open_max_m5_dump_pct and not _nohist:
                 reason = f"skip:dumping(m5={pc.get('m5')})"
-            elif (pc.get("m5") or 0) < s.open_min_m5_pct:
+            elif (pc.get("m5") or 0) < s.open_min_m5_pct and not _nohist:
                 reason = f"skip:weak_m5(m5={pc.get('m5')})"
-            elif (pc.get("m5") or 0) > s.pullback_m5_pct:
+            elif _nohist or (pc.get("m5") or 0) > s.pullback_m5_pct:
                 # Pullback entry: candle already vertical — don't chase.
                 # Defer; a later signal in [wait, expire] may open if price
                 # held within tol of the defer price. Falls through to the

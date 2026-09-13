@@ -252,7 +252,7 @@ class KolexplorerFeed:
             weighted_score = 0.0
             matched_wallets = []
             for kol in kol_list:
-                slug = kol.get("slug", "")
+                slug = (kol.get("slug") or "").strip()
                 kol_pnl = kol.get("kol_pnl", 0)
                 buy_vol = kol.get("buy_vol", 0)
 
@@ -261,27 +261,42 @@ class KolexplorerFeed:
                     w = self._weights[addr]
                     if w > 0:
                         weighted_score += w
-                        matched_wallets.append(addr)
-                else:
-                    # Unknown or unmapped KOL — use default weight
-                    weighted_score += self._default_weight
+                        if addr not in matched_wallets:
+                            matched_wallets.append(addr)
+                        continue
+                # Unknown, unmapped or zero-weight KOL — default weight, plus
+                # a namespaced pseudo-id so the gate count matches the score
+                # count. Never a bare name: those pollute the pair store and
+                # bypass the per-wallet concentration cap.
+                weighted_score += self._default_weight
+                pseudo = f"kol:{slug}" if slug else ""
+                if pseudo and pseudo not in matched_wallets:
+                    matched_wallets.append(pseudo)
 
             if self._min_score > 0 and weighted_score < self._min_score:
                 continue
+
+            # Upstream often reports an aggregate kol_count with a shorter
+            # identity list. Pad with per-token placeholders so the gate
+            # evaluates the same KOL count the score was built from.
+            _pad = max(0, kol_count - len(matched_wallets))
+            wallets = matched_wallets + [f"kol:unknown-{ca[:6]}-{i + 1}"
+                                         for i in range(_pad)]
 
             self._seen[ca] = time.time()
             new_count += 1
 
             log.info(
-                "kolexplorer HEATMAP %s (%s) kols=%d score=%.2f mc=$%.0f pnl=$%.0f vol=$%.0f",
+                "kolexplorer HEATMAP %s (%s) kols=%d score=%.2f mc=$%.0f pnl=$%.0f vol=$%.0f wallets=%d",
                 ca[:10], sym, kol_count, weighted_score, entry_mc, total_pnl, vol,
+                len(wallets),
             )
 
             if self._on_signal:
                 try:
                     await self._on_signal(
                         ca, sym, entry_mc, weighted_score,
-                        matched_wallets or [k.get("slug", "?") for k in kol_list[:kol_count]],
+                        wallets,
                         source="kolexplorer",
                         kol_count=kol_count,
                         total_pnl=total_pnl,
@@ -356,26 +371,37 @@ class KolexplorerFeed:
                     w = self._weights[addr]
                     if w > 0:
                         weighted_score += w
-                        matched_wallets.append(addr)
-                else:
-                    weighted_score += self._default_weight
+                        if addr not in matched_wallets:
+                            matched_wallets.append(addr)
+                        continue
+                weighted_score += self._default_weight
+                pseudo = f"kol:{slug}" if slug else ""
+                if pseudo and pseudo not in matched_wallets:
+                    matched_wallets.append(pseudo)
 
             if self._min_score > 0 and weighted_score < self._min_score:
                 continue
+
+            # Pad ghost KOLs (aggregate count, short identity list) so the
+            # gate evaluates the same KOL count the score was built from.
+            _pad = max(0, kol_count - len(matched_wallets))
+            wallets = matched_wallets + [f"kol:unknown-{ca[:6]}-{i + 1}"
+                                         for i in range(_pad)]
 
             self._seen[ca] = time.time()
             new_count += 1
 
             log.info(
-                "kolexplorer MONITOR %s (%s) kols=%d score=%.2f mc=$%.0f pnl=$%.0f vol=$%.0f",
+                "kolexplorer MONITOR %s (%s) kols=%d score=%.2f mc=$%.0f pnl=$%.0f vol=$%.0f wallets=%d",
                 ca[:10], sym, kol_count, weighted_score, entry_mc, total_pnl, total_buy_vol,
+                len(wallets),
             )
 
             if self._on_signal:
                 try:
                     await self._on_signal(
                         ca, sym, entry_mc, weighted_score,
-                        matched_wallets or kol_names[:kol_count],
+                        wallets,
                         source="kolexplorer",
                         kol_count=kol_count,
                         total_pnl=total_pnl,
