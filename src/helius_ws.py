@@ -179,7 +179,7 @@ class HeliusWS:
             if key not in self._exhausted_keys:
                 self.api_key = key
                 self._rpc_url = f"https://mainnet.helius-rpc.com/?api-key={key}"
-                logger.info("helius ws: rotated to key %s…", key[:8])
+                logger.debug("helius ws: rotated to key %s…", key[:8])
                 return key
         # all keys exhausted — reset and retry from beginning
         logger.warning("helius ws: all %d keys exhausted, resetting", len(self._api_keys))
@@ -214,13 +214,14 @@ class HeliusWS:
             except Exception as exc:
                 self._reconnect_count += 1
                 exc_str = str(exc).lower()
-                # Detect exhausted/rate-limited key and rotate immediately
+                # Detect exhausted/rate-limited key and rotate — but ALWAYS
+                # sleep before retrying. Rotation used to `continue` with no
+                # delay, so N dead keys became a tight reconnect storm
+                # (~80k reconnects, ~23% CPU, zero buys, log spam).
                 if any(kw in exc_str for kw in ("max usage", "429", "rate limit", "too many")):
                     if len(self._api_keys) > 1:
                         self._exhausted_keys.add(self.api_key)
                         self._next_key()
-                        backoff = _RECONNECT_MIN
-                        continue
                 logger.warning("helius ws disconnected (%s), reconnecting in %.0fs (attempt %d)",
                                exc, backoff, self._reconnect_count)
                 self._connected = False
@@ -229,7 +230,7 @@ class HeliusWS:
                     break  # stop was set during backoff
                 except TimeoutError:
                     pass
-                backoff = min(backoff * 1.5, _RECONNECT_MAX)
+                backoff = min(backoff * 2.0, _RECONNECT_MAX)
 
     async def _connect_and_stream(self) -> None:
         """Connect to Helius WS, subscribe to all wallets, process messages."""

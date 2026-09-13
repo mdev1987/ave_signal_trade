@@ -747,17 +747,6 @@
     "realized": 2385086.98,
     "roi": 26.23
   },
-  "whamNNP9tHoxLg92yHvJPdYhghEoCg1qYTsh5a2oLbx": {
-    "tokens": 23863,
-    "buys": 0,
-    "usd": 0.0,
-    "tiers": [],
-    "syms": [],
-    "source": "soltracker_leaderboard",
-    "winRate": 78.67,
-    "realized": 2000790.07,
-    "roi": 19.93
-  },
   "HCsfJh2qfGtsoJ9hkhBLyF84YMLFWFUcnTcKEZNtiFsW": {
     "tokens": 136,
     "buys": 0,
@@ -2737,15 +2726,6 @@
     "syms": [],
     "source": "KOL",
     "note": "evening - daily +109 SOL, monthly +512 SOL"
-  },
-  "CEUA7zVoDRqRYoeHTP58UHU6TR8yvtVbeLrX1dppqoXJ": {
-    "tokens": [],
-    "buys": 0,
-    "usd": 0.0,
-    "tiers": [],
-    "syms": [],
-    "source": "KOL",
-    "note": "Tom - daily +77 SOL, monthly +1101 SOL"
   },
   "BHREKFkPQgAtDs8Vb1UfLkUpjG6ScidTjHaCWFuG2AtX": {
     "tokens": [],
