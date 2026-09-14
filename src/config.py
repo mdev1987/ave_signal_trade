@@ -263,7 +263,7 @@ class Settings:
     jup_audit_enabled: bool = True            # enable Jupiter token audit pre-trade
     jup_audit_max_top_holders_pct: float = 30.0  # reject if top holders own > this %
     jup_audit_max_dev_balance_pct: float = 10.0  # reject if dev holds > this %
-    jup_audit_max_dev_mints: int = 3          # reject if dev minted > this many times
+    jup_audit_max_dev_mints: int = 100         # soft-warn above this; hard-block at 10x (rug factories)
     jup_audit_min_organic_score: int = 20     # reject if organic score < this (relative metric — prefer flow gate below)
     jup_audit_min_holder_count: int = 50      # reject if fewer holders than this
     jup_audit_min_organic_buyers_5m: int = 0  # reject if 5m organic buyers < this (0=off; 3+ recommended once flow proven)

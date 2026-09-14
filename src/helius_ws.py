@@ -174,10 +174,16 @@ class HeliusWS:
         self._exhausted_keys: set[str] = set()
 
     def _next_key(self) -> str:
-        """Rotate to the next available API key, skipping exhausted ones."""
+        """Rotate to the next available API key, skipping exhausted ones.
+
+        When every key is 429-banned the exhausted set is KEPT (not reset):
+        resetting immediately re-tried the same dead keys in a tight storm.
+        The set clears only on a successful connect (see
+        ``_connect_and_stream``), so a recovered quota is picked up while a
+        live ban backs off quietly via the circuit breaker in ``run()``.
+        """
         if not self._api_keys:
             return ""
-        start = self._key_idx
         for _ in range(len(self._api_keys)):
             self._key_idx = (self._key_idx + 1) % len(self._api_keys)
             key = self._api_keys[self._key_idx]
@@ -186,13 +192,11 @@ class HeliusWS:
                 self._rpc_url = f"https://mainnet.helius-rpc.com/?api-key={key}"
                 logger.debug("helius ws: rotated to key %s…", key[:8])
                 return key
-        # all keys exhausted — reset and retry from beginning
-        logger.warning("helius ws: all %d keys exhausted, resetting", len(self._api_keys))
-        self._exhausted_keys.clear()
-        self._key_idx = 0
-        self.api_key = self._api_keys[0]
-        self._rpc_url = f"https://mainnet.helius-rpc.com/?api-key={self._api_keys[0]}"
-        return self._api_keys[0]
+        # all keys exhausted — stay on the current key and let the caller
+        # back off; do NOT reset the set here.
+        logger.warning("helius ws: all %d keys rate-limited, holding key %s… until backoff clears",
+                       len(self._api_keys), self.api_key[:8])
+        return self.api_key
 
     @property
     def connected(self) -> bool:
@@ -272,6 +276,7 @@ class HeliusWS:
             self._connected = True
             self._reconnect_count = 0
             self._consec_429 = 0
+            self._exhausted_keys.clear()  # quota recovered — all keys usable again
             logger.info("helius ws connected")
 
             if self._use_logs_subscribe:

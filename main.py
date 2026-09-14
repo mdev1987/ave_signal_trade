@@ -308,6 +308,14 @@ class ShadowBook:
             if self.jupiter is not None:
                 q = await self.jupiter.quote(ca, int(_size * 1e9),
                                              force=True)
+                # PumpAPI bonding-curve entry bypasses every Jupiter-only
+                # gate below (impact sampling, stability, sell quote,
+                # executable pricing): those need a valid Jupiter quote and
+                # previously ran anyway on the failed `q`, causing a second
+                # buy_via_pumpapi call + a guaranteed
+                # `stability_no_quote:bad_base` skip. No-route PumpAPI
+                # entries never opened a position.
+                _pump_entry = False
                 if q is None or not q.success:
                     reason = q.reason if q else "quote_exception"
                     # PumpAPI fallback: try bonding curve buy for non-migrated tokens
@@ -319,6 +327,7 @@ class ShadowBook:
                             entry_note = "pumpapi_fallback"
                             entry_mode = "pumpapi"
                             px = signal_price if signal_price > 0 else market_px
+                            _pump_entry = True
                         else:
                             logs.journal("shadow_skip", ca=ca, symbol=symbol,
                                          reason=f"no_buy_route:{reason}:pumpapi_failed:{p_res.error}")
@@ -329,56 +338,60 @@ class ShadowBook:
                                      reason=f"no_buy_route:{reason}")
                         log.info("shadow skip %s (%s): no buy route: %s", ca[:10], symbol, reason)
                         return
-                tokens_raw = q.output_amount
-                entry_note = f"jup impact={q.price_impact_pct:.2f}%"
-                if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
-                    # PumpAPI fallback: try bonding curve when Jupiter impact is too high
-                    if self.jupiter._pumpapi_enabled():
-                        log.info("Jupiter impact %.2f%% too high for %s (%s), trying PumpAPI",
-                                 q.price_impact_pct, ca[:10], symbol)
-                        p_res = await self.jupiter.buy_via_pumpapi(ca, _size)
-                        if p_res.success:
-                            tokens_raw = 0
-                            entry_note = "pumpapi_impact_fallback"
-                            entry_mode = "pumpapi"
-                            px = signal_price if signal_price > 0 else market_px
+                if not _pump_entry:
+                    tokens_raw = q.output_amount
+                    entry_note = f"jup impact={q.price_impact_pct:.2f}%"
+                    if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
+                        # PumpAPI fallback: try bonding curve when Jupiter impact is too high
+                        if self.jupiter._pumpapi_enabled():
+                            log.info("Jupiter impact %.2f%% too high for %s (%s), trying PumpAPI",
+                                     q.price_impact_pct, ca[:10], symbol)
+                            p_res = await self.jupiter.buy_via_pumpapi(ca, _size)
+                            if p_res.success:
+                                tokens_raw = 0
+                                entry_note = "pumpapi_impact_fallback"
+                                entry_mode = "pumpapi"
+                                px = signal_price if signal_price > 0 else market_px
+                                _pump_entry = True
+                            else:
+                                logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                             reason=f"impact{q.price_impact_pct:.2f}%:pumpapi_failed:{p_res.error}")
+                                log.info("shadow skip %s (%s): impact %.2f%% and PumpAPI failed: %s",
+                                         ca[:10], symbol, q.price_impact_pct, p_res.error)
+                                return
                         else:
                             logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                                         reason=f"impact{q.price_impact_pct:.2f}%:pumpapi_failed:{p_res.error}")
-                            log.info("shadow skip %s (%s): impact %.2f%% and PumpAPI failed: %s",
-                                     ca[:10], symbol, q.price_impact_pct, p_res.error)
+                                         reason=f"untradable:impact{q.price_impact_pct:.2f}%")
+                            log.info("shadow skip %s (%s): impact %.2f%%",
+                                     ca[:10], symbol, q.price_impact_pct)
                             return
-                    else:
+                if not _pump_entry:
+                    if self.jupiter.quote_stability_checks > 0:
+                        buy_slip = None if self.jupiter._buy_rtse else self.jupiter._slippage_bps
+                        stable, stab_reason, stab_info = await self.jupiter.check_quote_stability(
+                            ca, int(_size * 1e9), base=q, slippage_bps=buy_slip)
+                        if not stable:
+                            logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                         reason=f"unstable:{stab_reason}", info=stab_info)
+                            log.info("shadow skip %s (%s): %s", ca[:10], symbol, stab_reason)
+                            return
+                    sq = await self.jupiter.quote_sell(ca, tokens_raw)
+                    if sq is None or not sq.success:
+                        reason = sq.reason if sq else "quote_exception"
                         logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                                     reason=f"untradable:impact{q.price_impact_pct:.2f}%")
-                        log.info("shadow skip %s (%s): impact %.2f%%",
-                                 ca[:10], symbol, q.price_impact_pct)
+                                     reason=f"unsellable:{reason}")
+                        log.info("shadow skip %s (%s): unsellable %s", ca[:10], symbol, reason)
                         return
-                if self.jupiter.quote_stability_checks > 0:
-                    buy_slip = None if self.jupiter._buy_rtse else self.jupiter._slippage_bps
-                    stable, stab_reason, stab_info = await self.jupiter.check_quote_stability(
-                        ca, int(_size * 1e9), base=q, slippage_bps=buy_slip)
-                    if not stable:
-                        logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                                     reason=f"unstable:{stab_reason}", info=stab_info)
-                        log.info("shadow skip %s (%s): %s", ca[:10], symbol, stab_reason)
-                        return
-                sq = await self.jupiter.quote_sell(ca, tokens_raw)
-                if sq is None or not sq.success:
-                    reason = sq.reason if sq else "quote_exception"
-                    logs.journal("shadow_skip", ca=ca, symbol=symbol,
-                                 reason=f"unsellable:{reason}")
-                    log.info("shadow skip %s (%s): unsellable %s", ca[:10], symbol, reason)
-                    return
-                entry_mode = "executable"
-                # Derive executable entry from the Jupiter buy quote:
-                # size_sol SOL spent, tokens_raw received, SOL price in USD.
-                dec = await self.jupiter.token_decimals(ca) or 6
-                sol_usd = await self._sol_usd()
-                if sol_usd and tokens_raw:
-                    exec_px = (_size * sol_usd) / (tokens_raw / (10 ** dec))
+                    entry_mode = "executable"
+                    # Derive executable entry from the Jupiter buy quote:
+                    # size_sol SOL spent, tokens_raw received, SOL price in USD.
+                    dec = await self.jupiter.token_decimals(ca) or 6
+                    sol_usd = await self._sol_usd()
+                    if sol_usd and tokens_raw:
+                        exec_px = (_size * sol_usd) / (tokens_raw / (10 ** dec))
             # Use Jupiter executable price as canonical entry when available;
             # fall back to DexScreener mid only when Jupiter is absent.
+            # (PumpAPI entries already set px above; exec_px is 0 there.)
             px = exec_px if exec_px > 0 else market_px
         if px <= 0:
             logs.journal("shadow_skip", ca=ca, symbol=symbol, reason="no_price")
@@ -1557,9 +1570,20 @@ async def _run_watch(s: cfg.Settings) -> int:
                             _reject_reasons.append(
                                 f"dev_balance={audit['dev_balance_pct']:.1f}%"
                                 f">{s.jup_audit_max_dev_balance_pct}%")
-                        if audit.get("dev_mints", 0) > s.jup_audit_max_dev_mints:
+                        # dev_mints is a SOFT signal, not a veto: pump.fun serial
+                        # deployers routinely exceed 100 mints, and the raw
+                        # count blocked every consensus signal for ~2h
+                        # (177–471 mints on otherwise clean tokens). Hard-block
+                        # only at 10x the limit (rug factories minting
+                        # thousands); below that, journal for offline analysis.
+                        _dev_mints = audit.get("dev_mints", 0) or 0
+                        _mint_limit = s.jup_audit_max_dev_mints
+                        if _dev_mints > _mint_limit * 10:
                             _reject_reasons.append(
-                                f"dev_mints={audit['dev_mints']}>{s.jup_audit_max_dev_mints}")
+                                f"dev_mints={_dev_mints}>{_mint_limit}x10(factory)")
+                        elif _dev_mints > _mint_limit:
+                            logs.journal("jup_audit_dev_mints_warn", ca=ca, symbol=sym,
+                                         dev_mints=_dev_mints, limit=_mint_limit)
                         if audit.get("organic_score", 100) < s.jup_audit_min_organic_score:
                             _reject_reasons.append(
                                 f"organic={audit['organic_score']}"
