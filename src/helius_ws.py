@@ -271,9 +271,17 @@ class HeliusWS:
                         logger.debug("helius ws still rate-limited (%s), backing off %.0fs (attempt %d)",
                                      exc, delay, self._reconnect_count)
                 else:
-                    delay = backoff
-                    logger.warning("helius ws disconnected (%s), reconnecting in %.0fs (attempt %d)",
-                                   exc, delay, self._reconnect_count)
+                    # 429s burn quota on every handshake: never retry one
+                    # faster than 30s, even before the circuit breaker trips
+                    # (attempts 1-9 used to retry in 2/4/8/16s and churn all
+                    # 5 keys in ~2 min during a ban observed 2026-09-14).
+                    delay = max(backoff, 30.0) if is_429 else backoff
+                    if is_429:
+                        logger.warning("helius ws rate-limited (%s), reconnecting in %.0fs (attempt %d)",
+                                       exc, delay, self._reconnect_count)
+                    else:
+                        logger.warning("helius ws disconnected (%s), reconnecting in %.0fs (attempt %d)",
+                                       exc, delay, self._reconnect_count)
                 self._connected = False
                 try:
                     await asyncio.wait_for(self._stop.wait(), timeout=delay)
@@ -395,7 +403,8 @@ class HeliusWS:
                 return False
 
             logger.info("helius ws transactionSubscribe available, subscribing remaining batches")
-            # Now subscribe remaining batches
+            # Now subscribe remaining batches (staggered: a 283-wallet burst
+            # of back-to-back subscribes trips Helius quota faster)
             for i in range(_SUBSCRIBE_BATCH, len(self.wallets), _SUBSCRIBE_BATCH):
                 batch = self.wallets[i:i + _SUBSCRIBE_BATCH]
                 sub = {
@@ -418,6 +427,8 @@ class HeliusWS:
                     ],
                 }
                 await ws.send(json.dumps(sub))
+                # Stagger batch subscribes so Helius doesn't see a burst.
+                await asyncio.sleep(0.5)
                 logger.info("helius ws subscribed batch %d/%d (%d wallets)",
                             i // _SUBSCRIBE_BATCH + 1,
                             (len(self.wallets) + _SUBSCRIBE_BATCH - 1) // _SUBSCRIBE_BATCH,

@@ -1250,7 +1250,16 @@ class JupiterSwap:
         routers: list[str] = []
         if base is not None:
             if not base.success or base.output_amount <= 0:
-                return False, "stability_no_quote:bad_base", {}
+                # Carry diagnostics so shadow_skip lines explain WHY the base
+                # was bad (observed: many `stability_no_quote:bad_base` with
+                # no detail — most are upstream `quote_impact`/no-route on
+                # fresh pump.fun tokens, not a stability failure).
+                return False, "stability_no_quote:bad_base", {
+                    "base_reason": getattr(base, "reason", "?"),
+                    "base_output": getattr(base, "output_amount", 0),
+                    "base_impact": getattr(base, "price_impact_pct", 0.0),
+                    "base_router": getattr(base, "router", "?"),
+                }
             outs.append(base.output_amount)
             impacts.append(base.price_impact_pct)
             routers.append(base.router or "?")

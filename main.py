@@ -391,6 +391,16 @@ class ShadowBook:
                 if not _pump_entry:
                     tokens_raw = q.output_amount
                     entry_note = f"jup impact={q.price_impact_pct:.2f}%"
+                    if tokens_raw <= 0:
+                        # Zero-output route (route exists but unusable) — skip
+                        # before the stability gate so the reason is explicit
+                        # instead of a generic `bad_base`.
+                        logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                     reason=f"zero_output:{q.reason}",
+                                     impact=round(q.price_impact_pct, 2))
+                        log.info("shadow skip %s (%s): zero output (%s)",
+                                 ca[:10], symbol, q.reason)
+                        return
                     if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
                         # PumpAPI fallback: try bonding curve when Jupiter impact is too high
                         # (same no-price guard as the no-route branch above:
@@ -431,7 +441,10 @@ class ShadowBook:
                         if not stable:
                             logs.journal("shadow_skip", ca=ca, symbol=symbol,
                                          reason=f"unstable:{stab_reason}", info=stab_info)
-                            log.info("shadow skip %s (%s): %s", ca[:10], symbol, stab_reason)
+                            # Include base diagnostics (now in stab_info) so
+                            # `bad_base` lines name the upstream cause.
+                            _detail = (f" {stab_info}" if stab_info else "")
+                            log.info("shadow skip %s (%s): %s%s", ca[:10], symbol, stab_reason, _detail)
                             return
                     sq = await self.jupiter.quote_sell(ca, tokens_raw)
                     if sq is None or not sq.success:
@@ -572,10 +585,20 @@ class ShadowBook:
         if snap and snap.get("price_usd"):
             px = float(snap["price_usd"])
             dex_mult = px / entry if entry else 0
-            pos["last_usd"] = px
+            # last_usd drives the status card: prefer the executable Jupiter
+            # price (what we'd actually exit at) when available, so the
+            # displayed multiple matches the exit logic. DexScreener mid is
+            # the fallback.
+            if jup_mult is not None and entry:
+                pos["last_usd"] = entry * jup_mult
+            else:
+                pos["last_usd"] = px
         else:
-            # DexScreener also dead — no pair found
+            # DexScreener also dead — no pair found. Keep last_usd in sync
+            # with Jupiter when that's all we have.
             dex_mult = None
+            if jup_mult is not None and entry:
+                pos["last_usd"] = entry * jup_mult
 
         # --- dead-liquidity force-close ---
         # If both Jupiter AND DexScreener have no route, the token is
@@ -1402,7 +1425,10 @@ async def _run_watch(s: cfg.Settings) -> int:
             reason = "skip:already_open"
         elif len(book.open) >= book.max_positions:
             reason = "skip:max_positions"
-        elif book.balance_sol < book.size_sol:
+        elif book.balance_sol < (min(book.size_sol, s.size_sol_min)
+                                 if s.adaptive_sizing else book.size_sol):
+            # Adaptive sizes can be as small as size_sol_min: block only when
+            # even the smallest size is unaffordable (was: default size).
             reason = "skip:insufficient_balance"
         elif time.time() < book._cooldown.get(ca, 0):
             # Time-based re-entry cooldown (seeded from persisted closes
@@ -1805,12 +1831,21 @@ async def _run_watch(s: cfg.Settings) -> int:
                 return
             if reason and _skip_log.get(ca, 0) < time.time() - 300:
                 _skip_log[ca] = time.time()
-                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                # pumpapi firehose is journal-only by design (343 distinct CAs
+                # in ~2h on 2026-09-14): journal keeps the signal, DEBUG keeps
+                # the log readable. All real gates stay at INFO.
+                if reason == "skip:pumpapi_journal_only":
+                    log.debug("open deferred %s (%s): %s", ca[:10], sym, reason)
+                else:
+                    log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
             return
         now = time.time()
         if reason and _skip_log.get(ca, 0) < now - 300:
             _skip_log[ca] = now
-            log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+            if reason == "skip:pumpapi_journal_only":
+                log.debug("open deferred %s (%s): %s", ca[:10], sym, reason)
+            else:
+                log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
 
     w.on_smart_buy = _on_smart_buy
 
