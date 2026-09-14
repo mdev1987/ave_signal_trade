@@ -122,6 +122,20 @@ class RugCheckClient:
                 self._stats["errors"] += 1
                 return None
 
+            if resp.status_code in (400, 404):
+                # No report for this mint yet (too new / unknown) — a normal
+                # case, not an error. Fail open quietly, no traceback.
+                log.info("rugcheck no report for %s (HTTP %s)",
+                         mint[:8], resp.status_code)
+                self._stats["errors"] += 1
+                return None
+
+            if 400 <= resp.status_code < 500:
+                log.warning("rugcheck client error %s for %s",
+                            resp.status_code, mint[:8])
+                self._stats["errors"] += 1
+                return None
+
             resp.raise_for_status()
             data = resp.json()
 
@@ -175,6 +189,14 @@ class RugCheckClient:
 
         except asyncio.TimeoutError:
             log.warning("rugcheck timeout for %s", mint[:8])
+            self._stats["errors"] += 1
+            return None
+        except httpx.HTTPStatusError as exc:
+            # 5xx / unexpected status that slipped past the guards above.
+            # Fail open; a warning (not a traceback) is enough.
+            log.warning("rugcheck HTTP %s for %s: %s",
+                        exc.response.status_code if exc.response is not None else "?",
+                        mint[:8], exc)
             self._stats["errors"] += 1
             return None
         except Exception:

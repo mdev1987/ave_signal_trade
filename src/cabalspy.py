@@ -43,6 +43,10 @@ STREAM_BUNDLE = "bundle"
 STREAM_COUNT = "count"
 STREAM_BALANCE = "balance"
 
+# Live per-token subscribes are de-duped within this window: entry signals
+# re-fire per threshold (3 then 5 wallets) for the same mint.
+_LIVE_SUB_TTL_S = 1800.0  # 30 min
+
 
 class CabalSpyClient:
     """CabalSpy WebSocket client for real-time KOL/SM/Whale data.
@@ -130,6 +134,7 @@ class CabalSpyClient:
         self._total_bundles = 0
         self._total_counts = 0
         self._exhausted_keys: set[str] = set()
+        self._live_subs: dict[str, float] = {}  # token -> ts of last live subscribe
 
     @property
     def connected(self) -> bool:
@@ -222,6 +227,10 @@ class CabalSpyClient:
             self._connected = True
             self._ws = ws
             self._reconnect_count = 0
+            # Fresh connection drops all server-side per-token subs, so the
+            # live-subscribe dedupe cache must reset too — otherwise tokens
+            # stay unsubscribed until the TTL expires.
+            self._live_subs.clear()
             logger.info("cabalspy ws connected")
 
             # Subscribe to all configured streams
@@ -393,7 +402,23 @@ class CabalSpyClient:
 
         Called after a signal fires or position opens to track holder exits
         and bundle activity for that token. Uses the active WS connection.
+
+        De-duped: entry signals re-fire per threshold (3 then 5 wallets), so
+        the same token would otherwise be re-subscribed — and re-logged —
+        every time. Re-subscribes within _LIVE_SUB_TTL_S are skipped.
         """
+        streams = streams or [STREAM_HOLDER, STREAM_BUNDLE]
+        key = token + ":" + ",".join(sorted(streams))
+        now = time.time()
+        last = self._live_subs.get(key, 0.0)
+        if now - last < _LIVE_SUB_TTL_S:
+            logger.debug("cabalspy live subscribe skipped (dup %ds ago) for %s",
+                         now - last, token[:12])
+            return
+        self._live_subs[key] = now
+        # Prune stale entries opportunistically so the dict stays bounded.
+        for k in [k for k, ts in self._live_subs.items() if now - ts > _LIVE_SUB_TTL_S]:
+            self._live_subs.pop(k, None)
         if not self._ws or not self._connected:
             logger.warning("cabalspy subscribe_token_live skipped — not connected")
             return

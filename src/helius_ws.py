@@ -38,9 +38,13 @@ logger = logging.getLogger(__name__)
 SOL = "So11111111111111111111111111111111111111112"
 WSOL = SOL
 
-# Reconnect backoff: start at 2s, max 60s
+# Reconnect backoff: start at 2s, max 60s for transient drops.
+# Persistent 429s (plan/quota ban) escalate beyond that via the circuit
+# breaker in run(): up to _RECONNECT_CIRCUIT_MAX with quieted logs.
 _RECONNECT_MIN = 2.0
 _RECONNECT_MAX = 60.0
+_RECONNECT_CIRCUIT_AFTER = 10  # consecutive 429s before escalating
+_RECONNECT_CIRCUIT_MAX = 900.0  # 15 min ceiling while the ban persists
 _PING_INTERVAL = 30.0
 _SUBSCRIBE_BATCH = 100  # max wallets per subscribe message (Helius limit)
 _TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
@@ -165,6 +169,7 @@ class HeliusWS:
         self._reconnect_count = 0
         self._total_buys = 0
         self._total_msgs = 0
+        self._consec_429 = 0  # consecutive handshake rate-limit rejects
         self._use_logs_subscribe = False  # fallback if transactionSubscribe unavailable
         self._exhausted_keys: set[str] = set()
 
@@ -218,15 +223,35 @@ class HeliusWS:
                 # sleep before retrying. Rotation used to `continue` with no
                 # delay, so N dead keys became a tight reconnect storm
                 # (~80k reconnects, ~23% CPU, zero buys, log spam).
-                if any(kw in exc_str for kw in ("max usage", "429", "rate limit", "too many")):
+                is_429 = any(kw in exc_str for kw in ("max usage", "429", "rate limit", "too many"))
+                if is_429:
+                    self._consec_429 += 1
                     if len(self._api_keys) > 1:
                         self._exhausted_keys.add(self.api_key)
                         self._next_key()
-                logger.warning("helius ws disconnected (%s), reconnecting in %.0fs (attempt %d)",
-                               exc, backoff, self._reconnect_count)
+                else:
+                    self._consec_429 = 0
+                # Circuit breaker: a persistent 429 ban (observed: 240 straight
+                # rejects, 0 msgs) must not retry every 60s forever — that
+                # burns quota, churns keys and spams the log. Escalate the
+                # delay up to 15 min and quiet per-attempt warnings while the
+                # ban persists. Any successful connect resets via _connect_and_stream.
+                if self._consec_429 >= _RECONNECT_CIRCUIT_AFTER:
+                    steps = (self._consec_429 - _RECONNECT_CIRCUIT_AFTER) // 5
+                    delay = min(_RECONNECT_MAX * (2.0 ** steps), _RECONNECT_CIRCUIT_MAX)
+                    if self._consec_429 % 10 == 0 or self._consec_429 == _RECONNECT_CIRCUIT_AFTER:
+                        logger.warning("helius ws still rate-limited (%s), backing off %.0fs (attempt %d)",
+                                       exc, delay, self._reconnect_count)
+                    else:
+                        logger.debug("helius ws still rate-limited (%s), backing off %.0fs (attempt %d)",
+                                     exc, delay, self._reconnect_count)
+                else:
+                    delay = backoff
+                    logger.warning("helius ws disconnected (%s), reconnecting in %.0fs (attempt %d)",
+                                   exc, delay, self._reconnect_count)
                 self._connected = False
                 try:
-                    await asyncio.wait_for(self._stop.wait(), timeout=backoff)
+                    await asyncio.wait_for(self._stop.wait(), timeout=delay)
                     break  # stop was set during backoff
                 except TimeoutError:
                     pass
@@ -246,6 +271,7 @@ class HeliusWS:
         ) as ws:
             self._connected = True
             self._reconnect_count = 0
+            self._consec_429 = 0
             logger.info("helius ws connected")
 
             if self._use_logs_subscribe:
