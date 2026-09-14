@@ -595,10 +595,19 @@ class ShadowBook:
                             # Infra hiccup: hold the slot, keep managing via
                             # DexScreener below. Track separately for logs.
                             pos["_transient_fail_count"] = pos.get("_transient_fail_count", 0) + 1
-                            if pos["_transient_fail_count"] == 1 or pos["_transient_fail_count"] % 10 == 0:
+                            _tfc = pos["_transient_fail_count"]
+                            # Quiet cadence: refresh runs every 1s on fresh
+                            # positions, so every-10 logged x10/x20 within ~20s
+                            # during the 2026-09-14 gateway 429 storm. First
+                            # hit + every 60 at INFO, the rest at DEBUG.
+                            if _tfc == 1 or _tfc % 60 == 0:
                                 log.info("jupiter transient %s (%s): %s x%d — holding via DexScreener",
                                          ca[:10], pos["symbol"], _reason,
-                                         pos["_transient_fail_count"])
+                                         _tfc)
+                            else:
+                                log.debug("jupiter transient %s (%s): %s x%d — holding via DexScreener",
+                                          ca[:10], pos["symbol"], _reason,
+                                          _tfc)
                         else:
                             pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
                 except Exception:

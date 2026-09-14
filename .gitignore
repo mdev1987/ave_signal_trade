@@ -62,6 +62,7 @@ runwisp.toml
 .runwisp/
 .freebuff
 *.bak
+*.bak*
 .agents/
 .claude/
 .agents/skills/gmgn-token
