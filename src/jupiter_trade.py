@@ -336,6 +336,11 @@ class JupiterSwap:
         # SOL wallet does not waste 3×1s retries on a 0.02 SOL quote that
         # Jupiter will reject as generic 400 "Failed to get quotes".
         self._live_balance_sol: float | None = None
+        # Token decimals cache: getAccountInfo per mint is an RPC call and
+        # Helius 429s it during quota storms (observed 2026-09-14). Decimals
+        # never change, so cache successes forever; failures stay uncached
+        # and fall back to the caller's default.
+        self._decimals_cache: dict[str, int] = {}
 
     async def close(self) -> None:
         """Release the underlying HTTP client."""
@@ -493,6 +498,9 @@ class JupiterSwap:
         both Gatekeeper beta and mainnet), while ``getAccountInfo`` returns the
         same ``data.parsed.info.decimals`` shape.
         """
+        cached = self._decimals_cache.get(mint)
+        if cached is not None:
+            return cached
         try:
             result = await self._rpc(
                 "getAccountInfo", [mint, {"encoding": "jsonParsed"}]
@@ -502,9 +510,16 @@ class JupiterSwap:
                 data = info.get("data", {})
                 if isinstance(data, dict):
                     parsed = data.get("parsed", {})
-                    return int(parsed.get("info", {}).get("decimals"))
+                    dec = int(parsed.get("info", {}).get("decimals"))
+                    self._decimals_cache[mint] = dec
+                    return dec
         except Exception as e:  # noqa: BLE001
-            log.warning("token_decimals %s failed: %s", mint, e)
+            # 429s during quota storms are routine — debug only so they don't
+            # spam the log on every entry attempt; real errors still warn.
+            if "429" in str(e):
+                log.debug("token_decimals %s rate-limited: %s", mint, e)
+            else:
+                log.warning("token_decimals %s failed: %s", mint, e)
         return None
 
     async def token_balance(self, mint: str) -> int | None:

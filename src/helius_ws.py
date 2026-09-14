@@ -224,6 +224,15 @@ class HeliusWS:
             "last_msg_age_s": round(time.time() - self._last_msg_ts, 1) if self._last_msg_ts else None,
         }
 
+    @property
+    def degraded(self) -> bool:
+        """True while the WS is in 429 circuit-breaker backoff (quota-side ban).
+
+        The feed is alive but Helius is rejecting handshakes; callers use
+        this to render 🟡 degraded instead of 🔴 down.
+        """
+        return self._consec_429 >= _RECONNECT_CIRCUIT_AFTER
+
     async def run(self) -> None:
         """Main loop: connect, subscribe, reconnect on failure."""
         backoff = _RECONNECT_MIN
@@ -276,7 +285,14 @@ class HeliusWS:
     async def _connect_and_stream(self) -> None:
         """Connect to Helius WS, subscribe to all wallets, process messages."""
         url = f"{self._endpoint}/?api-key={self.api_key}"
-        logger.info("helius ws connecting to %s (wallets=%d)", self._endpoint, len(self.wallets))
+        # Quiet the per-attempt INFO during a quota ban (observed: a log line
+        # every 8 min for hours while 429-banned, zero signal). Real
+        # reconnects still log at INFO; ban retries stay visible at DEBUG.
+        if self._consec_429 >= _RECONNECT_CIRCUIT_AFTER:
+            logger.debug("helius ws retrying (ban backoff, attempt %d, wallets=%d)",
+                         self._reconnect_count + 1, len(self.wallets))
+        else:
+            logger.info("helius ws connecting to %s (wallets=%d)", self._endpoint, len(self.wallets))
 
         async with websockets.connect(
             url,

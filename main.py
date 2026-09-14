@@ -113,8 +113,17 @@ def build_status(st: dict) -> str:
     lines.append(f"▸ Closed: {len(closed)} · win {wr:.0f}%")
     lines.append(f"{icon} **PnL `{pnl:+.4f}` SOL ({pct:+.1f}%)**")
     feeds = st.get("feeds") or {}
+
+    def _feed_icon(v) -> str:
+        # "degraded" = quota-side Helius 429 ban: feed alive, provider
+        # throttling. 🟡 so the status card stops crying 🔴 for hours
+        # over something we can't fix from here.
+        if v == "degraded":
+            return "🟡"
+        return "🟢" if v else "🔴"
+
     feed_line = " · ".join(
-        f"{'🟢' if ok else '🔴'} {name}" for name, ok in feeds.items())
+        f"{_feed_icon(v)} {name}" for name, v in feeds.items())
     if feed_line:
         lines.append(feed_line)
     return "\n".join(lines)
@@ -334,6 +343,21 @@ class ShadowBook:
                 _pump_entry = False
                 if q is None or not q.success:
                     reason = q.reason if q else "quote_exception"
+                    # PumpAPI entries are priced from the DexScreener mid
+                    # (px = market_px below) — without a market price the
+                    # fallback buy is wasted and always ends in a
+                    # `no_price` skip (observed: misleading "PAPER buy via
+                    # pumpapi … shadow skip no price" pairs). Skip it early;
+                    # Jupiter executable entries (exec_px) don't need the
+                    # mid so they are unaffected — this guard only skips
+                    # the PumpAPI attempt.
+                    if (signal_price <= 0 and market_px <= 0
+                            and self.jupiter._pumpapi_enabled()):
+                        logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                     reason=f"no_price:{reason}")
+                        log.info("shadow skip %s (%s): no price (%s)",
+                                 ca[:10], symbol, reason)
+                        return
                     # PumpAPI fallback: try bonding curve buy for non-migrated tokens
                     if self.jupiter._pumpapi_enabled():
                         log.info("Jupiter no route for %s (%s), trying PumpAPI", ca[:10], symbol)
@@ -359,6 +383,14 @@ class ShadowBook:
                     entry_note = f"jup impact={q.price_impact_pct:.2f}%"
                     if self.open_max_impact_pct > 0 and q.price_impact_pct > self.open_max_impact_pct:
                         # PumpAPI fallback: try bonding curve when Jupiter impact is too high
+                        # (same no-price guard as the no-route branch above:
+                        # pump entries need the DexScreener mid for pricing).
+                        if signal_price <= 0 and market_px <= 0:
+                            logs.journal("shadow_skip", ca=ca, symbol=symbol,
+                                         reason=f"no_price:impact{q.price_impact_pct:.2f}%")
+                            log.info("shadow skip %s (%s): impact %.2f%%, no price",
+                                     ca[:10], symbol, q.price_impact_pct)
+                            return
                         if self.jupiter._pumpapi_enabled():
                             log.info("Jupiter impact %.2f%% too high for %s (%s), trying PumpAPI",
                                      q.price_impact_pct, ca[:10], symbol)
@@ -1781,6 +1813,8 @@ async def _run_watch(s: cfg.Settings) -> int:
         while not stop.is_set():
             await asyncio.sleep(max(60, s.status_every_min * 60))
             helius_ok = helius_ws.connected if helius_ws else False
+            if not helius_ok and helius_ws is not None and helius_ws.degraded:
+                helius_ok = "degraded"
             snap = book.snapshot(len(w.wallets), alerts["n"],
                                  w.consensus_fired, time.time() - started,
                                  {"dexscreener": True,
