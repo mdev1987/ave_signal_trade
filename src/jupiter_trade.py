@@ -341,6 +341,20 @@ class JupiterSwap:
         # never change, so cache successes forever; failures stay uncached
         # and fall back to the caller's default.
         self._decimals_cache: dict[str, int] = {}
+        # Token audit cache: /tokens/v2/search costs 10 credits per call and
+        # the open gate audits EVERY signal with no cache — the same CA was
+        # re-audited 2-3x within minutes (observed 2026-09-14), wasting
+        # credits and adding to Jupiter 429 pressure. Audit fields move
+        # slowly vs signal frequency, so cache per mint briefly.
+        self._audit_cache: dict[str, tuple[float, dict]] = {}
+        self._audit_cache_s = config.get_float(env, "JUPITER_AUDIT_CACHE_S", 600.0)
+        self._audit_cache_max = int(config.get(env, "JUPITER_AUDIT_CACHE_MAX", 500))
+        # Sell-quote 429 cooldown: the gateway 429s in storms (observed 2x in
+        # 1s for VINE on 2026-09-14). While the gateway is rejecting, fail
+        # fast without spending another network call; callers already treat a
+        # failed sell-quote as "unsellable → skip".
+        self._sell_429_until: float = 0.0
+        self._sell_429_cooldown_s = config.get_float(env, "JUPITER_SELL_429_COOLDOWN_S", 30.0)
 
     async def close(self) -> None:
         """Release the underlying HTTP client."""
@@ -385,6 +399,10 @@ class JupiterSwap:
         Cost: 10 credits per call.
         """
         result: dict[str, Any] = {"available": False}
+        now = time.monotonic()
+        cached = self._audit_cache.get(mint)
+        if cached and now - cached[0] < self._audit_cache_s:
+            return cached[1]
         try:
             r = await asyncio.wait_for(
                 self._client.get(
@@ -436,6 +454,15 @@ class JupiterSwap:
             log.debug("jupiter token audit timed out %s", mint[:8])
         except Exception as exc:  # noqa: BLE001
             log.debug("jupiter token audit failed %s: %s", mint[:8], exc)
+        if result.get("available"):
+            self._audit_cache[mint] = (time.monotonic(), result)
+            if len(self._audit_cache) > self._audit_cache_max:
+                cutoff = time.monotonic() - self._audit_cache_s
+                for k in [k for k, (ts, _) in self._audit_cache.items() if ts < cutoff]:
+                    self._audit_cache.pop(k, None)
+            if len(self._audit_cache) > self._audit_cache_max:
+                for k in list(self._audit_cache)[:len(self._audit_cache) - self._audit_cache_max]:
+                    self._audit_cache.pop(k, None)
         return result
 
     @property
@@ -1150,6 +1177,12 @@ class JupiterSwap:
     ) -> QuoteResult:
         """Single TOKEN→SOL order fetch + impact gate."""
         self._qstats["quotes"] += 1
+        # Gateway 429 cooldown: while the gateway is rejecting (storm observed
+        # 2026-09-14: back-to-back 429s 1s apart), fail fast without spending
+        # another network call. Callers treat this as unsellable → skip.
+        if time.monotonic() < self._sell_429_until:
+            self._qstats["quote_rate_limited"] += 1
+            return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, "quote_rate_limited")
         await self._quote_slot()
         t0 = time.monotonic()
         try:
@@ -1172,6 +1205,8 @@ class JupiterSwap:
         except JupiterError as exc:
             reason = self._classify_error(exc)
             self._qstats[reason] += 1
+            if reason == "quote_rate_limited":
+                self._sell_429_until = time.monotonic() + self._sell_429_cooldown_s
             log.info("sell-quote %s for %s: %s", reason, mint, exc)
             return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, reason)
         except httpx.RequestError as exc:

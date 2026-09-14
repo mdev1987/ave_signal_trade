@@ -49,6 +49,11 @@ _RECONNECT_MIN = 2.0
 _RECONNECT_MAX = 60.0
 _RECONNECT_CIRCUIT_AFTER = 10  # consecutive 429s before escalating
 _RECONNECT_CIRCUIT_MAX = 900.0  # 15 min ceiling while the ban persists
+# A ban surviving this many consecutive 429s is quota-side, not transient
+# (observed 2026-09-14: all keys 429-banned for 5+ hours, 0 msgs). Probing
+# every 15 min burns quota on 5 dead keys; escalate those probes to hourly.
+_RECONNECT_LONG_BAN_AFTER = 30
+_RECONNECT_LONG_BAN_MAX = 3600.0  # 1h ceiling during a sustained quota ban
 _PING_INTERVAL = 30.0
 _SUBSCRIBE_BATCH = 100  # max wallets per subscribe message (Helius limit)
 _TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
@@ -260,10 +265,15 @@ class HeliusWS:
                 # rejects, 0 msgs) must not retry every 60s forever — that
                 # burns quota, churns keys and spams the log. Escalate the
                 # delay up to 15 min and quiet per-attempt warnings while the
-                # ban persists. Any successful connect resets via _connect_and_stream.
+                # ban persists. Past _RECONNECT_LONG_BAN_AFTER straight 429s
+                # the ban is quota-side (observed 5+ hours): probe hourly so
+                # the 15-min probes don't burn quota on dead keys.
+                # Any successful connect resets via _connect_and_stream.
                 if self._consec_429 >= _RECONNECT_CIRCUIT_AFTER:
                     steps = (self._consec_429 - _RECONNECT_CIRCUIT_AFTER) // 5
                     delay = min(_RECONNECT_MAX * (2.0 ** steps), _RECONNECT_CIRCUIT_MAX)
+                    if self._consec_429 >= _RECONNECT_LONG_BAN_AFTER:
+                        delay = _RECONNECT_LONG_BAN_MAX
                     if self._consec_429 % 10 == 0 or self._consec_429 == _RECONNECT_CIRCUIT_AFTER:
                         logger.warning("helius ws still rate-limited (%s), backing off %.0fs (attempt %d)",
                                        exc, delay, self._reconnect_count)

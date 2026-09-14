@@ -135,13 +135,22 @@ class CabalSpyClient:
         self._total_counts = 0
         self._exhausted_keys: set[str] = set()
         self._live_subs: dict[str, float] = {}  # token -> ts of last live subscribe
+        self._hold_warned = False  # key-hold warning emitted once per episode
 
     @property
     def connected(self) -> bool:
         return self._connected
 
     def _next_key(self) -> str:
-        """Rotate to the next available API key, skipping exhausted ones."""
+        """Rotate to the next available API key, skipping exhausted ones.
+
+        When every key is rejected the exhausted set is KEPT (not reset):
+        resetting immediately re-tried the same dead keys in a tight storm
+        (same pattern Helius WS had: N dead keys re-tried with no delay).
+        The set clears only on a successful connect (see
+        ``_connect_and_stream``), so recovered quota is picked up while a
+        live ban backs off quietly via the pause in ``run()``.
+        """
         if not self._api_keys:
             return ""
         for _ in range(len(self._api_keys)):
@@ -149,14 +158,19 @@ class CabalSpyClient:
             key = self._api_keys[self._key_idx]
             if key not in self._exhausted_keys:
                 self.api_key = key
-                logger.info("cabalspy: rotated to key %s…", key[:8])
+                logger.debug("cabalspy: rotated to key %s…", key[:8])
                 return key
-        # all keys exhausted — reset and retry
-        logger.warning("cabalspy: all %d keys exhausted, resetting", len(self._api_keys))
-        self._exhausted_keys.clear()
-        self._key_idx = 0
-        self.api_key = self._api_keys[0]
-        return self._api_keys[0]
+        # all keys exhausted — stay on the current key and let the caller
+        # back off; do NOT reset the set here. Warn once per episode: this
+        # path fires on EVERY reconnect attempt during a ban and drowns the log.
+        if not self._hold_warned:
+            logger.warning("cabalspy: all %d keys rejected, holding key %s… until backoff clears",
+                           len(self._api_keys), self.api_key[:8])
+            self._hold_warned = True
+        else:
+            logger.debug("cabalspy: still holding key %s… (ban persists)",
+                         self.api_key[:8])
+        return self.api_key
 
     @property
     def stats(self) -> dict:
@@ -227,6 +241,8 @@ class CabalSpyClient:
             self._connected = True
             self._ws = ws
             self._reconnect_count = 0
+            self._hold_warned = False  # ban lifted — warn again on the next one
+            self._exhausted_keys.clear()  # quota recovered — all keys usable again
             # Fresh connection drops all server-side per-token subs, so the
             # live-subscribe dedupe cache must reset too — otherwise tokens
             # stay unsubscribed until the TTL expires.

@@ -39,7 +39,6 @@ class DBotXClient:
         self.timeout_s = timeout_s
         self._client = httpx.AsyncClient(timeout=timeout_s, follow_redirects=True)
         self._warned = False
-        self._lock = asyncio.Lock()
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -60,43 +59,46 @@ class DBotXClient:
         """
         if not self.api_key:
             return {"available": False, "safe": True, "note": "no_key"}
-        async with self._lock:
-            try:
-                r = await asyncio.wait_for(
-                    self._client.get(
-                        f"{self.base_url}/kline/pair_info",
-                        params={"chain": chain, "pair": pair, "type": "safety"},
-                        headers={"x-api-key": self.api_key, "accept": "application/json"},
-                    ),
-                    timeout=self.timeout_s + 2.0,
-                )
-            except Exception as e:  # noqa: BLE001
-                if not self._warned:
-                    # %r: timeouts/cancellations stringify to "" (observed:
-                    # empty log lines), repr keeps the exception class.
-                    logger.warning("dbotx safety check unavailable: %r", e)
-                    self._warned = True
-                return {"available": False, "safe": True, "note": "error"}
-            if r.status_code != 200:
-                if not self._warned:
-                    logger.warning(
-                        "dbotx safety HTTP %s (key missing / IP not whitelisted?) "
-                        "— rug filter disabled until fixed", r.status_code)
-                    self._warned = True
-                return {"available": False, "safe": True, "note": f"http{r.status_code}"}
-            try:
-                data = r.json()
-            except Exception:  # noqa: BLE001
-                return {"available": False, "safe": True, "note": "bad_json"}
-            if data.get("err"):
-                return {"available": False, "safe": True, "note": "err_flag"}
-            si = (data.get("res") or {}).get("safetyInfo") or {}
-            return {
-                "available": True,
-                "safe": True,  # final verdict is computed by the caller
-                "mint_authority": bool(si.get("mintAuthority")),
-                "freeze_authority": bool(si.get("freezeAuthority")),
-                "dev_position": si.get("devPosition"),
-                "top10": float(si.get("top10HolderRate") or 0.0),
-                "note": "ok",
-            }
+        # No lock: httpx.AsyncClient is concurrency-safe, and serializing
+        # every safety check caused head-of-line blocking + ReadTimeouts
+        # during consensus bursts (observed 2026-09-14). Fail-open below
+        # already handles any per-request failure.
+        try:
+            r = await asyncio.wait_for(
+                self._client.get(
+                    f"{self.base_url}/kline/pair_info",
+                    params={"chain": chain, "pair": pair, "type": "safety"},
+                    headers={"x-api-key": self.api_key, "accept": "application/json"},
+                ),
+                timeout=self.timeout_s + 2.0,
+            )
+        except Exception as e:  # noqa: BLE001
+            if not self._warned:
+                # %r: timeouts/cancellations stringify to "" (observed:
+                # empty log lines), repr keeps the exception class.
+                logger.warning("dbotx safety check unavailable: %r", e)
+                self._warned = True
+            return {"available": False, "safe": True, "note": "error"}
+        if r.status_code != 200:
+            if not self._warned:
+                logger.warning(
+                    "dbotx safety HTTP %s (key missing / IP not whitelisted?) "
+                    "— rug filter disabled until fixed", r.status_code)
+                self._warned = True
+            return {"available": False, "safe": True, "note": f"http{r.status_code}"}
+        try:
+            data = r.json()
+        except Exception:  # noqa: BLE001
+            return {"available": False, "safe": True, "note": "bad_json"}
+        if data.get("err"):
+            return {"available": False, "safe": True, "note": "err_flag"}
+        si = (data.get("res") or {}).get("safetyInfo") or {}
+        return {
+            "available": True,
+            "safe": True,  # final verdict is computed by the caller
+            "mint_authority": bool(si.get("mintAuthority")),
+            "freeze_authority": bool(si.get("freezeAuthority")),
+            "dev_position": si.get("devPosition"),
+            "top10": float(si.get("top10HolderRate") or 0.0),
+            "note": "ok",
+        }
