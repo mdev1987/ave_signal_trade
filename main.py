@@ -77,7 +77,12 @@ def build_status(st: dict) -> str:
     uptime = f"{h}h {m:02d}m" if h else f"{m}m"
     open_pos = st.get("open", [])
     closed = st.get("closed", [])
-    wins = sum(1 for c in closed if c.get("pnl_sol", 0) > 0)
+    # oracle_fail closes are infra failures (both pricers down, e.g. Jupiter
+    # 429 storm on 2026-09-14: -0.0395 booked as a full loss at mult=0.0).
+    # They are not trading losses — exclude from strategy PnL/win-rate.
+    strat = [c for c in closed if not c.get("oracle_fail")]
+    infra_n = len(closed) - len(strat)
+    wins = sum(1 for c in strat if c.get("pnl_sol", 0) > 0)
     # Closed PnL + unrealized PnL on open positions.
     # Open positions store entry_usd/last_usd but not pnl_sol, so compute
     # the unrealized multiple from price change.
@@ -91,7 +96,7 @@ def build_status(st: dict) -> str:
         banked = o.get("banked_pnl", 0.0)
         if entry > 0 and size > 0:
             open_pnl += banked + remaining * size * (last / entry - 1.0)
-    pnl = sum(c.get("pnl_sol", 0) for c in closed) + open_pnl
+    pnl = sum(c.get("pnl_sol", 0) for c in strat) + open_pnl
     pct = (pnl / start * 100.0) if start else 0.0
     icon = "🟢" if pnl >= 0 else "🔴"
 
@@ -109,8 +114,10 @@ def build_status(st: dict) -> str:
         mult = last / entry if entry else 1.0
         lines.append(f"   `{o.get('symbol','?')}` {mult:.2f}x "
                      f"({o.get('banked_pnl',0):+.4f})")
-    wr = (wins / len(closed) * 100) if closed else 0.0
-    lines.append(f"▸ Closed: {len(closed)} · win {wr:.0f}%")
+    wr = (wins / len(strat) * 100) if strat else 0.0
+    lines.append(f"▸ Closed: {len(strat)} · win {wr:.0f}%")
+    if infra_n:
+        lines[-1] += f" (+{infra_n} infra excluded)"
     lines.append(f"{icon} **PnL `{pnl:+.4f}` SOL ({pct:+.1f}%)**")
     feeds = st.get("feeds") or {}
 
@@ -192,10 +199,11 @@ class ShadowBook:
         self._load()
 
     def _win_rate(self) -> float:
-        if not self.closed:
+        strat = [c for c in self.closed if not c.get("oracle_fail")]
+        if not strat:
             return 0.0
-        wins = sum(1 for c in self.closed if c.get("pnl_sol", 0.0) > 0.0)
-        return wins / len(self.closed) * 100.0
+        wins = sum(1 for c in strat if c.get("pnl_sol", 0.0) > 0.0)
+        return wins / len(strat) * 100.0
 
     def _load(self) -> None:
         if not self.state_file.exists():
@@ -562,6 +570,14 @@ class ShadowBook:
         # back to DexScreener mid only when Jupiter is unavailable.
         jup_mult = None
         dex_mult = None
+        # Transient Jupiter failures (gateway 429/timeout/5xx) are infra, not
+        # dead liquidity: they must NOT advance the dead-quote counter (seen
+        # 2026-09-14: a 429 storm force-closed FwEm… at mult=0.0/-100%).
+        # Only a genuine no-route counts toward the zombie grace limit.
+        _TRANSIENT_QUOTE_REASONS = {
+            "quote_rate_limited", "quote_timeout",
+            "quote_http_error", "quote_exception",
+        }
         if self.jupiter is not None and pos.get("tokens_raw"):
             remaining_raw = int(pos["tokens_raw"] * pos.get("remaining", 1.0))
             if remaining_raw > 0:
@@ -572,14 +588,29 @@ class ShadowBook:
                             (pos["size_sol"] * pos.get("remaining", 1.0))
                         pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
                         pos["_quote_fail_count"] = 0  # reset on success
+                        pos["_transient_fail_count"] = 0
                     else:
-                        pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
+                        _reason = (sq.reason if sq is not None else "quote_exception")
+                        if _reason in _TRANSIENT_QUOTE_REASONS:
+                            # Infra hiccup: hold the slot, keep managing via
+                            # DexScreener below. Track separately for logs.
+                            pos["_transient_fail_count"] = pos.get("_transient_fail_count", 0) + 1
+                            if pos["_transient_fail_count"] == 1 or pos["_transient_fail_count"] % 10 == 0:
+                                log.info("jupiter transient %s (%s): %s x%d — holding via DexScreener",
+                                         ca[:10], pos["symbol"], _reason,
+                                         pos["_transient_fail_count"])
+                        else:
+                            pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
                 except Exception:
-                    pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
+                    pos["_transient_fail_count"] = pos.get("_transient_fail_count", 0) + 1
                     log.exception("refresh jup quote failed %s", ca[:10])
         else:
-            # No Jupiter or no tokens — try DexScreener only
-            pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
+            # No Jupiter or no tokens (e.g. PumpAPI bonding-curve entries with
+            # tokens_raw==0): Jupiter can never price these by design, so do
+            # NOT advance the dead counter here — DexScreener is the pricer.
+            # The old code incremented every cycle and killed every PumpAPI
+            # position as dead_liquidity after 10 refreshes.
+            pass
 
         snap = await self.ds.token_pairs("solana", ca)
         if snap and snap.get("price_usd"):
@@ -620,14 +651,12 @@ class ShadowBook:
                 is_dead = True
                 log.warning("dead pool %s (%s): liq=$%.0f < $%d, force-closing",
                             ca[:10], pos["symbol"], liq, DEAD_LIQ_USD)
-        # Also force-close when Jupiter has been failing for a while
-        # and DexScreener has a price — prevents positions from being
-        # stuck indefinitely when Jupiter API is down.
-        if (not is_dead and jup_mult is None and dex_mult is not None
-                and pos.get("_quote_fail_count", 0) >= 10):
-            is_dead = True
-            log.warning("stuck position %s (%s): %d Jupiter failures, force-closing via DexScreener",
-                        ca[:10], pos["symbol"], pos.get("_quote_fail_count", 0))
+        # NOTE (2026-09-14): the old `jupiter_down_force_close` block was here —
+        # any position with >=3 Jupiter misses was killed even with a healthy
+        # DexScreener price and no SL/TP hit. During gateway 429 storms that
+        # massacred healthy slots. Removed: with Jupiter down we simply manage
+        # via dex_mult (mult falls through to DexScreener below); only a real
+        # dead_liquidity / timeout / flat / bleed condition closes.
 
         # --- max_hold timeout check (runs even when pricing fails) ---
         age_s = time.time() - pos["ts"]
@@ -767,18 +796,10 @@ class ShadowBook:
             if ca not in self.open:
                 return  # evicted concurrently; nothing to close
             pos = self.open[ca]
-            # --- Jupiter sell fallback: retry then force-close ---
-            # When Jupiter is down (503/timeout) but DexScreener has a
-            # price and an exit condition is met, force-close using the
-            # DexScreener price.  This prevents positions from getting
-            # stuck for hours when Jupiter's API is flaky.
-            jup_down = (pos.get("_quote_fail_count", 0) >= 3
-                        and jup_mult is None and dex_mult is not None)
-            if jup_down and exit_reason not in ("dead_liquidity",):
-                log.warning("JUPITER DOWN %s (%s): force-closing via DexScreener (fails=%d)",
-                            ca[:10], pos["symbol"],
-                            pos.get("_quote_fail_count", 0))
-                exit_reason = "jupiter_down_force_close"
+            # NOTE (2026-09-14): the old `jupiter_down_force_close` override was
+            # here — it re-labelled ANY close during a Jupiter outage, hiding
+            # the real reason (sl/trail/timeout evaluated on the DexScreener
+            # leg). Removed: keep the genuine exit_reason so stats stay honest.
             # --- PumpAPI sell fallback for bonding curve tokens ---
             # When position was bought via PumpAPI (entry_mode=pumpapi),
             # tokens_raw is 0 and Jupiter can't sell it. Use PumpAPI sell.
@@ -799,13 +820,22 @@ class ShadowBook:
                         log.warning("pumpapi sell failed %s: %s",
                                     ca[:10], sell_res.error)
                         pos["exit_note"] = f"pumpapi_sell_fail:{sell_res.error}"
-            # For dead tokens (mult=None), remaining tokens are
-            # worthless: mult = 0.0.  Banked TP is already counted.
+            # For dead tokens (mult=None), we cannot know the exit price.
+            # The old code booked mult=0.0 (full -100% loss), which turned a
+            # Jupiter 429 storm into a fake -0.0395 SOL trade (FwEm…, 2026-09-14).
+            # Honest fallback: close at the last seen price (usually ~entry, so
+            # pnl ≈ 0) and keep oracle_fail=True so status/win-rate exclude it.
+            # Banked TP is already counted.
             # oracle_fail=True marks infra failures (both pricers
             # down) so they can be excluded from strategy stats —
             # they are not trading losses.
             oracle_fail = mult is None
-            eff_mult = mult if mult is not None else 0.0
+            if mult is not None:
+                eff_mult = mult
+            else:
+                _last = pos.get("last_usd") or 0.0
+                _entry = pos.get("entry_usd") or 0.0
+                eff_mult = (_last / _entry) if _last > 0 and _entry > 0 else 0.0
             pnl = pos.get("banked_pnl", 0.0) + \
                 pos["remaining"] * pos["size_sol"] * (eff_mult - 1.0)
             # Trade-level multiple (incl. any banked TP) for honest
@@ -1564,7 +1594,14 @@ async def _run_watch(s: cfg.Settings) -> int:
                             log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
                         return
             # Helius: deployer rugger check + top-10 holder concentration
-            if helius is not None and s.helius_rugger_block:
+            # Quota guard (2026-09-14): while the WS is in 429 circuit-breaker
+            # backoff the Helius RPC quota is exhausted too (token_decimals
+            # 429s in the same storm). token_safety is 2-3 RPC calls per
+            # signal and fail-open anyway — skip the calls entirely while
+            # degraded instead of burning quota that delays recovery.
+            _helius_degraded = bool(
+                helius_ws is not None and getattr(helius_ws, "degraded", False))
+            if helius is not None and s.helius_rugger_block and not _helius_degraded:
                 try:
                     safety = await helius.token_safety(ca)
                     if not safety.get("safe", True):
