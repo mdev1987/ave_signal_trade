@@ -75,20 +75,20 @@ uv run python -c "from src.jupiter_trade import JupiterSwap; ..."
 - Dead token: peak <1.015 after 8min → force close (`quick_bleed`; the
   `peak<1.03 within 30min` tier-2 was removed 2026-09-12 — it overlapped
   early_filter + hard_stop and killed 33/63 paper trades)
-- Hard stop: -30% from entry
-- Trailing stop: -15% from peak (activates at 1.4x)
-- Breakeven lock: after 1st TP, stop moves to entry
-- TP ladder: configurable (default: +20%/+80%/+200%)
-- Flat timeout: no price update for 2h
+- Hard stop: -25% from entry (`HARD_STOP_PCT=0.25`)
+- Trailing stop: -15% from peak (`TRAIL_RETRACE_PCT=0.15`, arms at peak ≥1.3x via `TRAIL_START_MULT`)
+- Breakeven lock: after 1st TP — or early once peak ≥1.15x (`BE_ARM_MULT`) — stop moves to entry
+- TP ladder: live `1.2:0.4,1.8:0.3,3.0:0.3` (+20%/+80%/+200%)
+- Flat timeout: age >1h with peak <1.05 and no TP taken → free the slot (`FLAT_TIMEOUT_H=1`)
 - Max hold: 24h
 
 ## Key Config Parameters
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
-| `CONSENSUS_WEIGHT_THRESHOLD` | 1.5 | Higher = fewer but stronger entries |
+| `CONSENSUS_WEIGHT_THRESHOLD` | 1.8 (.env; code default 1.3) | Higher = fewer but stronger entries |
 | `OPEN_MIN_WALLETS` | 2 | Min wallets before opening |
-| `HARD_STOP_PCT` | 0.30 | Max loss per trade |
+| `HARD_STOP_PCT` | 0.25 | Max loss per trade |
 | `TRAIL_RETRACE_PCT` | 0.15 | Trail sensitivity |
 | `ADAPTIVE_SIZING` | true | Scale size by wallet quality |
 | `JUP_AUDIT_ENABLED` | true | Jupiter token audit pre-trade |
