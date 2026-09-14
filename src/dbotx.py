@@ -72,7 +72,9 @@ class DBotXClient:
                 )
             except Exception as e:  # noqa: BLE001
                 if not self._warned:
-                    logger.warning("dbotx safety check unavailable: %s", e)
+                    # %r: timeouts/cancellations stringify to "" (observed:
+                    # empty log lines), repr keeps the exception class.
+                    logger.warning("dbotx safety check unavailable: %r", e)
                     self._warned = True
                 return {"available": False, "safe": True, "note": "error"}
             if r.status_code != 200:

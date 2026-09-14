@@ -226,12 +226,28 @@ class ShadowBook:
         Positions with tokens_raw == 0 are moved to stuck (can't sell).
         Positions whose on-chain balance is zero are closed as losses.
         """
-        if self.jupiter is None or not self.open:
+        if self.jupiter is None:
             return
         async with self._lock:
+            pending = list(self.open)
+        if not pending:
+            return
+        # Fetch balances WITHOUT the lock: RPC is slow and holding the lock
+        # across it would block the signal path (same fix as refresh_prices).
+        balances: dict[str, int | None] = {}
+        for ca in pending:
+            try:
+                balances[ca] = await self.jupiter.token_balance(ca)
+            except Exception:
+                log.exception("reconcile balance fetch failed %s", ca[:10])
+                balances[ca] = None
+        async with self._lock:
             removed = []
-            for ca, pos in list(self.open.items()):
-                real_balance = await self.jupiter.token_balance(ca)
+            for ca in pending:
+                if ca not in self.open:
+                    continue
+                pos = self.open[ca]
+                real_balance = balances[ca]
                 if real_balance is None:
                     # RPC failed — keep position as-is, will reconcile later
                     continue
@@ -450,10 +466,14 @@ class ShadowBook:
                 log.exception("send_open failed")
 
     async def refresh_prices(self) -> None:
-        # Single lock around the whole scan: refresh and open_position run in
-        # different tasks, and both read/write self.open / self.balance_sol.
-        # Serializing them prevents lost updates (e.g. an open landing in the
-        # middle of a close, or a balance miscount).
+        # Snapshot the scan order under the lock, then release it: quotes
+        # are slow (Jupiter/DexScreener RPC) and holding the lock across
+        # the whole scan blocked open_position (signal path) behind every
+        # quote, risking the 150s hung-signal watchdog during outages.
+        # Structural mutations (close/balance/save) stay locked inside
+        # _refresh_one; per-position fields are only written by this loop,
+        # so touching them unlocked cannot race with open_position (which
+        # only adds new keys under the lock).
         async with self._lock:
             # Process fresh positions (< early_filter_window_s) first so the
             # one-shot filter fires with minimal latency.  Mature positions
@@ -467,284 +487,302 @@ class ShadowBook:
                     fresh.append(ca)
                 else:
                     mature.append(ca)
-            for ca in fresh + mature:
-                pos = self.open[ca]
-                entry = pos["entry_usd"]
-                # --- price discovery: prefer Jupiter executable sell quote
-                # (authoritative for what we'd actually get on exit); fall
-                # back to DexScreener mid only when Jupiter is unavailable.
-                jup_mult = None
-                dex_mult = None
-                if self.jupiter is not None and pos.get("tokens_raw"):
-                    remaining_raw = int(pos["tokens_raw"] * pos.get("remaining", 1.0))
-                    if remaining_raw > 0:
-                        try:
-                            sq = await self.jupiter.quote_sell(ca, remaining_raw)
-                            if sq is not None and sq.success:
-                                jup_mult = (sq.output_amount / 1e9) / \
-                                    (pos["size_sol"] * pos.get("remaining", 1.0))
-                                pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
-                                pos["_quote_fail_count"] = 0  # reset on success
-                            else:
-                                pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
-                        except Exception:
-                            pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
-                            log.exception("refresh jup quote failed %s", ca[:10])
-                else:
-                    # No Jupiter or no tokens — try DexScreener only
-                    pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
-
-                snap = await self.ds.token_pairs("solana", ca)
-                if snap and snap.get("price_usd"):
-                    px = float(snap["price_usd"])
-                    dex_mult = px / entry if entry else 0
-                    pos["last_usd"] = px
-                else:
-                    # DexScreener also dead — no pair found
-                    dex_mult = None
-
-                # --- dead-liquidity force-close ---
-                # If both Jupiter AND DexScreener have no route, the token is
-                # dead (rug / drained pool).  Force-close after a short grace
-                # period so we don't hold zombie slots forever.
-                DEAD_QUOTE_LIMIT = 10   # consecutive no-route failures before force-close
-                DEAD_LIQ_USD = 10.0     # DexScreener liq below this = dead pool
-                is_dead = False
-                if jup_mult is None and dex_mult is None:
-                    qfails = pos.get("_quote_fail_count", 0)
-                    if qfails >= DEAD_QUOTE_LIMIT:
-                        is_dead = True
-                        log.warning("dead liquidity %s (%s): %d consecutive quote failures, force-closing",
-                                    ca[:10], pos["symbol"], qfails)
-                elif dex_mult is not None:
-                    # DexScreener returned but pool is essentially dead
-                    liq = (snap or {}).get("liq") or 0
-                    if 0 < liq < DEAD_LIQ_USD:
-                        is_dead = True
-                        log.warning("dead pool %s (%s): liq=$%.0f < $%d, force-closing",
-                                    ca[:10], pos["symbol"], liq, DEAD_LIQ_USD)
-                # Also force-close when Jupiter has been failing for a while
-                # and DexScreener has a price — prevents positions from being
-                # stuck indefinitely when Jupiter API is down.
-                if (not is_dead and jup_mult is None and dex_mult is not None
-                        and pos.get("_quote_fail_count", 0) >= 10):
-                    is_dead = True
-                    log.warning("stuck position %s (%s): %d Jupiter failures, force-closing via DexScreener",
-                                ca[:10], pos["symbol"], pos.get("_quote_fail_count", 0))
-
-                # --- max_hold timeout check (runs even when pricing fails) ---
-                age_s = time.time() - pos["ts"]
-                exit_reason = None
-                if is_dead:
-                    exit_reason = "dead_liquidity"
-                elif self.max_hold_s > 0 and age_s > self.max_hold_s:
-                    exit_reason = "timeout"
-                elif (self.flat_timeout_s > 0 and age_s > self.flat_timeout_s
-                        and pos.get("peak_mult", 1.0) < self.flat_timeout_peak
-                        and not pos.get("tp_taken")):
-                    # Flat-timeout: held long enough with no TP and never
-                    # showed life — free the slot instead of slow-bleeding.
-                    exit_reason = "flat_timeout"
-                    log.info("flat timeout %s (%s): age=%.1fh peak=%.3f",
-                             ca[:10], pos["symbol"], age_s / 3600,
-                             pos.get("peak_mult", 1.0))
-                elif (pos.get("source") != "memetracker"
-                        and not pos.get("tp_taken")):
-                    peak = pos.get("peak_mult", 1.0)
-                    # Dead-token kill only: no movement at all after 8 min.
-                    # Tier-2 ("weak", <3% in 8-45m) REMOVED 2026-09-12: it
-                    # overlapped early_filter + hard_stop + trail and killed
-                    # 33/63 paper trades, most at hold=0m pre-fix. Let the
-                    # dedicated exits decide once a position has 8 min of life.
-                    if age_s > 480 and peak < 1.015:
-                        exit_reason = "quick_bleed"
-                        log.info("dead token kill %s (%s): age=%.0fm peak=%.3f",
-                                 ca[:10], pos["symbol"], age_s / 60, peak)
-
-                # Track peak using ONLY the executable price.
-                best_mult = jup_mult if jup_mult is not None else dex_mult
-                if best_mult is not None and best_mult > 0:
-                    pos["peak_usd"] = max(pos["peak_usd"],
-                                          pos["entry_usd"] * best_mult)
-                    pos["peak_mult"] = max(pos.get("peak_mult", 1.0), best_mult)
-                # Use Jupiter price as authoritative for exit decisions.
-                mult = jup_mult if jup_mult is not None else dex_mult
-                if mult is None and not exit_reason:
-                    continue  # can't price, not dead yet — leave open
-                peak_mult = pos.get("peak_mult", mult)
-                if not is_dead and exit_reason not in ("timeout", "flat_timeout", "quick_bleed"):
-                    exit_reason = None  # reset; dead_liquidity/timeout already set above
-                # ---- early adverse filter (one-shot at early_filter_window_s):
-                # Track worst/best excursion during the early window, then
-                # evaluate once.  If the position drew down >early_filter_dd
-                # AND never gained >early_filter_gain, close immediately.
-                # This is the key finding from the 2026-08-13 ablation:
-                # rejecting trades with >20% adverse AND <5% favorable in
-                # first 30s turns gross PnL from -0.447 to +0.335 SOL.
-                age_s = time.time() - pos["ts"]
-                if not pos.get("early_checked", False) and mult is not None:
-                    if age_s < self.early_filter_window_s:
-                        # Still in early window: track min/max excursion
-                        pos["early_min_mult"] = min(
-                            pos.get("early_min_mult", mult), mult)
-                        pos["early_max_mult"] = max(
-                            pos.get("early_max_mult", mult), mult)
-                    else:
-                        # Window expired: evaluate (one-shot)
-                        early_dd = 1.0 - pos.get("early_min_mult", mult)
-                        early_gain = pos.get("early_max_mult", mult) - 1.0
-                        pos["early_checked"] = True
-                        if (early_dd > self.early_filter_dd
-                                and early_gain < self.early_filter_gain):
-                            exit_reason = "early_invalid"
-                            logs.journal("shadow_early_filter", ca=ca,
-                                         symbol=pos["symbol"],
-                                         dd_pct=round(early_dd * 100, 2),
-                                         gain_pct=round(early_gain * 100, 2),
-                                         result="rejected")
-                        else:
-                            logs.journal("shadow_early_filter", ca=ca,
-                                         symbol=pos["symbol"],
-                                         dd_pct=round(early_dd * 100, 2),
-                                         gain_pct=round(early_gain * 100, 2),
-                                         result="passed")
-                # ---- take-profit ladder (scale-out): when the peak reaches a
-                # level, bank that fraction of the ORIGINAL size. Use the
-                # EXECUTABLE (Jupiter) price so we only record levels that
-                # were actually reachable at fill quality.
-                # IMPORTANT: skip all normal exit logic when early_invalid
-                # fired — it is terminal (matches the ablation semantics).
-                # Also skip when mult is None (dead token, can't price).
-                if exit_reason != "early_invalid" and mult is not None:
-                    for lvl_i, (lvl, frac, trail_pct) in enumerate(self.tp_ladder):
-                        if lvl in pos["tp_taken"]:
-                            continue
-                        if peak_mult >= lvl:
-                            exec_at_level = min(mult, lvl) if mult < lvl else lvl
-                            pos["tp_taken"].append(lvl)
-                            pos["banked_pnl"] += frac * pos["size_sol"] * (exec_at_level - 1.0)
-                            pos["remaining"] = max(0.0, pos["remaining"] - frac)
-                            pos["tp_level"] = lvl_i  # track current level for trail
-                            logs.journal("shadow_tp", ca=ca, symbol=pos["symbol"],
-                                         lvl=lvl, frac=frac, trail_pct=trail_pct,
-                                         exec_px=round(exec_at_level, 3))
-                            if pos["remaining"] <= 1e-9:
-                                pos["remaining"] = 0.0
-                    if pos["tp_taken"] and not pos["be_armed"]:
-                        pos["be_armed"] = True
-                        logs.journal("shadow_be", ca=ca, symbol=pos["symbol"])
-                    elif (not pos["be_armed"] and self.be_arm_mult > 0
-                            and peak_mult >= self.be_arm_mult):
-                        # Early BE: spike showed +15% but faded before TP1 —
-                        # lock breakeven instead of riding to the hard stop.
-                        pos["be_armed"] = True
-                        logs.journal("shadow_be_early", ca=ca, symbol=pos["symbol"],
-                                     peak=round(peak_mult, 3))
-                    if pos["remaining"] <= 0:
-                        exit_reason = "tp"   # fully scaled out at the spike
-                    else:
-                        stop_mult = (1 - self.hard_stop)
-                        if pos["be_armed"]:
-                            stop_mult = max(stop_mult, 1.0 + self.be_buffer)
-                        if self.hard_stop > 0 and mult <= stop_mult:
-                            exit_reason = "sl"
-                        elif self.trail_enabled:
-                            # Tiered trailing stop: use trail_pct from the
-                            # highest TP level that has fired. If no TP yet,
-                            # use the global retrace_pct as fallback.
-                            tp_level = pos.get("tp_level", -1)
-                            if tp_level >= 0:
-                                # Use the trail_pct from the LAST fired level
-                                trail_pct = self.tp_ladder[tp_level][2]
-                            else:
-                                trail_pct = self.retrace
-                            trail_start = self.trail_start_mult if tp_level < 0 else 1.0
-                            if peak_mult >= trail_start and \
-                                    mult <= peak_mult * (1 - trail_pct):
-                                exit_reason = "trail"
-                if exit_reason:
-                    # --- Jupiter sell fallback: retry then force-close ---
-                    # When Jupiter is down (503/timeout) but DexScreener has a
-                    # price and an exit condition is met, force-close using the
-                    # DexScreener price.  This prevents positions from getting
-                    # stuck for hours when Jupiter's API is flaky.
-                    jup_down = (pos.get("_quote_fail_count", 0) >= 3
-                                and jup_mult is None and dex_mult is not None)
-                    if jup_down and exit_reason not in ("dead_liquidity",):
-                        log.warning("JUPITER DOWN %s (%s): force-closing via DexScreener (fails=%d)",
-                                    ca[:10], pos["symbol"],
-                                    pos.get("_quote_fail_count", 0))
-                        exit_reason = "jupiter_down_force_close"
-                    # --- PumpAPI sell fallback for bonding curve tokens ---
-                    # When position was bought via PumpAPI (entry_mode=pumpapi),
-                    # tokens_raw is 0 and Jupiter can't sell it. Use PumpAPI sell.
-                    if (pos.get("entry_mode") == "pumpapi"
-                            and self.jupiter is not None
-                            and self.jupiter._pumpapi_enabled()):
-                        remaining_pct = int(pos.get("remaining", 1.0) * 100)
-                        if remaining_pct > 0:
-                            log.info("pumpapi sell %s (%s): %d%% remaining",
-                                     ca[:10], pos["symbol"], remaining_pct)
-                            sell_res = await self.jupiter.sell_via_pumpapi(
-                                ca, remaining_pct)
-                            if sell_res.success:
-                                log.info("pumpapi sell OK %s: sig=%s",
-                                         ca[:10], sell_res.signature[:16])
-                                pos["exit_note"] = f"pumpapi_sell:{sell_res.signature[:12]}"
-                            else:
-                                log.warning("pumpapi sell failed %s: %s",
-                                            ca[:10], sell_res.error)
-                                pos["exit_note"] = f"pumpapi_sell_fail:{sell_res.error}"
-                    # For dead tokens (mult=None), remaining tokens are
-                    # worthless: mult = 0.0.  Banked TP is already counted.
-                    # oracle_fail=True marks infra failures (both pricers
-                    # down) so they can be excluded from strategy stats —
-                    # they are not trading losses.
-                    oracle_fail = mult is None
-                    eff_mult = mult if mult is not None else 0.0
-                    pnl = pos.get("banked_pnl", 0.0) + \
-                        pos["remaining"] * pos["size_sol"] * (eff_mult - 1.0)
-                    # Trade-level multiple (incl. any banked TP) for honest
-                    # reporting — the exit-leg `mult` alone misleads when a
-                    # partial was already banked (e.g. Bear: exit 0.70x but net +).
-                    trade_mult = (pos["size_sol"] + pnl) / pos["size_sol"]
-                    rec = {"ca": ca, "symbol": pos["symbol"], "reason": exit_reason,
-                             "mult": round(trade_mult, 3), "pnl_sol": round(pnl, 5),
-                             "hold_min": int((time.time() - pos["ts"]) / 60),
-                             "wallets": pos.get("wallets", []),
-                             "source": pos.get("source", "pumpapi"),
-                             "size_sol": round(pos["size_sol"], 5),
-                             "oracle_fail": oracle_fail}
-                    self.closed.append(rec)
-                    bal_before = self.balance_sol
-                    self.balance_sol += pos["size_sol"] + pnl
-                    del self.open[ca]
-                    # Time-based cooldown: allow re-entry after cooldown_s
-                    self._cooldown[ca] = time.time() + self.reentry_cooldown_s
-                    logs.journal("shadow_close", **rec)
-                    if self.on_trade_close is not None:
-                        try:
-                            self.on_trade_close(pos.get("wallets", []), pnl > 0, pnl)
-                        except Exception:
-                            log.exception("on_trade_close failed")
-                    if self.notifier is not None:
-                        try:
-                            asyncio.get_running_loop().create_task(
-                            self.notifier.send_close(
-                                ca=ca, name=pos["symbol"], reason=exit_reason,
-                                mult=trade_mult, pnl_sol=pnl,
-                                    hold_s=time.time() - pos["ts"],
-                                    entry_px=pos["entry_usd"], exit_px=pos["last_usd"],
-                                    size_sol=pos["size_sol"],
-                                    balance_before=bal_before,
-                                    balance_after=self.balance_sol,
-                                     open_count=len(self.open),
-                                     max_positions=self.max_positions,
-                                     win_rate=self._win_rate(),
-                                     wallets=pos.get("wallets", [])))
-                        except Exception:
-                            log.exception("send_close failed")
+            ordered = fresh + mature
+        for ca in ordered:
+            try:
+                await self._refresh_one(ca)
+            except Exception:
+                log.exception("refresh %s failed this cycle; continuing", ca[:10])
+        async with self._lock:
             self.save()
+
+    async def _refresh_one(self, ca: str) -> None:
+        """Refresh one position: unlocked fetch/compute, locked close."""
+        pos = self.open.get(ca)
+        if pos is None:
+            return
+        entry = pos["entry_usd"]
+        # --- price discovery: prefer Jupiter executable sell quote
+        # (authoritative for what we'd actually get on exit); fall
+        # back to DexScreener mid only when Jupiter is unavailable.
+        jup_mult = None
+        dex_mult = None
+        if self.jupiter is not None and pos.get("tokens_raw"):
+            remaining_raw = int(pos["tokens_raw"] * pos.get("remaining", 1.0))
+            if remaining_raw > 0:
+                try:
+                    sq = await self.jupiter.quote_sell(ca, remaining_raw)
+                    if sq is not None and sq.success:
+                        jup_mult = (sq.output_amount / 1e9) / \
+                            (pos["size_sol"] * pos.get("remaining", 1.0))
+                        pos["exit_note"] = f"jup impact={sq.price_impact_pct:.2f}%"
+                        pos["_quote_fail_count"] = 0  # reset on success
+                    else:
+                        pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
+                except Exception:
+                    pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
+                    log.exception("refresh jup quote failed %s", ca[:10])
+        else:
+            # No Jupiter or no tokens — try DexScreener only
+            pos["_quote_fail_count"] = pos.get("_quote_fail_count", 0) + 1
+
+        snap = await self.ds.token_pairs("solana", ca)
+        if snap and snap.get("price_usd"):
+            px = float(snap["price_usd"])
+            dex_mult = px / entry if entry else 0
+            pos["last_usd"] = px
+        else:
+            # DexScreener also dead — no pair found
+            dex_mult = None
+
+        # --- dead-liquidity force-close ---
+        # If both Jupiter AND DexScreener have no route, the token is
+        # dead (rug / drained pool).  Force-close after a short grace
+        # period so we don't hold zombie slots forever.
+        DEAD_QUOTE_LIMIT = 10   # consecutive no-route failures before force-close
+        DEAD_LIQ_USD = 10.0     # DexScreener liq below this = dead pool
+        is_dead = False
+        if jup_mult is None and dex_mult is None:
+            qfails = pos.get("_quote_fail_count", 0)
+            if qfails >= DEAD_QUOTE_LIMIT:
+                is_dead = True
+                log.warning("dead liquidity %s (%s): %d consecutive quote failures, force-closing",
+                            ca[:10], pos["symbol"], qfails)
+        elif dex_mult is not None:
+            # DexScreener returned but pool is essentially dead
+            liq = (snap or {}).get("liq") or 0
+            if 0 < liq < DEAD_LIQ_USD:
+                is_dead = True
+                log.warning("dead pool %s (%s): liq=$%.0f < $%d, force-closing",
+                            ca[:10], pos["symbol"], liq, DEAD_LIQ_USD)
+        # Also force-close when Jupiter has been failing for a while
+        # and DexScreener has a price — prevents positions from being
+        # stuck indefinitely when Jupiter API is down.
+        if (not is_dead and jup_mult is None and dex_mult is not None
+                and pos.get("_quote_fail_count", 0) >= 10):
+            is_dead = True
+            log.warning("stuck position %s (%s): %d Jupiter failures, force-closing via DexScreener",
+                        ca[:10], pos["symbol"], pos.get("_quote_fail_count", 0))
+
+        # --- max_hold timeout check (runs even when pricing fails) ---
+        age_s = time.time() - pos["ts"]
+        exit_reason = None
+        if is_dead:
+            exit_reason = "dead_liquidity"
+        elif self.max_hold_s > 0 and age_s > self.max_hold_s:
+            exit_reason = "timeout"
+        elif (self.flat_timeout_s > 0 and age_s > self.flat_timeout_s
+                and pos.get("peak_mult", 1.0) < self.flat_timeout_peak
+                and not pos.get("tp_taken")):
+            # Flat-timeout: held long enough with no TP and never
+            # showed life — free the slot instead of slow-bleeding.
+            exit_reason = "flat_timeout"
+            log.info("flat timeout %s (%s): age=%.1fh peak=%.3f",
+                     ca[:10], pos["symbol"], age_s / 3600,
+                     pos.get("peak_mult", 1.0))
+        elif (pos.get("source") != "memetracker"
+                and not pos.get("tp_taken")):
+            peak = pos.get("peak_mult", 1.0)
+            # Dead-token kill only: no movement at all after 8 min.
+            # Tier-2 ("weak", <3% in 8-45m) REMOVED 2026-09-12: it
+            # overlapped early_filter + hard_stop + trail and killed
+            # 33/63 paper trades, most at hold=0m pre-fix. Let the
+            # dedicated exits decide once a position has 8 min of life.
+            if age_s > 480 and peak < 1.015:
+                exit_reason = "quick_bleed"
+                log.info("dead token kill %s (%s): age=%.0fm peak=%.3f",
+                         ca[:10], pos["symbol"], age_s / 60, peak)
+
+        # Track peak using ONLY the executable price.
+        best_mult = jup_mult if jup_mult is not None else dex_mult
+        if best_mult is not None and best_mult > 0:
+            pos["peak_usd"] = max(pos["peak_usd"],
+                                  pos["entry_usd"] * best_mult)
+            pos["peak_mult"] = max(pos.get("peak_mult", 1.0), best_mult)
+        # Use Jupiter price as authoritative for exit decisions.
+        mult = jup_mult if jup_mult is not None else dex_mult
+        if mult is None and not exit_reason:
+            return  # can't price, not dead yet — leave open
+        peak_mult = pos.get("peak_mult", mult)
+        if not is_dead and exit_reason not in ("timeout", "flat_timeout", "quick_bleed"):
+            exit_reason = None  # reset; dead_liquidity/timeout already set above
+        # ---- early adverse filter (one-shot at early_filter_window_s):
+        # Track worst/best excursion during the early window, then
+        # evaluate once.  If the position drew down >early_filter_dd
+        # AND never gained >early_filter_gain, close immediately.
+        # This is the key finding from the 2026-08-13 ablation:
+        # rejecting trades with >20% adverse AND <5% favorable in
+        # first 30s turns gross PnL from -0.447 to +0.335 SOL.
+        age_s = time.time() - pos["ts"]
+        if not pos.get("early_checked", False) and mult is not None:
+            if age_s < self.early_filter_window_s:
+                # Still in early window: track min/max excursion
+                pos["early_min_mult"] = min(
+                    pos.get("early_min_mult", mult), mult)
+                pos["early_max_mult"] = max(
+                    pos.get("early_max_mult", mult), mult)
+            else:
+                # Window expired: evaluate (one-shot)
+                early_dd = 1.0 - pos.get("early_min_mult", mult)
+                early_gain = pos.get("early_max_mult", mult) - 1.0
+                pos["early_checked"] = True
+                if (early_dd > self.early_filter_dd
+                        and early_gain < self.early_filter_gain):
+                    exit_reason = "early_invalid"
+                    logs.journal("shadow_early_filter", ca=ca,
+                                 symbol=pos["symbol"],
+                                 dd_pct=round(early_dd * 100, 2),
+                                 gain_pct=round(early_gain * 100, 2),
+                                 result="rejected")
+                else:
+                    logs.journal("shadow_early_filter", ca=ca,
+                                 symbol=pos["symbol"],
+                                 dd_pct=round(early_dd * 100, 2),
+                                 gain_pct=round(early_gain * 100, 2),
+                                 result="passed")
+        # ---- take-profit ladder (scale-out): when the peak reaches a
+        # level, bank that fraction of the ORIGINAL size. Use the
+        # EXECUTABLE (Jupiter) price so we only record levels that
+        # were actually reachable at fill quality.
+        # IMPORTANT: skip all normal exit logic when early_invalid
+        # fired — it is terminal (matches the ablation semantics).
+        # Also skip when mult is None (dead token, can't price).
+        if exit_reason != "early_invalid" and mult is not None:
+            for lvl_i, (lvl, frac, trail_pct) in enumerate(self.tp_ladder):
+                if lvl in pos["tp_taken"]:
+                    continue
+                if peak_mult >= lvl:
+                    exec_at_level = min(mult, lvl) if mult < lvl else lvl
+                    pos["tp_taken"].append(lvl)
+                    pos["banked_pnl"] += frac * pos["size_sol"] * (exec_at_level - 1.0)
+                    pos["remaining"] = max(0.0, pos["remaining"] - frac)
+                    pos["tp_level"] = lvl_i  # track current level for trail
+                    logs.journal("shadow_tp", ca=ca, symbol=pos["symbol"],
+                                 lvl=lvl, frac=frac, trail_pct=trail_pct,
+                                 exec_px=round(exec_at_level, 3))
+                    if pos["remaining"] <= 1e-9:
+                        pos["remaining"] = 0.0
+            if pos["tp_taken"] and not pos["be_armed"]:
+                pos["be_armed"] = True
+                logs.journal("shadow_be", ca=ca, symbol=pos["symbol"])
+            elif (not pos["be_armed"] and self.be_arm_mult > 0
+                    and peak_mult >= self.be_arm_mult):
+                # Early BE: spike showed +15% but faded before TP1 —
+                # lock breakeven instead of riding to the hard stop.
+                pos["be_armed"] = True
+                logs.journal("shadow_be_early", ca=ca, symbol=pos["symbol"],
+                             peak=round(peak_mult, 3))
+            if pos["remaining"] <= 0:
+                exit_reason = "tp"   # fully scaled out at the spike
+            else:
+                stop_mult = (1 - self.hard_stop)
+                if pos["be_armed"]:
+                    stop_mult = max(stop_mult, 1.0 + self.be_buffer)
+                if self.hard_stop > 0 and mult <= stop_mult:
+                    exit_reason = "sl"
+                elif self.trail_enabled:
+                    # Tiered trailing stop: use trail_pct from the
+                    # highest TP level that has fired. If no TP yet,
+                    # use the global retrace_pct as fallback.
+                    tp_level = pos.get("tp_level", -1)
+                    if tp_level >= 0:
+                        # Use the trail_pct from the LAST fired level
+                        trail_pct = self.tp_ladder[tp_level][2]
+                    else:
+                        trail_pct = self.retrace
+                    trail_start = self.trail_start_mult if tp_level < 0 else 1.0
+                    if peak_mult >= trail_start and \
+                            mult <= peak_mult * (1 - trail_pct):
+                        exit_reason = "trail"
+        if not exit_reason:
+            return
+        # Structural close runs locked; the fetches above did not hold
+        # the lock so signals were never blocked behind slow quotes.
+        async with self._lock:
+            if ca not in self.open:
+                return  # evicted concurrently; nothing to close
+            pos = self.open[ca]
+            # --- Jupiter sell fallback: retry then force-close ---
+            # When Jupiter is down (503/timeout) but DexScreener has a
+            # price and an exit condition is met, force-close using the
+            # DexScreener price.  This prevents positions from getting
+            # stuck for hours when Jupiter's API is flaky.
+            jup_down = (pos.get("_quote_fail_count", 0) >= 3
+                        and jup_mult is None and dex_mult is not None)
+            if jup_down and exit_reason not in ("dead_liquidity",):
+                log.warning("JUPITER DOWN %s (%s): force-closing via DexScreener (fails=%d)",
+                            ca[:10], pos["symbol"],
+                            pos.get("_quote_fail_count", 0))
+                exit_reason = "jupiter_down_force_close"
+            # --- PumpAPI sell fallback for bonding curve tokens ---
+            # When position was bought via PumpAPI (entry_mode=pumpapi),
+            # tokens_raw is 0 and Jupiter can't sell it. Use PumpAPI sell.
+            if (pos.get("entry_mode") == "pumpapi"
+                    and self.jupiter is not None
+                    and self.jupiter._pumpapi_enabled()):
+                remaining_pct = int(pos.get("remaining", 1.0) * 100)
+                if remaining_pct > 0:
+                    log.info("pumpapi sell %s (%s): %d%% remaining",
+                             ca[:10], pos["symbol"], remaining_pct)
+                    sell_res = await self.jupiter.sell_via_pumpapi(
+                        ca, remaining_pct)
+                    if sell_res.success:
+                        log.info("pumpapi sell OK %s: sig=%s",
+                                 ca[:10], sell_res.signature[:16])
+                        pos["exit_note"] = f"pumpapi_sell:{sell_res.signature[:12]}"
+                    else:
+                        log.warning("pumpapi sell failed %s: %s",
+                                    ca[:10], sell_res.error)
+                        pos["exit_note"] = f"pumpapi_sell_fail:{sell_res.error}"
+            # For dead tokens (mult=None), remaining tokens are
+            # worthless: mult = 0.0.  Banked TP is already counted.
+            # oracle_fail=True marks infra failures (both pricers
+            # down) so they can be excluded from strategy stats —
+            # they are not trading losses.
+            oracle_fail = mult is None
+            eff_mult = mult if mult is not None else 0.0
+            pnl = pos.get("banked_pnl", 0.0) + \
+                pos["remaining"] * pos["size_sol"] * (eff_mult - 1.0)
+            # Trade-level multiple (incl. any banked TP) for honest
+            # reporting — the exit-leg `mult` alone misleads when a
+            # partial was already banked (e.g. Bear: exit 0.70x but net +).
+            trade_mult = (pos["size_sol"] + pnl) / pos["size_sol"]
+            rec = {"ca": ca, "symbol": pos["symbol"], "reason": exit_reason,
+                     "mult": round(trade_mult, 3), "pnl_sol": round(pnl, 5),
+                     "hold_min": int((time.time() - pos["ts"]) / 60),
+                     "wallets": pos.get("wallets", []),
+                     "source": pos.get("source", "pumpapi"),
+                     "size_sol": round(pos["size_sol"], 5),
+                     "oracle_fail": oracle_fail}
+            self.closed.append(rec)
+            bal_before = self.balance_sol
+            self.balance_sol += pos["size_sol"] + pnl
+            del self.open[ca]
+            # Time-based cooldown: allow re-entry after cooldown_s
+            self._cooldown[ca] = time.time() + self.reentry_cooldown_s
+            logs.journal("shadow_close", **rec)
+            if self.on_trade_close is not None:
+                try:
+                    self.on_trade_close(pos.get("wallets", []), pnl > 0, pnl)
+                except Exception:
+                    log.exception("on_trade_close failed")
+            if self.notifier is not None:
+                try:
+                    asyncio.get_running_loop().create_task(
+                    self.notifier.send_close(
+                        ca=ca, name=pos["symbol"], reason=exit_reason,
+                        mult=trade_mult, pnl_sol=pnl,
+                            hold_s=time.time() - pos["ts"],
+                            entry_px=pos["entry_usd"], exit_px=pos["last_usd"],
+                            size_sol=pos["size_sol"],
+                            balance_before=bal_before,
+                            balance_after=self.balance_sol,
+                             open_count=len(self.open),
+                             max_positions=self.max_positions,
+                             win_rate=self._win_rate(),
+                             wallets=pos.get("wallets", [])))
+                except Exception:
+                    log.exception("send_close failed")
 
     # ------------------------------------------------------------- reporting
     def snapshot(self, wallets_n: int, alerts: int, consensus: int,
@@ -1473,7 +1511,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                             log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
                         return
                 except Exception as exc:
-                    log.warning("helius safety check failed for %s: %s", ca[:10], exc)
+                    log.warning("helius safety check failed for %s: %r", ca[:10], exc)
             # Vybe Network safety gates (fail-open): liquidity, top holder
             # concentration, buy/sell ratio. Provides independent validation
             # alongside DexPaprika and DBotX.
@@ -1636,8 +1674,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             if pmult < 1.0 and not all((pc.get(k) or 0) > 0 for k in avail):
                 reason = f"skip:pair_needs_confirmation({pnote},align={align}/{len(avail)})"
             elif effective < s.consensus_weight_threshold:
-                reason = (f"skip:score<{s.consensus_weight_threshold}"
-                          f"(eff={effective:.2f},pmult={pmult:.2f},align={align})")
+                reason = (f"skip:eff_score={effective:.2f}<{s.consensus_weight_threshold}"
+                          f"(pmult={pmult:.2f},align={align})")
             elif not snap:
                 # DexScreener blip with a genuine consensus: open flagged as
                 # liq-unchecked rather than discarding the signal.
@@ -1831,6 +1869,11 @@ async def _run_watch(s: cfg.Settings) -> int:
                     "pumpapi": pump_stream.connected,
                     "cabalspy": (cabalspy_client.connected
                                  if cabalspy_client else False),
+                    # Log-only: Helius spends hours 429-banned (quota-side);
+                    # Telegram would spam every 30min for something we can't
+                    # fix from here. cabalspy is log-only for the same reason.
+                    "helius_ws": (helius_ws.connected
+                                  if helius_ws else True),
                 }
                 now = time.time()
                 for name, up in feeds.items():
@@ -1841,7 +1884,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                             down_for = int(now - down_since[name])
                             log.warning("watchdog: %s DOWN for %ds", name, down_for)
                             alerted[name] = now
-                            if notifier is not None and name != "cabalspy":
+                            if notifier is not None and name == "pumpapi":
                                 asyncio.create_task(notifier.send_alert(
                                     f"feed down: {name}",
                                     f"no data for {down_for}s")).add_done_callback(

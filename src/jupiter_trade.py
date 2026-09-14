@@ -1157,7 +1157,9 @@ class JupiterSwap:
             return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, reason)
         except httpx.RequestError as exc:
             self._qstats["quote_http_error"] += 1
-            log.warning("sell-quote http error for %s: %s", mint, exc)
+            # %r: httpx errors often stringify to "" (observed: empty log
+            # lines), repr keeps the class + request context.
+            log.warning("sell-quote http error for %s: %r", mint, exc)
             return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, "quote_http_error")
         except Exception:
             self._qstats["quote_exception"] += 1

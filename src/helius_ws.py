@@ -1,11 +1,15 @@
 """Helius WebSocket client — real-time transaction streaming.
 
-Replaces Shyft polling with a single WebSocket connection that streams
-all wallet transactions via Helius's ``transactionSubscribe`` extension.
-Sub-second latency, no rate limits, no 429s.
+Primary wallet feed alongside the PumpAPI firehose. Streams all wallet
+transactions via Helius's ``transactionSubscribe`` extension: sub-second
+latency when quota allows.
+
+Rate limits are real (observed: all keys 429-banned for hours on 2026-09-14):
+handshake rejects rotate keys, and a persistent ban escalates the reconnect
+delay up to 15 min via the circuit breaker in run() instead of retry-storming.
 
 Architecture:
-  - Single WS connection with ``account_include`` for all 262 wallets
+  - Single WS connection with ``account_include`` for all wallets
   - Parses buy transactions (SOL spent → token balance increased)
   - Auto-reconnects on disconnect with exponential backoff
   - Ping/pong health checks every 30s
@@ -172,6 +176,7 @@ class HeliusWS:
         self._consec_429 = 0  # consecutive handshake rate-limit rejects
         self._use_logs_subscribe = False  # fallback if transactionSubscribe unavailable
         self._exhausted_keys: set[str] = set()
+        self._hold_warned = False  # rate-limit hold warning emitted once per episode
 
     def _next_key(self) -> str:
         """Rotate to the next available API key, skipping exhausted ones.
@@ -193,9 +198,16 @@ class HeliusWS:
                 logger.debug("helius ws: rotated to key %s…", key[:8])
                 return key
         # all keys exhausted — stay on the current key and let the caller
-        # back off; do NOT reset the set here.
-        logger.warning("helius ws: all %d keys rate-limited, holding key %s… until backoff clears",
-                       len(self._api_keys), self.api_key[:8])
+        # back off; do NOT reset the set here. Warn once per episode: this
+        # path fires on EVERY reconnect attempt (observed: 30+ identical
+        # lines during a multi-hour ban) and drowns the log.
+        if not self._hold_warned:
+            logger.warning("helius ws: all %d keys rate-limited, holding key %s… until backoff clears",
+                           len(self._api_keys), self.api_key[:8])
+            self._hold_warned = True
+        else:
+            logger.debug("helius ws: still holding key %s… (ban persists)",
+                         self.api_key[:8])
         return self.api_key
 
     @property
@@ -276,6 +288,7 @@ class HeliusWS:
             self._connected = True
             self._reconnect_count = 0
             self._consec_429 = 0
+            self._hold_warned = False  # ban lifted — warn again on the next one
             self._exhausted_keys.clear()  # quota recovered — all keys usable again
             logger.info("helius ws connected")
 
