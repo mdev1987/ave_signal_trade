@@ -487,7 +487,7 @@ class SmartWalletWatcher:
         self._consensus_ts[ca] = now
         syms = ",".join(x["w"][:5] + "…(w" + format(x.get("wt", 0), ".2f") + ")"
                         for x in active[-4:])
-        logger.info("CONSENSUS BUY %s %s (%s) score=%.2f — journal only",
+        logger.info("CONSENSUS BUY %s %s (%s) score=%.2f",
                     hit.get("symbol", "?"), ca[:10], syms, score)
         if self.on_smart_buy:
             try:

@@ -510,7 +510,11 @@ class JupiterSwap:
                 data = info.get("data", {})
                 if isinstance(data, dict):
                     parsed = data.get("parsed", {})
-                    dec = int(parsed.get("info", {}).get("decimals"))
+                    raw_dec = parsed.get("info", {}).get("decimals")
+                    if raw_dec is None:
+                        log.debug("token_decimals %s: no decimals in RPC response", mint)
+                        return None
+                    dec = int(raw_dec)
                     self._decimals_cache[mint] = dec
                     return dec
         except Exception as e:  # noqa: BLE001

@@ -214,6 +214,16 @@ class ShadowBook:
             else:
                 locked = sum(p.get("size_sol", 0.0) for p in self.open.values())
                 self.balance_sol = max(0.0, self.start_balance_sol - locked)
+            # Seed the re-entry cooldown from persisted closes: _cooldown is
+            # in-memory only, so without this a restart would allow instant
+            # re-entry into a just-closed token. Fail-safe direction (a
+            # token closed long before the restart is held one extra
+            # cooldown at most).
+            _now = time.time()
+            for c in self.closed[-100:]:
+                _ca = c.get("ca")
+                if _ca and _ca not in self._cooldown:
+                    self._cooldown[_ca] = _now + self.reentry_cooldown_s
         except Exception:
             log.exception("shadow book load failed")
 
@@ -782,6 +792,7 @@ class ShadowBook:
             rec = {"ca": ca, "symbol": pos["symbol"], "reason": exit_reason,
                      "mult": round(trade_mult, 3), "pnl_sol": round(pnl, 5),
                      "hold_min": int((time.time() - pos["ts"]) / 60),
+                     "closed_ts": int(time.time()),
                      "wallets": pos.get("wallets", []),
                      "source": pos.get("source", "pumpapi"),
                      "size_sol": round(pos["size_sol"], 5),
@@ -1394,9 +1405,12 @@ async def _run_watch(s: cfg.Settings) -> int:
         elif book.balance_sol < book.size_sol:
             reason = "skip:insufficient_balance"
         elif time.time() < book._cooldown.get(ca, 0):
+            # Time-based re-entry cooldown (seeded from persisted closes
+            # on startup so it survives restarts). This is the ONLY
+            # re-entry block — the old permanent `recently_closed` check
+            # (any CA in the last 100 closes blocked forever) made this
+            # dead code and prevented legitimate re-entries.
             reason = "skip:cooldown"
-        elif any(c.get("ca") == ca for c in book.closed[-100:]):
-            reason = "skip:recently_closed"
         elif time.time() - last_open["t"] < open_gap_s:
             # Open-spacing override: a much stronger signal (score >= 2.5) can
             # bypass the gap if the last open was weak (score < 2.0).  This
@@ -1916,7 +1930,20 @@ async def _run_watch(s: cfg.Settings) -> int:
                         if (was_up.get(name, True)
                                 or now - alerted.get(name, 0) > 1800):
                             down_for = int(now - down_since[name])
-                            log.warning("watchdog: %s DOWN for %ds", name, down_for)
+                            # Helius 429 bans are quota-side and unactionable
+                            # from here (observed: multi-hour bans, feed stays
+                            # 🟡 degraded). Keep it at INFO so the log stops
+                            # crying WARNING every 30min over it; pumpapi and
+                            # cabalspy outages stay WARNING (actionable blind
+                            # spots).
+                            _degraded_helius = (
+                                name == "helius_ws" and helius_ws is not None
+                                and getattr(helius_ws, "degraded", False))
+                            if _degraded_helius:
+                                log.info("watchdog: %s DOWN for %ds (quota ban, degraded)",
+                                         name, down_for)
+                            else:
+                                log.warning("watchdog: %s DOWN for %ds", name, down_for)
                             alerted[name] = now
                             if notifier is not None and name == "pumpapi":
                                 asyncio.create_task(notifier.send_alert(
