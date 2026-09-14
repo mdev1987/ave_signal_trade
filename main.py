@@ -1934,6 +1934,15 @@ async def _run_watch(s: cfg.Settings) -> int:
                 log.info("cabalspy: connected=%s signals=%d txs=%d holders=%d bundles=%d reconnects=%d",
                          cs["connected"], cs["total_signals"], cs["total_txs"],
                          cs["total_holders"], cs["total_bundles"], cs["reconnects"])
+            if memetracker_feed is not None:
+                # Flow counters (not just "connected"): a deaf TG listener
+                # reports connected forever — silence must be visible.
+                mh = memetracker_feed.health()
+                _mt_age = (round(time.time() - mh["last_event_at"])
+                           if mh["last_event_at"] else None)
+                log.info("memetracker: msgs=%d parsed=%d forwarded=%d filtered=%d errors=%d last_event_age_s=%s",
+                         mh["messages"], mh["parsed"], mh["forwarded"],
+                         mh["filtered"], mh["errors"], _mt_age)
 
     # Live feeds are push-based (Helius WS, PumpAPI WS, CabalSpy WS,
     # Kolexplorer poll, MemeTracker TG) — no webhook receiver needed

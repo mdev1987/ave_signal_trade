@@ -491,8 +491,9 @@ class TgSignalFeed:
                 "min_liq": ec.get("min_liq", self._min_liq),
             }
 
-        # resolved: chat_id -> channel_config
+        # resolved: chat_id -> channel_config; entities: chat_id -> TG entity
         resolved: dict[int, dict] = {}
+        entities: dict[int, object] = {}
 
         @client.on(events.NewMessage)
         async def _handler(event):
@@ -525,27 +526,23 @@ class TgSignalFeed:
         await client.start(phone=self._phone)
 
         # Resolve all channels
-        async def _resolve_channel(ch_name: str) -> int | None:
-            try:
-                entity = await client.get_entity(ch_name)
-                raw_id = entity.id
-                if hasattr(entity, 'megagroup') or hasattr(entity, 'broadcast'):
-                    return int(f"-100{raw_id}")
-                return raw_id
-            except Exception:
+        async def _resolve_channel(ch_name: str) -> tuple[int | None, object]:
+            for cand in (ch_name, f"@{ch_name}"):
                 try:
-                    entity = await client.get_entity(f"@{ch_name}")
+                    entity = await client.get_entity(cand)
                     raw_id = entity.id
                     if hasattr(entity, 'megagroup') or hasattr(entity, 'broadcast'):
-                        return int(f"-100{raw_id}")
-                    return raw_id
+                        return int(f"-100{raw_id}"), entity
+                    return raw_id, entity
                 except Exception:
-                    return None
+                    continue
+            return None, None
 
         # Resolve primary channel
-        primary_id = await _resolve_channel(self._channel)
+        primary_id, primary_ent = await _resolve_channel(self._channel)
         if primary_id:
             resolved[primary_id] = channel_map["__primary__"]
+            entities[primary_id] = primary_ent
             log.info("tg signal feed: resolved @%s -> chat_id=%s", self._channel, primary_id)
         else:
             log.warning("tg signal feed: could not resolve @%s — listening to all channels", self._channel)
@@ -553,14 +550,66 @@ class TgSignalFeed:
         # Resolve extra channels
         for ec in self._extra_channels:
             ch = ec["channel"]
-            ch_id = await _resolve_channel(ch)
+            ch_id, ch_ent = await _resolve_channel(ch)
             if ch_id:
                 resolved[ch_id] = channel_map[ch]
+                entities[ch_id] = ch_ent
                 log.info("tg signal feed: resolved @%s -> chat_id=%s (extra)", ch, ch_id)
             else:
                 log.warning("tg signal feed: could not resolve @%s (extra)", ch)
 
         log.info("tg signal feed: connected, listening to %d channels (real-time)", len(resolved))
+
+        # Join channels (idempotent): Telegram only pushes live updates to
+        # members. A resolved-but-unjoined channel connects cleanly yet stays
+        # silent — the failure mode seen 2026-09-11..14 (3 days, 0 messages,
+        # "connected" throughout).
+        try:
+            from telethon.tl.functions.channels import JoinChannelRequest
+        except Exception:  # noqa: BLE001
+            JoinChannelRequest = None  # type: ignore[assignment]
+        if JoinChannelRequest is not None:
+            for ch_id, ent in entities.items():
+                try:
+                    await client(JoinChannelRequest(ent))
+                    log.info("tg signal feed: joined chat_id=%s", ch_id)
+                except Exception as exc:  # already member or cannot join
+                    log.debug("tg signal feed: join chat_id=%s -> %s",
+                              ch_id, type(exc).__name__)
+
+        # Backfill: replay recent history so restarts/disconnects don't lose
+        # signals — and prove the listener actually sees the channel. Only
+        # FRESH messages may forward; stale ones would open at ancient
+        # signal prices.
+        _backfill_max_age_s = 600.0
+        for ch_id, ent in entities.items():
+            cfg = resolved.get(ch_id) or {}
+            try:
+                msgs = await client.get_messages(ent, limit=25)
+            except Exception:  # noqa: BLE001
+                log.warning("tg signal feed: backfill failed for chat_id=%s", ch_id)
+                continue
+            msgs = msgs or []
+            _now = time.time()
+            _fresh = 0
+            for m in sorted(msgs, key=lambda x: x.date):
+                try:
+                    _age = _now - m.date.timestamp()
+                except Exception:  # noqa: BLE001
+                    continue
+                if _age > _backfill_max_age_s:
+                    continue
+                try:
+                    await self._handle_message(
+                        m.text or "", topic_id=get_topic_id(m),
+                        parser=cfg.get("parser"), callback=cfg.get("callback"),
+                        min_mc=cfg.get("min_mc"), min_liq=cfg.get("min_liq"))
+                    _fresh += 1
+                except Exception:  # noqa: BLE001
+                    self._errors += 1
+                    log.exception("tg signal feed: backfill handle failed")
+            log.info("tg signal feed: backfill chat_id=%s fresh=%d/%d",
+                     ch_id, _fresh, len(msgs))
 
         # run_until_disconnected blocks until the client disconnects or stop()
         # We poll _stop periodically so we can exit cleanly

@@ -77,6 +77,7 @@ KOL_SLUG_TO_ADDR: dict[str, str] = {
     "tdmilky": "",  # unmapped
     "frost": "",   # unmapped
     "cook": "",    # unmapped
+    "cooker": "8deJ9xeUvXSJwicYptA9mHsU2rN2pDx37KWzkDkEXhU6",  # KolScan #3; Conyr deployer-flagged: weight only, never auto-track
     "kay-the-doc": "",  # unmapped
     "ozark": "",   # unmapped
     "cottage": "",  # unmapped
