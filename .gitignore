@@ -9,6 +9,7 @@ config.ini
 # ---- runtime state (auto-generated) ----
 bot_logs/
 watcher_state.json
+helius_ban_state.json
 watched_tokens.json
 shadow_book.json
 shadow_book_*.json

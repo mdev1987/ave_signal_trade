@@ -27,6 +27,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Callable, Awaitable
 
 import websockets
@@ -54,9 +55,57 @@ _RECONNECT_CIRCUIT_MAX = 900.0  # 15 min ceiling while the ban persists
 # every 15 min burns quota on 5 dead keys; escalate those probes to hourly.
 _RECONNECT_LONG_BAN_AFTER = 30
 _RECONNECT_LONG_BAN_MAX = 3600.0  # 1h ceiling during a sustained quota ban
+# Persisted 429-ban state (cwd-relative, like watcher_state.json): the bot
+# reboots every ~2h, which used to reset _consec_429 to 0, so every boot
+# re-probed with 30s retries and churned all keys in ~2 min before the
+# circuit breaker re-tripped. Restoring the counter resumes quiet probes.
+_BAN_STATE_FILE = "helius_ban_state.json"
+_BAN_STATE_MAX_AGE_S = 6 * 3600.0  # ignore persisted bans older than this
 _PING_INTERVAL = 30.0
 _SUBSCRIBE_BATCH = 100  # max wallets per subscribe message (Helius limit)
 _TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+
+
+def load_ban_count(path: str = _BAN_STATE_FILE) -> int:
+    """Restore the consecutive-429 counter persisted before a restart.
+
+    Returns 0 (fresh start) unless a circuit-breaker-level ban was saved
+    recently. A saved long-ban resumes hourly probes if the reboot was
+    <1h after the last reject, else 15-min probes (the ban may have
+    lifted while down — bounded recovery delay, no 30s key churn).
+    Fail-open: any IO/parse problem returns 0.
+    """
+    try:
+        d = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return 0
+    try:
+        saved = int(d.get("consec_429", 0))
+        age = time.time() - float(d.get("ts", 0))
+    except (TypeError, ValueError):
+        return 0
+    if saved < _RECONNECT_CIRCUIT_AFTER or age < 0 or age > _BAN_STATE_MAX_AGE_S:
+        return 0
+    if saved >= _RECONNECT_LONG_BAN_AFTER and age >= 3600.0:
+        return _RECONNECT_CIRCUIT_AFTER
+    return saved
+
+
+def save_ban_count(consec_429: int, path: str = _BAN_STATE_FILE) -> None:
+    """Persist the 429 counter so the next boot resumes quiet probes."""
+    try:
+        Path(path).write_text(json.dumps({"consec_429": int(consec_429),
+                                           "ts": time.time()}))
+    except OSError:
+        pass
+
+
+def clear_ban_count(path: str = _BAN_STATE_FILE) -> None:
+    """Drop persisted ban state after a successful connect (ban lifted)."""
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def parse_helius_tx(wallet: str, msg: dict) -> dict | None:
@@ -163,6 +212,7 @@ class HeliusWS:
         on_buy: Callable[[str, dict], Awaitable[None]] | None = None,
         endpoint: str = "wss://beta.helius-rpc.com",
         rpc_url: str | None = None,
+        ban_state_file: str = _BAN_STATE_FILE,
     ) -> None:
         self._api_keys = api_keys or ([api_key] if api_key else [])
         self._key_idx = 0
@@ -171,6 +221,7 @@ class HeliusWS:
         self.on_buy = on_buy
         self._endpoint = endpoint
         self._rpc_url = rpc_url or f"https://mainnet.helius-rpc.com/?api-key={self.api_key}"
+        self._ban_state_file = ban_state_file or _BAN_STATE_FILE
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._connected = False
@@ -179,6 +230,13 @@ class HeliusWS:
         self._total_buys = 0
         self._total_msgs = 0
         self._consec_429 = 0  # consecutive handshake rate-limit rejects
+        # Resume a pre-restart quota ban quietly instead of key-churning
+        # (see load_ban_count). Logged once so boots stay auditable.
+        _restored = load_ban_count(self._ban_state_file)
+        if _restored:
+            self._consec_429 = _restored
+            logger.info("helius ws: resuming persisted 429 backoff (consec=%d)",
+                        _restored)
         self._use_logs_subscribe = False  # fallback if transactionSubscribe unavailable
         self._exhausted_keys: set[str] = set()
         self._hold_warned = False  # rate-limit hold warning emitted once per episode
@@ -256,6 +314,8 @@ class HeliusWS:
                 is_429 = any(kw in exc_str for kw in ("max usage", "429", "rate limit", "too many"))
                 if is_429:
                     self._consec_429 += 1
+                    if self._consec_429 >= _RECONNECT_CIRCUIT_AFTER:
+                        save_ban_count(self._consec_429, self._ban_state_file)
                     if len(self._api_keys) > 1:
                         self._exhausted_keys.add(self.api_key)
                         self._next_key()
@@ -324,6 +384,7 @@ class HeliusWS:
             self._consec_429 = 0
             self._hold_warned = False  # ban lifted — warn again on the next one
             self._exhausted_keys.clear()  # quota recovered — all keys usable again
+            clear_ban_count(self._ban_state_file)  # drop stale persisted ban
             logger.info("helius ws connected")
 
             if self._use_logs_subscribe:

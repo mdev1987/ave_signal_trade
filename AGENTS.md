@@ -72,8 +72,9 @@ uv run python -c "from src.jupiter_trade import JupiterSwap; ..."
 
 ## Exit Rules
 
-- Dead token: peak <1.015 after 5min → force close
-- Quick bleed: peak <1.03 within 30min → force close
+- Dead token: peak <1.015 after 8min → force close (`quick_bleed`; the
+  `peak<1.03 within 30min` tier-2 was removed 2026-09-12 — it overlapped
+  early_filter + hard_stop and killed 33/63 paper trades)
 - Hard stop: -30% from entry
 - Trailing stop: -15% from peak (activates at 1.4x)
 - Breakeven lock: after 1st TP, stop moves to entry
