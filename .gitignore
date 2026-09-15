@@ -3,6 +3,7 @@
 .env.bak
 throwaway_key.json
 *.session
+*.session-journal
 telegram_session.session*
 config.ini
 
