@@ -2202,6 +2202,41 @@ def cmd_wallet_show(_args) -> int:
     return asyncio.run(_run()) or 0
 
 
+def _affordable_size(balance_sol: float, want_sol: float,
+                     buffer_sol: float = 0.008,
+                     dust_sol: float = 0.005) -> tuple[float | None, str]:
+    """Clamp a live order size to what the wallet can actually fund.
+
+    Returns (size_to_use, message). ``message`` is "" when no adjustment was
+    needed; ``size_to_use`` None means even dust doesn't fit — abort instead
+    of letting Jupiter answer with a cryptic 400. Buffer covers ATA rent
+    (~0.0041 for payer+spl) + tx/priority fees + dust, same basis as the
+    quote-gate pre-flight (6M lamports) with margin.
+    """
+    affordable = round(balance_sol - buffer_sol, 4)
+    if affordable <= dust_sol:
+        return None, (f"insufficient funds: wallet {balance_sol:.4f} SOL can't cover "
+                      f"rent+fees (~{buffer_sol:.4f}); fund it or lower --size")
+    if want_sol > affordable:
+        return affordable, (f"downsized {want_sol:.4f} -> {affordable:.4f} SOL "
+                            f"(wallet {balance_sol:.4f} SOL incl rent+fees buffer)")
+    return want_sol, ""
+
+
+# Human explanations for sell-quote failures (sim output + logs). The raw
+# reason codes ("quote_no_route") read as "quote not found" to users.
+_SELL_FAIL_HINTS = {
+    "quote_no_route": "no sell route — pool drained/dead or too illiquid; tokens stay put",
+    "quote_impact": "sell impact over cap — try a smaller size or wait for liquidity",
+    "quote_timeout": "Jupiter timed out (retried) — transient, try again",
+    "quote_rate_limited": "rate limited — wait a minute and retry",
+    "quote_insufficient_funds": "wallet can't cover tx fees — add a little SOL",
+    "quote_invalid_response": "bad response from Jupiter — try again",
+    "quote_http_error": "Jupiter HTTP error (retried) — try again shortly",
+    "quote_exception": "internal error — check logs",
+}
+
+
 def cmd_sim(args) -> int:
     """Jupiter round-trip for a CA — paper by default, live via --live."""
     size = args.size or cfg.load_settings().size_sol
@@ -2219,8 +2254,25 @@ def cmd_sim(args) -> int:
         return 1
 
     async def _run():
+        nonlocal size
         j = (JupiterSwap(dry_run=False, private_key=base58.b58encode(
                 kp.to_bytes()).decode()) if live else JupiterSwap(dry_run=True))
+        if live:
+            # Balance-aware sizing: a broke wallet gets generic-400 "no route"
+            # from Jupiter. Size down (or abort) up front with a clear message
+            # instead — and prime the quote-gate pre-flight balance cache.
+            bal = await j.balance_sol()
+            if bal is None:
+                print("BAL    : ⚠ RPC balance check failed — proceeding, Jupiter decides")
+            else:
+                print(f"BAL    : {bal:.4f} SOL wallet={str(kp.pubkey())[:8]}…")
+                size2, msg = _affordable_size(bal, size)
+                if msg:
+                    print(f"SIZE   : {msg}")
+                if size2 is None:
+                    await j.close()
+                    return 1
+                size = size2
         ds = DexScreenerClient(
             base_url=cfg.load_settings().dexscreener_base_url)
         snap = await ds.token_pairs("solana", args.ca)
@@ -2254,10 +2306,21 @@ def cmd_sim(args) -> int:
             print(f"BUY EXEC ✓ sig={res.signature[:16]}… "
                   f"{tokens:,.0f} tokens @ {entry:.10g}")
 
+        if live:
+            held = await j.token_balance(args.ca)
+            if held == 0:
+                print("SELL   : ✗ no tokens held in wallet — buy leg failed or "
+                      "tokens were swept; nothing to sell")
+                await ds.close()
+                await j.close()
+                return 1
+            # held None (RPC hiccup) -> proceed to quote, Jupiter decides.
         sq = await j.quote_sell(args.ca, tokens_raw)
         if sq is None or not sq.success:
-            print(f"SELL   : ✗ {sq.reason if sq else 'exception'} "
-                  f"(holding {tokens:,.0f} tokens — sell via jup.ag)")
+            reason = sq.reason if sq else "exception"
+            hint = _SELL_FAIL_HINTS.get(reason, "")
+            print(f"SELL   : ✗ {reason}" + (f" — {hint}" if hint else "") +
+                  f" (holding {tokens:,.0f} tokens — sell via jup.ag)")
             return 1 if live else 0
         sol_back = sq.output_amount / 1e9
         print(f"SELL   : quote -> {sol_back:.6f} SOL "

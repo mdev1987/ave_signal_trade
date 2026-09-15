@@ -975,6 +975,12 @@ class JupiterSwap:
         if st and 500 <= st < 600:
             return "quote_http_error"
         if st and 400 <= st < 500:
+            # Deterministic bad request (e.g. "Invalid outputMint" seen
+            # 2026-09-15 when probing USDC/invalid mints): retrying is
+            # futile, so report as invalid (non-retryable) instead of
+            # http_error (retryable x3).
+            if "invalid" in msg and "mint" in msg:
+                return "quote_invalid_response"
             # Keep explicit insufficient handling above; generic 400 without
             # "insufficient" and without balance proof is conservatively a route
             # miss (rugged pool) not a wallet issue — paper quote would also fail
@@ -986,6 +992,31 @@ class JupiterSwap:
         if "route" in msg:
             return "quote_no_route"
         return "quote_invalid_response"
+
+    async def _disambiguate_no_route(
+        self, mint: str, amount_raw: int, exc: JupiterError,
+        fallback_reason: str,
+    ) -> str:
+        """Reclassify a generic live 400 as funds-vs-route via fresh balance.
+
+        Only the ambiguous case reaches here (live taker mode, generic
+        "Failed to get quotes", no "insufficient" substring). One RPC read;
+        on any failure the original reason stands (fail-open).
+        """
+        try:
+            bal = await self.balance_sol()
+        except Exception as exc2:
+            log.debug("funds disambiguation balance check failed: %s", exc2)
+            bal = None
+        if bal is None:
+            return fallback_reason
+        # Same basis as the pre-flight check (ATA rent + fees + dust).
+        if amount_raw + 6_000_000 > int(bal * 1e9):
+            log.info("quote quote_insufficient_funds for %s: amount %d + buffer "
+                     "> balance %.4f SOL (Jupiter said: %s)",
+                     mint[:8], amount_raw, bal, str(exc)[:120])
+            return "quote_insufficient_funds"
+        return fallback_reason
 
     async def _do_quote(
         self,
@@ -1048,6 +1079,14 @@ class JupiterSwap:
             return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, reason)
         except JupiterError as exc:
             reason = self._classify_error(exc)
+            if (reason == "quote_no_route" and not self._paper_quoting
+                    and self._keypair is not None):
+                # Live taker-mode ambiguity: Jupiter answers a broke wallet
+                # with generic 400 "Failed to get quotes", byte-identical to
+                # a dead pool. Disambiguate once via fresh balance so sim/live
+                # users see funds-vs-route accurately instead of "no route".
+                reason = await self._disambiguate_no_route(
+                    mint, amount_raw, exc, reason)
             self._qstats[reason] += 1
             log.info("quote %s for %s: %s", reason, mint, exc)
             return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, reason)
@@ -1175,7 +1214,14 @@ class JupiterSwap:
     async def _do_quote_sell(
         self, mint: str, amount_raw: int, slippage_bps: int
     ) -> QuoteResult:
-        """Single TOKEN→SOL order fetch + impact gate."""
+        """Single TOKEN→SOL order fetch + impact gate.
+
+        Transient failures (timeout, transport blips, 5xx) are retried
+        briefly before giving up, so a single Jupiter blip doesn't surface
+        as "quote not found" on a sell that succeeds a second later.
+        Deterministic outcomes (no route, impact, funds) fail fast without
+        retry. Stats record only the final outcome.
+        """
         self._qstats["quotes"] += 1
         # Gateway 429 cooldown: while the gateway is rejecting (storm observed
         # 2026-09-14: back-to-back 429s 1s apart), fail fast without spending
@@ -1185,40 +1231,54 @@ class JupiterSwap:
             return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, "quote_rate_limited")
         await self._quote_slot()
         t0 = time.monotonic()
-        try:
-            # Always quote with taker in live mode so the route reflects the
-            # actual wallet's token balance/liquidity; in paper mode the taker
-            # is omitted (same as buy side) – the route check is identical and
-            # a drained pool still returns ``Failed to get quotes``.
-            if self._paper_quoting:
-                order = await self._order(mint, BASE_MINT, amount_raw, slippage_bps)
-            else:
-                # For live sell-quote we need a taker but may not have keypair
-                # during tests – fall back to taker-less if no key.
-                taker = str(self._keypair.pubkey()) if self._keypair else None
-                order = await self._order(mint, BASE_MINT, amount_raw, slippage_bps, taker)
-        except httpx.TimeoutException as exc:
-            reason = "quote_timeout"
+        order: dict | None = None
+        reason = "quote_exception"
+        detail = ""
+        for attempt in range(3):
+            try:
+                # Always quote with taker in live mode so the route reflects the
+                # actual wallet's token balance/liquidity; in paper mode the taker
+                # is omitted (same as buy side) – the route check is identical and
+                # a drained pool still returns ``Failed to get quotes``.
+                if self._paper_quoting:
+                    order = await self._order(mint, BASE_MINT, amount_raw, slippage_bps)
+                else:
+                    # For live sell-quote we need a taker but may not have keypair
+                    # during tests – fall back to taker-less if no key.
+                    taker = str(self._keypair.pubkey()) if self._keypair else None
+                    order = await self._order(mint, BASE_MINT, amount_raw, slippage_bps, taker)
+                reason = ""
+                break
+            except httpx.TimeoutException as exc:
+                reason, detail = "quote_timeout", str(exc)
+            except JupiterError as exc:
+                reason, detail = self._classify_error(exc), str(exc)
+                if reason == "quote_rate_limited":
+                    self._sell_429_until = time.monotonic() + self._sell_429_cooldown_s
+                    break
+                if reason not in ("quote_timeout", "quote_http_error"):
+                    break  # deterministic: no route / impact / funds — retrying is futile
+            except httpx.RequestError as exc:
+                # %r: httpx errors often stringify to "" (observed: empty log
+                # lines), repr keeps the class + request context.
+                reason, detail = "quote_http_error", repr(exc)
+            except Exception:
+                reason, detail = "quote_exception", ""
+                log.exception("sell-quote exception for %s", mint)
+                break
+            if attempt + 1 < 3:
+                log.debug("sell-quote %s for %s (attempt %d), retrying",
+                          reason, mint[:8], attempt + 1)
+                await asyncio.sleep(1.0 * (attempt + 1))
+        if order is None:
             self._qstats[reason] += 1
-            log.warning("sell-quote timeout for %s: %s", mint, exc)
+            if reason == "quote_timeout":
+                log.warning("sell-quote timeout for %s: %s", mint, detail)
+            elif reason == "quote_http_error":
+                log.warning("sell-quote http error for %s: %s", mint, detail)
+            elif reason != "quote_exception":
+                log.info("sell-quote %s for %s: %s", reason, mint, detail)
             return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, reason)
-        except JupiterError as exc:
-            reason = self._classify_error(exc)
-            self._qstats[reason] += 1
-            if reason == "quote_rate_limited":
-                self._sell_429_until = time.monotonic() + self._sell_429_cooldown_s
-            log.info("sell-quote %s for %s: %s", reason, mint, exc)
-            return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, reason)
-        except httpx.RequestError as exc:
-            self._qstats["quote_http_error"] += 1
-            # %r: httpx errors often stringify to "" (observed: empty log
-            # lines), repr keeps the class + request context.
-            log.warning("sell-quote http error for %s: %r", mint, exc)
-            return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, "quote_http_error")
-        except Exception:
-            self._qstats["quote_exception"] += 1
-            log.exception("sell-quote exception for %s", mint)
-            return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, "quote_exception")
 
         latency_ms = (time.monotonic() - t0) * 1000
         self._record_latency(latency_ms)
