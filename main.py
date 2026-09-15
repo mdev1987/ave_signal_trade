@@ -1269,6 +1269,13 @@ async def _run_watch(s: cfg.Settings) -> int:
     # Kolexplorer monitor feed — pre-computed KOL consensus tokens.
     kolexplorer_feed = None
     if s.kolexplorer_enabled and s.kolexplorer_cookies:
+        # Repeat-signal log quieting: the feed re-emits the same CA every
+        # poll (observed: HmJDgky… 15+ INFO lines/day, 1169 kolexplorer OPEN
+        # lines in one log window). First sighting per CA per 30 min logs at
+        # INFO; repeats stay at DEBUG so the signal path keeps working while
+        # watcher.log stays readable. Routing via _on_smart_buy is unaffected.
+        _kx_last_log: dict[str, float] = {}
+
         async def _on_kolexplorer_signal(
             ca: str, sym: str, mc: float, score: float, wallets,
             source: str = "kolexplorer", **kw,
@@ -1276,10 +1283,18 @@ async def _run_watch(s: cfg.Settings) -> int:
             """Route Kolexplorer consensus signal into the open gate."""
             kol_count = kw.get("kol_count", 0)
             total_pnl = kw.get("total_pnl", 0)
-            log.info(
-                "kolexplorer OPEN %s (%s) kols=%d score=%.2f mc=$%.0f pnl=$%.0f",
-                ca[:10], sym, kol_count, score, mc, total_pnl,
-            )
+            _now = time.time()
+            if _now - _kx_last_log.get(ca, 0.0) >= 1800.0:
+                _kx_last_log[ca] = _now
+                log.info(
+                    "kolexplorer OPEN %s (%s) kols=%d score=%.2f mc=$%.0f pnl=$%.0f",
+                    ca[:10], sym, kol_count, score, mc, total_pnl,
+                )
+            else:
+                log.debug(
+                    "kolexplorer repeat %s (%s) kols=%d score=%.2f",
+                    ca[:10], sym, kol_count, score,
+                )
             try:
                 await _on_smart_buy(ca, sym, mc, score, wallets, source=source)
             except Exception:
