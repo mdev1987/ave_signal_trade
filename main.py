@@ -1011,6 +1011,7 @@ async def _run_watch(s: cfg.Settings) -> int:
         notifier=notifier,
         poll_s=s.watch_poll_s,
         min_buy_usd=s.watch_min_buy_usd,
+        max_buy_usd=s.watch_max_buy_usd,
         consensus_wallets=s.watch_consensus_wallets,
         consensus_window_s=s.watch_consensus_window_s,
         first_lookback_s=s.watch_first_lookback_s,
@@ -1129,6 +1130,12 @@ async def _run_watch(s: cfg.Settings) -> int:
                 sol_amount = value.get("amount") or 0
 
                 if not mint or usd < s.watch_min_buy_usd:
+                    return
+                if usd > s.watch_max_buy_usd:
+                    # Same freak-misprice guard as watcher._process_buy: journal
+                    # for offline tuning, never feed consensus.
+                    logs.journal("smart_buy_outlier", ca=mint, wallet=(wallet or "?")[:10],
+                                 usd=round(usd, 2), fresh=True, src="cabalspy_tx")
                     return
 
                 log.debug("cabalspy TX %s buy %s $%.0f (%.2f SOL)",

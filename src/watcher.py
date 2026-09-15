@@ -172,6 +172,7 @@ class SmartWalletWatcher:
         tokens_file: str = "watched_tokens.json",
         poll_s: float = 120.0,
         min_buy_usd: float = 100.0,
+        max_buy_usd: float = 1_000_000.0,
         consensus_wallets: int = 2,
         consensus_window_s: float = 7200.0,
         on_smart_buy=None,  # async fn(ca, symbol, usd, score, wallets)
@@ -192,6 +193,7 @@ class SmartWalletWatcher:
         self.notifier = notifier
         self.poll_s = poll_s
         self.min_buy_usd = min_buy_usd
+        self.max_buy_usd = max_buy_usd
         self.consensus_wallets = consensus_wallets
         self.consensus_window_s = consensus_window_s
         self.first_lookback_s = first_lookback_s
@@ -419,7 +421,17 @@ class SmartWalletWatcher:
         # path that synthesises buys).  This makes churn + consensus window
         # measure wall-clock distance between trades, not processing lag.
         tx_ts = b.get("ts") or now
-        qualifies = usd >= self.min_buy_usd
+        # Upper bound: DexScreener misprices (wrong pair / stale cache) and
+        # raw-amount decimal slips produce freak values (seen up to $127B —
+        # ~3% of buys >$1M). Such a "buy" must not qualify, contribute weight,
+        # or inflate hit["usd"]: a mispriced dust buy would otherwise
+        # manufacture half a consensus on its own.
+        outlier = usd > self.max_buy_usd
+        qualifies = usd >= self.min_buy_usd and not outlier
+        fresh = ca not in self.known_cas
+        if outlier:
+            logs.journal("smart_buy_outlier", ca=ca, wallet=wallet[:10],
+                         usd=round(usd, 2), fresh=fresh)
         # Wallet churn detection: a wallet spraying 40+ distinct tokens in 5
         # minutes is almost certainly noise (airdrops, bot activity, or a
         # non-selective accumulator). Penalise its weight by halving it.
@@ -452,7 +464,6 @@ class SmartWalletWatcher:
                 existing["wt"] = wt
             else:
                 hit["wallets"].append({"w": wallet, "usd": usd, "ts": tx_ts, "wt": wt})
-        fresh = ca not in self.known_cas
         if not already:
             logs.journal("smart_buy_seen", ca=ca, wallet=wallet[:10],
                          usd=round(usd, 2), wt=wt, fresh=fresh)
@@ -582,6 +593,10 @@ class SmartWalletWatcher:
                         seen.discard(k)
                 usd = tr.get("usd") or tr.get("amountUsd") or tr.get("price") or 0
                 if usd < self.min_buy_usd:
+                    continue
+                if usd > self.max_buy_usd:
+                    logs.journal("smart_buy_outlier", ca=ca, wallet=wallet[:10],
+                                 usd=round(usd, 2), fresh=True, src="kol_trade_poll")
                     continue
                 logger.info("kol_trade_poll: %s bought %s ($%.2f)", wallet[:8], ca[:8], usd)
                 await self._process_buy(wallet, {

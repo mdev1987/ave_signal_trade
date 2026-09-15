@@ -145,6 +145,54 @@ def test_status_card_compact():
     assert "helius_ws" in card and "tatum" not in card
 
 
+def test_process_buy_outlier_ignored():
+    """Regression: freak price*amount values (seen up to $127B, ~3% of buys
+    >$1M from DexScreener misprices) must not qualify, carry weight, or
+    inflate hit["usd"] — a mispriced dust buy must not manufacture consensus.
+    """
+    import asyncio
+    import json
+    import os
+    import tempfile
+    import time
+
+    import logs
+    from watcher import SmartWalletWatcher
+
+    tmp = tempfile.mkdtemp()
+    wf = os.path.join(tmp, "wallets.json")
+    with open(wf, "w") as f:
+        json.dump({W: {}, "W2xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {}}, f)
+    w = SmartWalletWatcher(
+        shyft_key="test",
+        wallets_file=wf,
+        state_file=os.path.join(tmp, "state.json"),
+        tokens_file=os.path.join(tmp, "tok.json"),
+        min_buy_usd=50.0,
+        wallet_weights={W: 1.5},
+        wallet_default_weight=0.5,
+        consensus_weight_threshold=99.0,  # never fire consensus here
+    )
+    events = []
+    orig = logs.journal
+    logs.journal = lambda event, **kw: events.append((event, kw))
+    try:
+        asyncio.run(w._process_buy(W, {"ca": MINT, "usd": 50_000_000.0,
+                                       "symbol": "T", "ts": time.time()}))
+    finally:
+        logs.journal = orig
+    assert any(e == "smart_buy_outlier" for e, _ in events)
+    hit = w.token_hits[MINT]
+    assert hit["wallets"] == [] and hit["usd"] == 0.0
+    # a normal buy on another token still qualifies with full weight
+    MINT2 = "7vSG4GX8qz1111111111111111111111111111111111"
+    asyncio.run(w._process_buy(W, {"ca": MINT2, "usd": 100.0,
+                                   "symbol": "U", "ts": time.time()}))
+    hit2 = w.token_hits[MINT2]
+    assert len(hit2["wallets"]) == 1 and hit2["wallets"][0]["wt"] == 1.5
+    assert hit2["usd"] == 100.0
+
+
 if __name__ == "__main__":
     test_buy_detected_on_balance_increase()
     test_sell_ignored()
@@ -158,4 +206,5 @@ if __name__ == "__main__":
     test_madeonsol_footprint_empty()
     test_pumpapi_paper_mode_no_crash()
     test_status_card_compact()
+    test_process_buy_outlier_ignored()
     print("watcher-core tests passed (live pipeline)")

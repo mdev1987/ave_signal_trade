@@ -161,6 +161,7 @@ class Settings:
     # watcher
     watch_poll_s: float = 120.0
     watch_min_buy_usd: float = 50.0
+    watch_max_buy_usd: float = 1_000_000.0  # ignore freak price*amount outliers (same as discovery)
     watch_consensus_wallets: int = 2
     watch_consensus_window_s: float = 600.0
     watch_first_lookback_s: float = 90.0
@@ -332,6 +333,7 @@ def load_settings(path: str = ".env") -> Settings:
         status_every_min=get_float(env, "STATUS_EVERY_MIN", _d.status_every_min),
         watch_poll_s=get_float(env, "WATCH_POLL_S", _d.watch_poll_s),
         watch_min_buy_usd=get_float(env, "WATCH_MIN_BUY_USD", _d.watch_min_buy_usd),
+        watch_max_buy_usd=get_float(env, "WATCH_MAX_BUY_USD", _d.watch_max_buy_usd),
         watch_consensus_wallets=get_int(env, "WATCH_CONSENSUS_WALLETS", _d.watch_consensus_wallets),
         watch_consensus_window_s=get_float(env, "WATCH_CONSENSUS_WINDOW_S", _d.watch_consensus_window_s),
         watch_first_lookback_s=get_float(env, "WATCH_FIRST_LOOKBACK_S", _d.watch_first_lookback_s),
