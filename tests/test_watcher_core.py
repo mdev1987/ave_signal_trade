@@ -185,8 +185,8 @@ def test_process_buy_outlier_ignored():
     finally:
         logs.journal = orig
     assert any(e == "smart_buy_outlier" for e, _ in events)
-    hit = w.token_hits[MINT]
-    assert hit["wallets"] == [] and hit["usd"] == 0.0
+    assert not any(e == "smart_buy_seen" for e, _ in events)
+    assert MINT not in w.token_hits and MINT not in w.known_cas
     # a normal buy on another token still qualifies with full weight
     MINT2 = "7vSG4GX8qz1111111111111111111111111111111111"
     asyncio.run(w._process_buy(W, {"ca": MINT2, "usd": 100.0,
@@ -194,6 +194,20 @@ def test_process_buy_outlier_ignored():
     hit2 = w.token_hits[MINT2]
     assert len(hit2["wallets"]) == 1 and hit2["wallets"][0]["wt"] == 1.5
     assert hit2["usd"] == 100.0
+    # repeat sub-threshold buys on a known token journal nothing (previously
+    # every repeat emitted smart_buy_seen because the wallet never joined
+    # hit["wallets"], flooding the journal with no-signal lines).
+    events2 = []
+    logs.journal = lambda event, **kw: events2.append((event, kw))
+    try:
+        asyncio.run(w._process_buy(W, {"ca": MINT2, "usd": 1.0,
+                                       "symbol": "U", "ts": time.time()}))
+        asyncio.run(w._process_buy(W, {"ca": MINT2, "usd": 1.0,
+                                       "symbol": "U", "ts": time.time()}))
+    finally:
+        logs.journal = orig
+    assert events2 == []
+    assert hit2["usd"] == 100.0  # dust did not inflate totals
 
 
 if __name__ == "__main__":

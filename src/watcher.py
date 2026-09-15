@@ -409,12 +409,6 @@ class SmartWalletWatcher:
         ca = b["ca"]
         now = time.time()
         sym = b.get("symbol") or "?"
-        hit = self.token_hits.setdefault(
-            ca, {"symbol": sym, "wallets": [], "first_ts": now, "usd": 0.0})
-        # upgrade from '?' once a real symbol is known
-        if sym != "?" and hit["symbol"] == "?":
-            hit["symbol"] = sym
-        already = wallet in [x["w"] for x in hit["wallets"]]
         usd = b.get("usd") or 0.0
         # Use the ACTUAL transaction timestamp when available (b["ts"] comes
         # from Shyft blockTime). Fall back to now() only when absent (push
@@ -430,8 +424,21 @@ class SmartWalletWatcher:
         qualifies = usd >= self.min_buy_usd and not outlier
         fresh = ca not in self.known_cas
         if outlier:
+            # Journaled once here — never as smart_buy_seen, never qualifies,
+            # carries no weight, and does not burn the first-sighting (a later
+            # real buy on this CA still counts as fresh). Outlier storms (one
+            # wallet mispricing thousands of buys, e.g. AgmLJ $500M-$2B slips
+            # on 2026-09-15) previously double-journaled every hit and left an
+            # empty token_hits entry behind.
             logs.journal("smart_buy_outlier", ca=ca, wallet=wallet[:10],
                          usd=round(usd, 2), fresh=fresh)
+            return
+        hit = self.token_hits.setdefault(
+            ca, {"symbol": sym, "wallets": [], "first_ts": now, "usd": 0.0})
+        # upgrade from '?' once a real symbol is known
+        if sym != "?" and hit["symbol"] == "?":
+            hit["symbol"] = sym
+        already = wallet in [x["w"] for x in hit["wallets"]]
         # Wallet churn detection: a wallet spraying 40+ distinct tokens in 5
         # minutes is almost certainly noise (airdrops, bot activity, or a
         # non-selective accumulator). Penalise its weight by halving it.
@@ -464,14 +471,17 @@ class SmartWalletWatcher:
                 existing["wt"] = wt
             else:
                 hit["wallets"].append({"w": wallet, "usd": usd, "ts": tx_ts, "wt": wt})
+        # Skip re-evaluation entirely for a sub-threshold buy on an already-known
+        # token (we only re-score when a NEW qualifying wallet arrives, or it's
+        # the first sighting) — and skip journaling it too. Sub-threshold buys
+        # never join hit["wallets"], so `already` was always False for them and
+        # every repeat dust buy journaled a smart_buy_seen, flooding the journal
+        # with thousands of no-signal lines. First sightings still journal.
+        if not fresh and not qualifies:
+            return
         if not already:
             logs.journal("smart_buy_seen", ca=ca, wallet=wallet[:10],
                          usd=round(usd, 2), wt=wt, fresh=fresh)
-        # Skip re-evaluation entirely for a sub-threshold buy on an already-known
-        # token (we only re-score when a NEW qualifying wallet arrives, or it's
-        # the first sighting).
-        if not fresh and not qualifies:
-            return
         if fresh:
             self.known_cas.add(ca)
         # ---- TIME-WINDOWED consensus: only wallets that bought within the
