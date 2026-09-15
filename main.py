@@ -143,6 +143,20 @@ def build_status(st: dict) -> str:
     return "\n".join(lines)
 
 
+def blind_open_size(adaptive_size: float | None, cap: float, fallback: float) -> float:
+    """Cap position size for liq-unchecked (blind) opens.
+
+    Blind entries (no DexScreener/DexPaprika snapshot, pc={}) carried every
+    catastrophic paper loss 2026-09-12..15 while scoring no better than
+    confirmed entries — so they trade at capped risk, never full adaptive
+    size. Non-positive cap disables the cap (returns the adaptive size).
+    """
+    size = adaptive_size if adaptive_size and adaptive_size > 0 else fallback
+    if cap and cap > 0:
+        size = min(size, cap)
+    return round(size, 4)
+
+
 # ------------------------------------------------------------- shadow book --
 class ShadowBook:
     """Virtual positions mirroring 'buy what smart money buys'.
@@ -1770,23 +1784,31 @@ async def _run_watch(s: cfg.Settings) -> int:
             _nohist = pc.get("m5") is None and pc.get("h1") is None
             # Weak pair -> require strong confirmation: every AVAILABLE timeframe
             # positive (m5>0 & h1>0 at minimum) before it may open at all.
-            if pmult < 1.0 and not all((pc.get(k) or 0) > 0 for k in avail):
+            # An empty book (no price history) is NOT confirmation — `all()`
+            # over zero timeframes is vacuously True, so weak pairs must show
+            # at least one positive timeframe or sit out.
+            if pmult < 1.0 and (not avail or not all((pc.get(k) or 0) > 0 for k in avail)):
                 reason = f"skip:pair_needs_confirmation({pnote},align={align}/{len(avail)})"
             elif effective < s.consensus_weight_threshold:
                 reason = (f"skip:eff_score={effective:.2f}<{s.consensus_weight_threshold}"
                           f"(pmult={pmult:.2f},align={align})")
             elif not snap:
                 # DexScreener blip with a genuine consensus: open flagged as
-                # liq-unchecked rather than discarding the signal.
+                # liq-unchecked rather than discarding the signal — but at
+                # CAPPED size. Blind entries carried every catastrophic paper
+                # loss (2026-09-12..15: -0.060/21, incl. five instant
+                # -25..-38% rugs), so they never get full adaptive size.
                 last_open["t"] = time.time()
                 last_open["score"] = score
                 logs.journal("open_liq_unchecked", ca=ca, symbol=sym,
-                             note="dexscreener_unavailable")
+                              note="dexscreener_unavailable")
                 logs.journal("open_signal_momentum", ca=ca, symbol=sym,
                              score=score, effective=round(effective, 3),
                              pmult=pmult, align=align, price_change=pc,
                              source=source)
-                _open_size = _adaptive_size(s, effective, source) if s.adaptive_sizing else None
+                _open_size = blind_open_size(
+                    _adaptive_size(s, effective, source) if s.adaptive_sizing else None,
+                    s.liq_unchecked_max_sol, s.size_sol)
                 await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
                                          source=source,
                                          mc=(snap or {}).get("mcap") or 0, score=score)
