@@ -131,9 +131,12 @@ def build_status(st: dict) -> str:
     def _feed_icon(v) -> str:
         # "degraded" = quota-side Helius 429 ban: feed alive, provider
         # throttling. 🟡 so the status card stops crying 🔴 for hours
-        # over something we can't fix from here.
+        # over something we can't fix from here. "off" = deliberately
+        # disabled in config (HELIUS_WS_ENABLED=false) — ⚪, not 🔴.
         if v == "degraded":
             return "🟡"
+        if v == "off":
+            return "⚪"
         return "🟢" if v else "🔴"
 
     feed_line = " · ".join(
@@ -1925,7 +1928,7 @@ async def _run_watch(s: cfg.Settings) -> int:
     async def status_loop() -> None:
         while not stop.is_set():
             await asyncio.sleep(max(60, s.status_every_min * 60))
-            helius_ok = helius_ws.connected if helius_ws else False
+            helius_ok = helius_ws.connected if helius_ws else "off"
             if not helius_ok and helius_ws is not None and helius_ws.degraded:
                 helius_ok = "degraded"
             snap = book.snapshot(len(w.wallets), alerts["n"],
