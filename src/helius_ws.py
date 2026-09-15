@@ -60,7 +60,10 @@ _RECONNECT_LONG_BAN_MAX = 3600.0  # 1h ceiling during a sustained quota ban
 # re-probed with 30s retries and churned all keys in ~2 min before the
 # circuit breaker re-tripped. Restoring the counter resumes quiet probes.
 _BAN_STATE_FILE = "helius_ban_state.json"
-_BAN_STATE_MAX_AGE_S = 6 * 3600.0  # ignore persisted bans older than this
+# Observed 2026-09-14/15: a quota ban outlasted 22h, so a 6h window expired
+# mid-ban and the next boot reset to aggressive 30s key-churn. 24h keeps
+# boots quiet for any realistic ban while hourly probes still recover fast.
+_BAN_STATE_MAX_AGE_S = 24 * 3600.0  # ignore persisted bans older than this
 _PING_INTERVAL = 30.0
 _SUBSCRIBE_BATCH = 100  # max wallets per subscribe message (Helius limit)
 _TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"

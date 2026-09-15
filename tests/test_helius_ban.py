@@ -52,8 +52,17 @@ def test_stale_long_ban_steps_down_to_circuit(tmp_path):
 
 def test_expired_state_ignored(tmp_path):
     p = tmp_path / "ban.json"
-    _write(p, _RECONNECT_LONG_BAN_AFTER + 5, age_s=8 * 3600)
+    _write(p, _RECONNECT_LONG_BAN_AFTER + 5, age_s=26 * 3600)
     assert load_ban_count(str(p)) == 0
+
+
+def test_day_old_long_ban_still_resumes_quietly(tmp_path):
+    # Regression: the 2026-09-14/15 quota ban outlasted 22h. A ban saved
+    # 20h ago must still resume at circuit level (15-min probes), not
+    # reset to aggressive 30s key-churn.
+    p = tmp_path / "ban.json"
+    _write(p, _RECONNECT_LONG_BAN_AFTER + 5, age_s=20 * 3600)
+    assert load_ban_count(str(p)) == _RECONNECT_CIRCUIT_AFTER
 
 
 def test_corrupt_state_is_fail_open(tmp_path):
