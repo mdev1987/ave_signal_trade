@@ -384,7 +384,7 @@ class SmartWalletWatcher:
         await self._sweep_wallet(wallet, since=since)
 
     async def _sweep_wallet(self, wallet: str,
-                            since: float | None = None) -> None:  # noqa: C901
+                            since: float | None = None) -> None:
         if since is None:
             since = self.state.get(f"ts:{wallet}",
                                    time.time() - self.first_lookback_s)
@@ -442,7 +442,7 @@ class SmartWalletWatcher:
             # Prune buys older than 5 minutes (using tx_ts, not now)
             cutoff = tx_ts - 300
             self._wallet_buys[wallet] = [(t, c) for t, c in buys if t > cutoff]
-            distinct_tokens = len(set(c for _, c in self._wallet_buys[wallet]))
+            distinct_tokens = len({c for _, c in self._wallet_buys[wallet]})
             if distinct_tokens >= 40:
                 churn_ok = False
         # Quality weight: proven winners move the score; noise wallets (~0) can't
@@ -523,8 +523,8 @@ class SmartWalletWatcher:
                 logger.info("shyft: %d wallets in cooldown, %d active, %d 429s last sweep",
                             len(self._wallet_cooldown), active, shyft_429s)
             sem = asyncio.Semaphore(self._sweep_concurrency)
-            async def _guarded(w):
-                async with sem:
+            async def _guarded(w, _sem=sem):
+                async with _sem:
                     await self._sweep_wallet(w)
             tasks = [asyncio.create_task(_guarded(w))
                      for w in list(self.wallets)]
@@ -535,7 +535,7 @@ class SmartWalletWatcher:
             self._prune_token_hits()
             # Prune _price_cache entries older than 10 min
             if len(self._price_cache) > 1000:
-                cache_cutoff = now - 600
+                cache_cutoff = time.time() - 600
                 stale_cas = [ca for ca, (ts, _, _) in self._price_cache.items()
                              if ts < cache_cutoff]
                 for ca in stale_cas:

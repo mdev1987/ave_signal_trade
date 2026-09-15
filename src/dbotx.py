@@ -72,7 +72,7 @@ class DBotXClient:
                 ),
                 timeout=self.timeout_s + 2.0,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             if not self._warned:
                 # %r: timeouts/cancellations stringify to "" (observed:
                 # empty log lines), repr keeps the exception class.
@@ -88,7 +88,7 @@ class DBotXClient:
             return {"available": False, "safe": True, "note": f"http{r.status_code}"}
         try:
             data = r.json()
-        except Exception:  # noqa: BLE001
+        except Exception:
             return {"available": False, "safe": True, "note": "bad_json"}
         if data.get("err"):
             return {"available": False, "safe": True, "note": "err_flag"}

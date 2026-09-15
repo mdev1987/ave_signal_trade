@@ -191,7 +191,6 @@ class Settings:
     tg_api_id: int = 0
     tg_api_hash: str = ""
     tg_phone: str = ""
-    tg_session_name: str = "tg_memetracker"
     memetracker_enabled: bool = False     # enable MemeTracker TG feed
     memetracker_channel: str = "memetrackersol"  # Telegram channel to listen to
     memetracker_session: str = "tg_memetracker"  # Telethon session file name
@@ -199,14 +198,6 @@ class Settings:
     memetracker_min_liq: float = 5_000.0  # min liquidity to forward signal
     memetracker_min_holders: int = 50     # min holder count to forward signal
     memetracker_min_vol: float = 10_000.0 # min 24h volume to forward signal
-    # --- AveSignalMonitor (@AveSignalMonitor) — multi-chain KOL buy signals ---
-    avesm_enabled: bool = False           # enable AveSignalMonitor TG feed
-    avesm_channel: str = "AveSignalMonitor"  # Telegram channel to listen to
-    avesm_session: str = "tg_avesm"       # Telethon session file name
-    avesm_min_mc: float = 5_000.0         # min market cap to forward signal
-    avesm_min_kols: int = 2               # min KOL/Smart wallet count
-    avesm_min_buy_sol: float = 0.5        # min total buy amount in SOL
-    avesm_max_mc: float = 200_000.0       # max market cap (avoid late entries)
     # --- RugCheck (solana rug detection) ---
     rug_check_api_key: str = ""          # RugCheck API key (free tier works)
     rug_check_base_url: str = "https://api.rugcheck.xyz"
@@ -215,6 +206,7 @@ class Settings:
     rug_check_min_mc_for_danger: float = 500_000.0  # only apply DANGER (mint/freeze) filter below this MC
     # --- Helius (DAS + Wallet Identity + RPC) ---
     helius_api_keys: str = ""             # comma-separated Helius API keys
+    helius_ws_enabled: bool = False       # WS streaming: 0 buys ever, Helius-side 429s — keep off until it recovers
     helius_rpc_url: str = "https://mainnet.helius-rpc.com"
     helius_rugger_block: bool = True      # block trades when deployer is known rugger
     helius_max_top10_pct: float = 50.0    # reject if top-10 holders own > this %
@@ -357,7 +349,6 @@ def load_settings(path: str = ".env") -> Settings:
         tg_api_id=get_int(env, "TG_API_ID", _d.tg_api_id),
         tg_api_hash=get(env, "TG_API_HASH", _d.tg_api_hash),
         tg_phone=get(env, "TG_PHONE", _d.tg_phone),
-        tg_session_name=get(env, "TG_SESSION_NAME", _d.tg_session_name),
         memetracker_enabled=get_bool(env, "MEMETRACKER_ENABLED", _d.memetracker_enabled),
         memetracker_channel=get(env, "MEMETRACKER_CHANNEL", _d.memetracker_channel),
         memetracker_session=get(env, "MEMETRACKER_SESSION", _d.memetracker_session),
@@ -365,19 +356,13 @@ def load_settings(path: str = ".env") -> Settings:
         memetracker_min_liq=get_float(env, "MEMETRACKER_MIN_LIQ", _d.memetracker_min_liq),
         memetracker_min_holders=get_int(env, "MEMETRACKER_MIN_HOLDERS", _d.memetracker_min_holders),
         memetracker_min_vol=get_float(env, "MEMETRACKER_MIN_VOL", _d.memetracker_min_vol),
-        avesm_enabled=get_bool(env, "AVESM_ENABLED", _d.avesm_enabled),
-        avesm_channel=get(env, "AVESM_CHANNEL", _d.avesm_channel),
-        avesm_session=get(env, "AVESM_SESSION", _d.avesm_session),
-        avesm_min_mc=get_float(env, "AVESM_MIN_MC", _d.avesm_min_mc),
-        avesm_min_kols=get_int(env, "AVESM_MIN_KOLS", _d.avesm_min_kols),
-        avesm_min_buy_sol=get_float(env, "AVESM_MIN_BUY_SOL", _d.avesm_min_buy_sol),
-        avesm_max_mc=get_float(env, "AVESM_MAX_MC", _d.avesm_max_mc),
         rug_check_api_key=get(env, "RUG_CHECK_API_KEY", _d.rug_check_api_key),
         rug_check_base_url=get(env, "RUG_CHECK_BASE_URL", _d.rug_check_base_url),
         rug_check_max_score=get_int(env, "RUG_CHECK_MAX_SCORE", _d.rug_check_max_score),
         rug_check_reject_danger=get_bool(env, "RUG_CHECK_REJECT_DANGER", _d.rug_check_reject_danger),
         rug_check_min_mc_for_danger=get_float(env, "RUG_CHECK_MIN_MC_FOR_DANGER", _d.rug_check_min_mc_for_danger),
         helius_api_keys=get(env, "HELIUS_API_KEYS", _d.helius_api_keys),
+        helius_ws_enabled=get_bool(env, "HELIUS_WS_ENABLED", _d.helius_ws_enabled),
         helius_rpc_url=get(env, "HELIUS_RPC_URL", _d.helius_rpc_url),
         helius_rugger_block=get_bool(env, "HELIUS_RUGGER_BLOCK", _d.helius_rugger_block),
         helius_max_top10_pct=get_float(env, "HELIUS_MAX_TOP10_PCT", _d.helius_max_top10_pct),

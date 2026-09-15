@@ -262,10 +262,9 @@ def main() -> None:
             if early_adv_thresh is not None and early_fav_thresh is not None:
                 adv = t.get("early_adv_30")
                 fav = t.get("early_fav_30")
-                if adv is not None and fav is not None:
-                    if adv >= early_adv_thresh and fav < early_fav_thresh:
-                        reject = True
-                        reason = "early_adverse"
+                if adv is not None and fav is not None and adv >= early_adv_thresh and fav < early_fav_thresh:
+                    reject = True
+                    reason = "early_adverse"
             if conf_thresh is not None and not reject:
                 cr = t.get("conf_ratio")
                 if cr is not None and cr < conf_thresh:
@@ -302,7 +301,7 @@ def main() -> None:
 
     # Per-reason breakdown for baseline
     reason_stats = {}
-    for reason in set(t["reason"] for t in trades):
+    for reason in {t["reason"] for t in trades}:
         rts = [t for t in trades if t["reason"] == reason]
         rts_pnl = [t["pnl_sol"] for t in rts]
         reason_stats[reason] = {

@@ -288,7 +288,6 @@ class HeliusClient:
             return result
 
         # Calculate concentration
-        total_held = sum(h.get("uiAmount", 0) for h in holders)
         top10_ui = sum(h.get("uiAmount", 0) for h in holders[:10])
         top1_ui = holders[0].get("uiAmount", 0) if holders else 0
         result["top10_pct"] = (top10_ui / supply * 100) if supply else 0

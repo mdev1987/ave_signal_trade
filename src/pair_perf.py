@@ -13,8 +13,8 @@ a pair only gets penalised after it has enough trades to be informative.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Tuple
 
 DEFAULT_PATH = "pair_performance.json"
 
@@ -49,7 +49,7 @@ def update(perf: dict, wallets: Iterable[str], pnl_sol: float) -> str:
     return key
 
 
-def penalty(perf: dict, wallets: Iterable[str]) -> Tuple[float, str]:
+def penalty(perf: dict, wallets: Iterable[str]) -> tuple[float, str]:
     """Return (score_penalty, note).
 
     Deprecated: pair quality is now modelled as a MULTIPLIER on the market
@@ -60,7 +60,7 @@ def penalty(perf: dict, wallets: Iterable[str]) -> Tuple[float, str]:
     return (0.0 if mult >= 1.0 else (1.0 - mult) * 2.0), note
 
 
-def pair_multiplier(perf: dict, wallets: Iterable[str]) -> Tuple[float, str]:
+def pair_multiplier(perf: dict, wallets: Iterable[str]) -> tuple[float, str]:
     """Return (score_multiplier, note).
 
     Pair quality modulates the *market* score instead of vetoing it:

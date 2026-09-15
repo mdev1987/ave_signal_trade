@@ -117,7 +117,7 @@ class TelegramNotifier:
                 await asyncio.sleep(exc.retry_after + 1.0)
             except TimedOut:
                 await asyncio.sleep(5.0)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.warning("telegram send failed (attempt %d): %s", attempt + 1, exc)
                 await asyncio.sleep(2 * (attempt + 1))
         log.warning("telegram send giving up after retries")
@@ -144,7 +144,7 @@ class TelegramNotifier:
             me = await self._bot.get_me()
             print(f"[telegram] connected as @{me.username}")
             return True
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"[telegram] connection failed: {exc}")
             return False
 
@@ -385,7 +385,7 @@ class TelegramNotifier:
                 updates = await self._bot.get_updates(
                     offset=offset, timeout=30, allowed_updates=["message"]
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.warning("get_updates failed: %s", exc)
                 await asyncio.sleep(5)
                 continue

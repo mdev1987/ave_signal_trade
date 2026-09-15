@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import httpx
 
@@ -120,7 +120,7 @@ class KolexplorerFeed:
         hours: int = 4,
         mode: int = 1,
         heatmap_tf: str = "2h",
-        on_signal: Optional[Callable] = None,
+        on_signal: Callable | None = None,
     ):
         self._cookies = cookies
         self._weights = weights
@@ -135,9 +135,9 @@ class KolexplorerFeed:
         self._on_signal = on_signal
         self._seen: dict[str, float] = {}  # ca -> first_seen_ts (for TTL pruning)
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._last_poll = 0.0
-        self._session: Optional[httpx.AsyncClient] = None
+        self._session: httpx.AsyncClient | None = None
 
     async def start(self) -> None:
         if self._running:
@@ -254,8 +254,6 @@ class KolexplorerFeed:
             matched_wallets = []
             for kol in kol_list:
                 slug = (kol.get("slug") or "").strip()
-                kol_pnl = kol.get("kol_pnl", 0)
-                buy_vol = kol.get("buy_vol", 0)
 
                 addr = KOL_SLUG_TO_ADDR.get(slug)
                 if addr and addr in self._weights:
@@ -362,7 +360,6 @@ class KolexplorerFeed:
                 continue
 
             kol_slugs = [s.strip() for s in row.get("kol_slugs_csv", "").split("||") if s.strip()]
-            kol_names = [n.strip() for n in row.get("kol_names_csv", "").split("||") if n.strip()]
 
             weighted_score = 0.0
             matched_wallets = []

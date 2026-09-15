@@ -87,8 +87,8 @@ def seed() -> None:
                         "pnl": pnl, "ts": 0
                     })
                     csv_pairs += 1
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"skip corrupt row: {exc}")
 
     PAIR_FILE.write_text(json.dumps(pair_data, indent=1))
     total = len(pair_data)

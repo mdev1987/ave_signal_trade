@@ -1,0 +1,74 @@
+"""Tests: config parsing + Settings (incl. removal lock-ins).
+
+Locks in the AveSignalMonitor + duplicate TG session removals: the
+corresponding Settings attributes must NOT exist anymore.
+"""
+
+import pathlib
+import sys
+
+_ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "src"))
+
+from config import (
+    get_bool,
+    get_csv,
+    get_float,
+    get_int,
+    load_settings,
+    parse_ladder,
+)
+
+
+def test_parse_ladder_triples():
+    out = parse_ladder({}, "TP_LADDER", "1.2:0.4:0.15,3.0:0.2:0.25")
+    assert out == [(1.2, 0.4, 0.15), (3.0, 0.2, 0.25)]
+
+
+def test_parse_ladder_legacy_pairs_default_trail():
+    out = parse_ladder({}, "TP_LADDER", "1.3:0.4,1.8:0.3")
+    assert out == [(1.3, 0.4, 0.30), (1.8, 0.3, 0.30)]
+
+
+def test_parse_ladder_garbage_falls_back():
+    # Unparseable env does NOT reuse the `default` string — it falls back to
+    # the hardcoded strategy ladder (fail-safe for a trading bot).
+    out = parse_ladder({"TP_LADDER": "junk,,1.5:xx"}, "TP_LADDER", "2.0:0.5:0.2")
+    assert len(out) == 9 and out[0] == (1.5, 0.30, 0.15)
+
+
+def test_get_bool_variants():
+    for v in ("1", "true", "yes", "on", "True", "YES"):
+        assert get_bool({"K": v}, "K", False) is True
+    for v in ("0", "false", "no", "off"):
+        assert get_bool({"K": v}, "K", True) is False
+    # empty string counts as unset -> default applies
+    assert get_bool({"K": ""}, "K", True) is True
+    assert get_bool({"K": ""}, "K", False) is False
+    assert get_bool({}, "MISSING", True) is True
+
+
+def test_get_int_float_invalid_fall_back():
+    assert get_int({"K": "abc"}, "K", 7) == 7
+    assert get_float({"K": "xyz"}, "K", 1.5) == 1.5
+    assert get_int({"K": "12"}, "K", 0) == 12
+    assert get_float({"K": "0.25"}, "K", 0.0) == 0.25
+
+
+def test_get_csv():
+    assert get_csv({"K": "a, b,,c "}, "K", "") == ["a", "b", "c"]
+    assert get_csv({}, "K", "x,y") == ["x", "y"]
+
+
+def test_removed_sources_have_no_settings():
+    s = load_settings()
+    for gone in ("avesm_enabled", "avesm_channel", "avesm_session",
+                 "avesm_min_mc", "avesm_min_kols", "avesm_min_buy_sol",
+                 "avesm_max_mc", "tg_session_name"):
+        assert not hasattr(s, gone), gone
+
+
+def test_helius_ws_toggle_defaults_off():
+    s = load_settings()
+    assert s.helius_ws_enabled is False

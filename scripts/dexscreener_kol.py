@@ -34,6 +34,7 @@ from pathlib import Path
 
 import httpx
 
+
 # --------------------------------------------------------------------------- #
 # config
 # --------------------------------------------------------------------------- #
@@ -75,7 +76,7 @@ async def _goto(page, url: str, timeout: int = 60_000, tries: int = 4) -> None:
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             last = exc
             await page.wait_for_timeout(3_000)
     raise last or RuntimeError("goto failed")
@@ -87,8 +88,8 @@ async def scrape_token(page, url: str, dump_html: str | None = None
     await _goto(page, url)
     try:
         await page.wait_for_selector("text=Holders", timeout=20_000)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"holders section not found, continuing: {exc}")
     await page.wait_for_timeout(4_000)
     if dump_html:
         Path(dump_html).write_text(await page.content())
@@ -162,13 +163,13 @@ async def scrape_gainers(browser, url: str, limit: int, out: str | None = None
         pg = await _new_page(ctx)
         try:
             d = await scrape_token(pg, tk["url"])
-            d["url"] = tk["url"]; d["symbol"] = d.get("symbol") or tk.get("symbol")  # noqa: E702
+            d["url"] = tk["url"]; d["symbol"] = d.get("symbol") or tk.get("symbol")
             d["rank_on_page"] = i
             results.append(d)
             print(f"  [{i}/{len(tokens)}] {d.get('symbol')} -> "
                   f"{len(d.get('holders',[]))} holders, {len(d.get('kol',[]))} KOLs",
                   file=sys.stderr)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"  [{i}/{len(tokens)}] {tk['url']} FAILED: {exc}", file=sys.stderr)
             results.append({"url": tk["url"], "symbol": tk.get("symbol"),
                             "rank_on_page": i, "error": str(exc)})
@@ -194,7 +195,7 @@ async def get_token_price(chain: str, token: str, env: dict) -> dict:
                 return {"symbol": p.base_token_symbol,
                         "price_usd": float(p.price_usd),
                         "liquidity_usd": float(p.liquidity_usd)}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"[price] dexscreener-python unavailable ({exc}); raw API", file=sys.stderr)
     r = await httpx.AsyncClient().get(f"{base}/token-pairs/v1/{chain}/{token}", timeout=30)
     r.raise_for_status()
@@ -317,7 +318,7 @@ async def main() -> None:
                         viewport={"width": 1440, "height": 900}, locale="en-US")
                     page = await _new_page(ctx)
                     d = await scrape_token(page, args.url, dump_html=args.dump_html)
-                    await page.close(); await ctx.close()  # noqa: E702
+                    await page.close(); await ctx.close()
                     holders = (d.get("holders") or [])[:args.holders]
                     kols = (d.get("kol") or [])[:args.kol]
                     print(f"symbol={d.get('symbol')}")

@@ -26,30 +26,37 @@ _SOL_MINT = "So11111111111111111111111111111111111111112"  # WSOL
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-import base58  # noqa: E402
-import os  # noqa: E402
-import config as cfg  # noqa: E402
-import logs  # noqa: E402
-from dexscreener_oracle import DexScreenerClient  # noqa: E402
-from dexpaprika import DexPaprikaClient  # noqa: E402
-from dbotx import DBotXClient  # noqa: E402
-from rugcheck import RugCheckClient  # noqa: E402
-from jupiter_trade import JupiterSwap  # noqa: E402
-from solders.keypair import Keypair  # noqa: E402
-from logs import setup_logging  # noqa: E402
-from pair_perf import (load as load_pair_perf, save as save_pair_perf,  # noqa: E402
-                       update as update_pair_perf, pair_multiplier)
-from notifier import TelegramNotifier  # noqa: E402
-from pump_stream import PumpApiStream  # noqa: E402
-from helius_ws import HeliusWS  # noqa: E402
-from watcher import SmartWalletWatcher  # noqa: E402
-from wallet_discovery import WalletDiscovery  # noqa: E402
-from wallet_weights import build_weights  # noqa: E402
-from cabalspy import CabalSpyClient, HolderCache  # noqa: E402
-from cabalspy_rest import CabalSpyREST  # noqa: E402 (history/bundle/lookup)
-from kolexplorer import KolexplorerFeed  # noqa: E402
-from madeonsol import MadeOnSolClient  # noqa: E402 (read-only validator)
-from tg_signal_feed import TgSignalFeed, parse_memetracker_signal, parse_avesignalmonitor  # noqa: E402
+import os
+
+import base58
+from solders.keypair import Keypair
+
+import config as cfg
+import logs
+from cabalspy import CabalSpyClient, HolderCache
+from cabalspy_rest import CabalSpyREST
+from dbotx import DBotXClient
+from dexpaprika import DexPaprikaClient
+from dexscreener_oracle import DexScreenerClient
+from helius_ws import HeliusWS
+from jupiter_trade import JupiterSwap
+from kolexplorer import KolexplorerFeed
+from logs import setup_logging
+from madeonsol import MadeOnSolClient
+from notifier import TelegramNotifier
+from pair_perf import load as load_pair_perf
+from pair_perf import pair_multiplier
+from pair_perf import save as save_pair_perf
+from pair_perf import update as update_pair_perf
+from pump_stream import PumpApiStream
+from rugcheck import RugCheckClient
+from tg_signal_feed import (
+    TgSignalFeed,
+    parse_memetracker_signal,
+)
+from wallet_discovery import WalletDiscovery
+from wallet_weights import build_weights
+from watcher import SmartWalletWatcher
 
 log = logging.getLogger("main")
 
@@ -102,8 +109,8 @@ def build_status(st: dict) -> str:
 
     lines = [
         f"🕵️ **Smart-Watch** · {uptime}",
-        f"👁️ {st.get('wallets', 0)} wallets · "
-        f"🚨 {st.get('alerts', 0)} alerts (🔥{st.get('consensus', 0)})",
+        (f"👁️ {st.get('wallets', 0)} wallets · "
+         + f"🚨 {st.get('alerts', 0)} alerts (🔥{st.get('consensus', 0)})"),
         "",
         "📊 **Shadow book**",
         f"▸ Open: {len(open_pos)}",
@@ -344,8 +351,8 @@ class ShadowBook:
             if not snap and self.dexpaprika is not None:
                 try:
                     snap = await self.dexpaprika.get_token_details(ca)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:
+                    log.debug("dexpaprika fallback failed for %s: %s", ca[:10], exc)
             market_px = float(snap.get("price_usd") or 0) if snap else 0.0
 
             if self.jupiter is not None:
@@ -978,7 +985,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             log.exception("vybe init failed — disabled")
 
     # CabalSpy client (real-time KOL/SM/Whale data streams)
-    cabalspy = None
     cabalspy_key = (cfg.get(env, "CABALSPY_API_KEY") or "").strip()
     cabalspy_keys = [k.strip() for k in cabalspy_key.split(",") if k.strip()]
     if cabalspy_keys and s.cabalspy_enabled:
@@ -1037,7 +1043,7 @@ async def _run_watch(s: cfg.Settings) -> int:
     # Helius WebSocket: real-time transaction streaming (replaces Shyft polling)
     helius_keys = [k.strip() for k in (cfg.get(env, "HELIUS_API_KEYS") or "").split(",") if k.strip()]
     helius_ws = None
-    if helius_keys:
+    if helius_keys and s.helius_ws_enabled:
         async def _on_helius_buy(wallet: str, buy: dict) -> None:
             await w._process_buy(wallet, buy)
         helius_ws = HeliusWS(
@@ -1081,7 +1087,6 @@ async def _run_watch(s: cfg.Settings) -> int:
                 cluster = data.get("cluster", {})
                 qualifying_total = cluster.get("qualifying_total") or 0
                 total_invested = cluster.get("total_invested") or 0
-                total_invested_usd = cluster.get("total_invested_usd") or 0
 
                 # Extract wallet list from signal
                 wallets_data = data.get("wallets", [])
@@ -1203,7 +1208,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             cabalspy_client = None
 
     # MemeTracker signal feed (@memetrackersol) — fresh pump.fun tokens.
-    # Also listens to @AveSignalMonitor (multi-chain KOL buy signals) via extra_channels.
     memetracker_feed = None
     if s.memetracker_enabled and s.tg_api_id and s.tg_api_hash:
         async def _on_memetracker_signal(sig: dict) -> None:
@@ -1228,34 +1232,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             except Exception:
                 log.exception("memetracker _on_smart_buy failed for %s", ca[:10])
 
-        async def _on_avesm_signal(sig: dict) -> None:
-            ca = sig.get("ca", "")
-            sym = sig.get("symbol", "")
-            mc = sig.get("mc", 0)
-            kol_count = sig.get("kol_count", 0)
-            total_buy = sig.get("total_buy_sol", 0)
-            max_pump = sig.get("max_pump", "")
-            log.info(
-                "avesm SIGNAL %s (%s) mc=$%.0f kols=%d buy=%.2fS pump=%s",
-                sym or "?", ca[:8], mc, kol_count, total_buy, max_pump,
-            )
-            try:
-                await _on_smart_buy(ca, sym, mc, 3.0, ["tg_signal"], tg_liq=0,
-                                    source="avesignalmonitor")
-            except Exception:
-                log.exception("avesm _on_smart_buy failed for %s", ca[:10])
-
-        # Build extra channels list for AveSignalMonitor
-        _extra_channels = []
-        if s.avesm_enabled:
-            _extra_channels.append({
-                "channel": s.avesm_channel,
-                "parser": parse_avesignalmonitor,
-                "callback": _on_avesm_signal,
-                "min_mc": s.avesm_min_mc,
-                "min_liq": 0,
-            })
-
         try:
             memetracker_feed = TgSignalFeed(
                 on_signal=_on_memetracker_signal,
@@ -1268,12 +1244,10 @@ async def _run_watch(s: cfg.Settings) -> int:
                 min_liq=s.memetracker_min_liq,
                 min_holders=s.memetracker_min_holders,
                 parser=parse_memetracker_signal,
-                extra_channels=_extra_channels if _extra_channels else None,
             )
             _mt_feed_task = asyncio.create_task(memetracker_feed.run())
             _mt_feed_task.add_done_callback(_log_task_result)
-            channels_list = [s.memetracker_channel] + [ec["channel"] for ec in _extra_channels]
-            log.info("memetracker feed: started (channels=%s)", channels_list)
+            log.info("memetracker feed: started (channels=%s)", [s.memetracker_channel])
         except Exception:
             log.exception("memetracker feed init failed")
             memetracker_feed = None
@@ -1319,7 +1293,7 @@ async def _run_watch(s: cfg.Settings) -> int:
     # Hard cap on concurrent positions: never more than capital allows, and
     # never above the configured max_open_positions (avoids a consensus burst
     # over-leveraging the paper book).
-    max_positions = min(max(1, int(round(s.start_balance_sol / s.size_sol))),
+    max_positions = min(max(1, round(s.start_balance_sol / s.size_sol)),
                         s.max_open_positions)
     # Live learning loop: every shadow close updates each triggering wallet's
     # hit-rate (picks vs winners) and the wallet-PAIR expectancy. Pairs with
@@ -1379,7 +1353,7 @@ async def _run_watch(s: cfg.Settings) -> int:
         Per-source multipliers from paper expectancy (2026-09-12, 63 trades):
           memetracker 1.0x (only profitable source, +0.043/5),
           kolexplorer 1.0x, cabalspy 1.3x (best hit rate on winners),
-          pumpapi 0.5x (-0.11/19, worst), avesignalmonitor 0.6x (-0.06/10).
+          pumpapi 0.5x (-0.11/19, worst).
         """
         score_min = settings.consensus_weight_threshold
         score_max = score_min * 2.0  # strong signal ~2x threshold
@@ -1390,7 +1364,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             "memetracker": 1.0,
             "kolexplorer": 1.0,
             "pumpapi": 0.5,
-            "avesignalmonitor": 0.6,
         }
         size *= _src_mult.get((source or "").lower(), 0.8)
         return round(min(size, settings.size_sol_max), 4)
@@ -1409,8 +1382,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                                 source, signal_price))
         try:
             await asyncio.wait_for(asyncio.shield(inner), _SIGNAL_TIMEOUT_S)
-        except asyncio.TimeoutError:
-            frames = ["%s:%s in %s" % (f.filename.split("/")[-1], f.lineno, f.name)
+        except TimeoutError:
+            frames = [f"{f.filename.split('/')[-1]}:{f.lineno} in {f.name}"
                       for f in inner.get_stack(limit=8)]
             log.error("WATCHDOG hung signal %s (%s) src=%s lock=%s frames=%s",
                       ca[:10], sym, source, book._lock.locked(), " <- ".join(frames))
@@ -1436,8 +1409,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                                  kol_buys=_fp["buys"], kol_wallets=_fp["kols"],
                                  max_winrate_7d=_fp["max_winrate_7d"],
                                  top_kol=_fp["top_kol"])
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:
+            log.debug("madeonsol overlap failed for %s: %s", ca[:10], exc)
         n = len(wallets or [])
         # Concentration guard: cap how many open positions may share any one
         # triggering wallet so we don't stack correlated bets and so slots stay
@@ -1531,8 +1504,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             if not snap and dp is not None:
                 try:
                     snap = await dp.get_token_details(ca)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:
+                    log.debug("dexpaprika details failed for %s: %s", ca[:10], exc)
             # Rug/safety gate (DBotX, fail-open): reject tokens that still hold a
             # mint or freeze authority, or are dangerously top-10 concentrated.
             # A 403 / missing key degrades to "allow" so an outage never blocks.
@@ -1643,7 +1616,7 @@ async def _run_watch(s: cfg.Settings) -> int:
             if vybe is not None and s.vybe_enabled:
                 try:
                     # Liquidity check
-                    liq_safe, liq_usd, liq_reason = await vybe.check_liquidity(ca)
+                    liq_safe, _liq_usd, liq_reason = await vybe.check_liquidity(ca)
                     if not liq_safe:
                         reason = f"skip:{liq_reason}"
                         if _skip_log.get(ca, 0) < time.time() - 300:
@@ -1651,7 +1624,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                             log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
                         return
                     # Top holder concentration check
-                    holder_safe, top5_pct, holder_reason = await vybe.check_top_holders(ca)
+                    holder_safe, _top5_pct, holder_reason = await vybe.check_top_holders(ca)
                     if not holder_safe:
                         reason = f"skip:{holder_reason}"
                         if _skip_log.get(ca, 0) < time.time() - 300:
@@ -1671,7 +1644,7 @@ async def _run_watch(s: cfg.Settings) -> int:
             # the signal stream, reject tokens where any single holder owns > max_pct.
             if cabalspy_client is not None and cabalspy_client.connected:
                 try:
-                    safe, max_pct, c_reason = holder_cache.check_concentration(
+                    safe, _max_pct, c_reason = holder_cache.check_concentration(
                         ca, s.cabalspy_holder_max_pct)
                     if not safe:
                         reason = f"skip:holder_concentration({c_reason})"
@@ -1701,8 +1674,9 @@ async def _run_watch(s: cfg.Settings) -> int:
                                             confidence=(_top or {}).get("confidence"),
                                             jito=(_top or {}).get("jito_confirmed"),
                                             wallets=(_top or {}).get("wallet_count"))
-                                except Exception:  # noqa: BLE001
-                                    pass
+                                except Exception as exc:
+                                    log.debug("bundle detail fetch failed for %s: %s",
+                                              ca[:10], exc)
                             reason = f"skip:bundle_detected({bundle_age:.0f}s ago)"
                             if _skip_log.get(ca, 0) < time.time() - 300:
                                 _skip_log[ca] = time.time()

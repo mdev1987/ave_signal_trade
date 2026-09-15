@@ -121,7 +121,7 @@ class DeBotClient:
                 )
                 self._last_request_ts = time.monotonic()
                 self._fail_streak = 0
-            except Exception as e:  # noqa: BLE001 - supplementary oracle only
+            except Exception as e:
                 self._last_request_ts = time.monotonic()
                 self._fail_streak += 1
                 if self._fail_streak >= self.breaker_threshold:
@@ -219,9 +219,9 @@ class DeBotClient:
         """
         try:
             await self._fetch_json("/api/community/signal/channel/heatmap", "chain=solana")
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:
+            logger.debug("debot warmup heatmap failed: %s", exc)
 
     async def aclose(self) -> None:
         """No persistent resources to release (kept for symmetry)."""
-        return None
+        return

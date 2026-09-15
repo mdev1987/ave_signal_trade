@@ -54,14 +54,14 @@ class LocalBanList:
                 if expired:
                     logger.info("banned_tokens: pruned %d expired bans", len(expired))
                     self._save()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("banned_tokens: failed to load %s: %s", self.ban_file, exc)
 
     def _save(self) -> None:
         """Save bans to file."""
         try:
             self.ban_file.write_text(json.dumps(self._bans, indent=2))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("banned_tokens: failed to save: %s", exc)
 
     def is_banned(self, mint: str) -> bool:

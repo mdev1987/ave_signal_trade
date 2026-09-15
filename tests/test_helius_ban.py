@@ -6,21 +6,21 @@ breaker re-tripped (observed 2026-09-14).
 """
 
 import json
+import pathlib
 import sys
 import time
-import pathlib
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "src"))
 
-from helius_ws import (  # noqa: E402
+from helius_ws import (
+    _RECONNECT_CIRCUIT_AFTER,
+    _RECONNECT_LONG_BAN_AFTER,
     HeliusWS,
     clear_ban_count,
     load_ban_count,
     save_ban_count,
-    _RECONNECT_CIRCUIT_AFTER,
-    _RECONNECT_LONG_BAN_AFTER,
 )
 
 

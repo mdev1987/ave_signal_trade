@@ -63,7 +63,7 @@ def fetch(days: int, sort: str, limit: int, min_win: float,
                 continue
             r.raise_for_status()
             return r.json().get("traders", [])
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             if attempt == 4:
                 print(f"  ! {days}d/{sort} failed: {e}", file=sys.stderr)
                 return []
@@ -81,7 +81,11 @@ def main() -> None:
     if not API_KEY:
         sys.exit("SOLTRACKER_API_KEY not set")
 
-    existing = json.load(open(WALLETS_FILE)) if os.path.exists(WALLETS_FILE) else {}
+    if os.path.exists(WALLETS_FILE):
+        with open(WALLETS_FILE) as f:
+            existing = json.load(f)
+    else:
+        existing = {}
     seen: dict[str, dict] = {}
     for days, sort in QUERIES:
         rows = fetch(days, sort, args.limit, args.min_win, args.min_trades,
@@ -113,7 +117,8 @@ def main() -> None:
                        "syms": [], **meta}
         added += 1
 
-    json.dump(existing, open(WALLETS_FILE, "w"), indent=1)
+    with open(WALLETS_FILE, "w") as f:
+        json.dump(existing, f, indent=1)
     print(f"watchlist: {len(existing)} wallets (+{added} new, "
           f"{len(seen)} discovered)")
 

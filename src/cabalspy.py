@@ -21,7 +21,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Callable, Awaitable, Any
+from collections.abc import Awaitable, Callable
 
 import websockets
 import websockets.exceptions
@@ -196,13 +196,13 @@ class CabalSpyClient:
             except Exception as exc:
                 self._reconnect_count += 1
                 exc_str = str(exc).lower()
-                # Rotate key on auth/timeout errors if we have multiple keys
-                if any(kw in exc_str for kw in ("401", "403", "unauthorized", "forbidden", "invalid api key")):
-                    if len(self._api_keys) > 1:
-                        self._exhausted_keys.add(self.api_key)
-                        self._next_key()
-                        backoff = _RECONNECT_MIN
-                        continue
+                # Rotate key on auth/timeout errors if we have multiple keys.
+                # Always sleep before retrying (no skip-sleep `continue`):
+                # instant rotation retries become a reconnect burst.
+                if (len(self._api_keys) > 1
+                        and any(kw in exc_str for kw in ("401", "403", "unauthorized", "forbidden", "invalid api key"))):
+                    self._exhausted_keys.add(self.api_key)
+                    self._next_key()
                 # Cap: after N consecutive failures, pause 5 min before retrying
                 if self._reconnect_count >= _MAX_RECONNECT_ATTEMPTS:
                     logger.warning("cabalspy paused after %d failures — retrying in %.0fs",

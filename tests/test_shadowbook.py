@@ -7,9 +7,9 @@ watchdog during quote outages.
 """
 
 import asyncio
+import pathlib
 import sys
 import time
-import pathlib
 from types import SimpleNamespace
 
 import pytest
@@ -19,7 +19,7 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "src"))
 
 import logs
-from main import ShadowBook  # noqa: E402
+from main import ShadowBook
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
 CA_A = "CA_A" + "x" * 40
@@ -89,11 +89,11 @@ class FakeJupiter:
 
 def _book(tmp_path, jup=None, **kw):
     ds = FakeDS()
-    params = dict(size_sol=0.05, retrace_pct=0.35, hard_stop_pct=0.25,
-                  state_file=tmp_path / "shadow.json",
-                  start_balance_sol=4.0, jupiter=jup or FakeJupiter(),
-                  max_positions=12, early_filter_window_s=30.0,
-                  reentry_cooldown_s=3600.0)
+    params = {"size_sol": 0.05, "retrace_pct": 0.35, "hard_stop_pct": 0.25,
+              "state_file": tmp_path / "shadow.json",
+              "start_balance_sol": 4.0, "jupiter": jup or FakeJupiter(),
+              "max_positions": 12, "early_filter_window_s": 30.0,
+              "reentry_cooldown_s": 3600.0}
     params.update(kw)
     return ShadowBook(ds, params.pop("size_sol"), params.pop("retrace_pct"),
                       params.pop("hard_stop_pct"), params.pop("state_file"),

@@ -19,11 +19,37 @@ import asyncio
 import logging
 import re
 import time
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 log = logging.getLogger(__name__)
 
 _CA_RE = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
+
+_B58_ALPHABET = frozenset(
+    "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+
+
+def extract_mint(text: str) -> tuple[str, int]:
+    """Extract a token mint CA from message text.
+
+    Returns (ca, ca_pos). Handles the `$SYMBOL<CA>` glued form found in
+    real channel posts (e.g. ``$Retire5EwSzz...U5pump``): a plain first-run
+    match swallows the symbol prefix and truncates the mint tail, producing
+    an invalid CA that fails every downstream lookup. When the base58 run
+    is longer than a mint, the real mint is its LAST 44 chars.
+    """
+    m = _CA_RE.search(text)
+    if not m:
+        return "", -1
+    start, end = m.start(), m.end()
+    run_end = end
+    while run_end < len(text) and text[run_end] in _B58_ALPHABET:
+        run_end += 1
+    run = text[start:run_end]
+    if len(run) > 44:
+        run = run[-44:]
+        start = run_end - 44
+    return run, start
 
 # GMGN message patterns
 _PRICE_RE = re.compile(r"[\$]?([\d.]+)")
@@ -81,17 +107,16 @@ def parse_tg_signal(text: str) -> dict | None:
     if not text:
         return None
 
-    # Extract CA (32-44 base58 chars)
-    ca_match = _CA_RE.search(text)
-    if not ca_match:
+    # Extract CA (glue-tolerant: `$SYMBOL<CA>` posts would otherwise yield
+    # an invalid CA with the symbol prefix swallowed in).
+    ca, ca_pos = extract_mint(text)
+    if not ca:
         return None
-    ca = ca_match.group(0)
 
     # Extract token name: look for $TOKEN_NAME(NAME) or $TOKEN pattern
     # Must appear BEFORE the CA (contract address is 32-44 base58 chars)
     name = ""
     sym = ""
-    ca_pos = ca_match.start()
     # Try $Symbol(Name) pattern before the CA
     name_match = re.search(r"\$([A-Za-z0-9_]+)\s*\(([^)]+)\)", text[:ca_pos])
     if name_match:
@@ -208,15 +233,15 @@ def parse_memetracker_signal(text: str) -> dict | None:
         return None
 
     # Extract CA (32-44 base58 chars)
-    ca_match = _CA_RE.search(text)
-    if not ca_match:
+    # Extract CA (glue-tolerant: `$SYMBOL<CA>` posts would otherwise yield
+    # an invalid CA with the symbol prefix swallowed in).
+    ca, ca_pos = extract_mint(text)
+    if not ca:
         return None
-    ca = ca_match.group(0)
 
     # Extract symbol: look for $SYMBOL before the CA
     sym = ""
     name = ""
-    ca_pos = ca_match.start()
     # Pattern: 🔔NAME $SYMBOL or 🔔$SYMBOL
     header = text[:ca_pos]
     sym_match = re.search(r"\$([A-Za-z0-9_]+)", header)
@@ -300,87 +325,6 @@ def parse_memetracker_signal(text: str) -> dict | None:
     }
 
 
-def parse_avesignalmonitor(text: str) -> dict | None:
-    """Parse a @AveSignalMonitor Solana buy signal.
-
-    Returns None if not Solana or no CA found.
-    Message format:
-        🪙 $TOKEN_NAME (from pump.fun) | 🔗 solana | CA: <ca> | ...
-        🔢 2nd Vibe Buy Signal | 💹 Max Pump: 8x | 💰 3 KOL Wallet Buy
-        🤑 Current MC: 34.75K | 💸 Total Buy 8.0309 SOL
-        🛗 Inflow | 🟢 Wallet1 Buy X SOL | 🟢 Wallet2 Buy Y SOL
-    """
-    if not text:
-        return None
-
-    # Must be Solana
-    if "🔗 solana" not in text.lower():
-        return None
-
-    # Must be a buy signal (🪙), not a moon alert (🚀)
-    if "🪙" not in text:
-        return None
-
-    # Extract CA
-    ca_match = _CA_RE.search(text)
-    if not ca_match:
-        return None
-    ca = ca_match.group(0)
-
-    # Extract symbol from 🪙 $SYMBOL
-    sym = ""
-    sym_match = re.search(r"🪙\s*\$([A-Za-z0-9_]+)", text)
-    if sym_match:
-        sym = sym_match.group(1)
-
-    # Extract name from header
-    name = ""
-    name_match = re.search(r"🪙\s*\$([A-Za-z0-9_]+)\s*\(([^)]+)\)", text)
-    if name_match:
-        sym = name_match.group(1)
-        name = name_match.group(2)
-
-    # Extract MC
-    mc = 0.0
-    mc_m = re.search(r"Current MC:\s*([\d.]+[KMB]?)", text)
-    if mc_m:
-        mc = _parse_value(mc_m.group(1))
-
-    # Extract KOL count
-    kol_count = 0
-    kol_m = re.search(r"(\d+)\s+(?:KOL|Smart)\s+Wallet\s+Buy", text)
-    if kol_m:
-        kol_count = int(kol_m.group(1))
-
-    # Extract total buy amount (SOL)
-    total_buy = 0.0
-    buy_m = re.search(r"Total Buy\s+([\d.]+)\s+SOL", text)
-    if buy_m:
-        total_buy = float(buy_m.group(1))
-
-    # Extract max pump estimate
-    max_pump = ""
-    pump_m = re.search(r"Max Pump:\s*([^\s|]+)", text)
-    if pump_m:
-        max_pump = pump_m.group(1)
-
-    # Count individual wallet inflows
-    inflow_count = len(re.findall(r"🟢.*?Buy\s+[\d.]+", text))
-
-    return {
-        "ca": ca,
-        "symbol": sym,
-        "name": name,
-        "mc": mc,
-        "kol_count": kol_count,
-        "total_buy_sol": total_buy,
-        "max_pump": max_pump,
-        "inflow_count": inflow_count,
-        "signal_type": "avesignalmonitor",
-        "raw_text": text[:500],
-    }
-
-
 class TgSignalFeed:
     """Real-time listener for @gmgnsignals Telegram channel.
 
@@ -451,12 +395,12 @@ class TgSignalFeed:
                 await self._listen()
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001
+            except Exception:
                 self._errors += 1
                 log.exception("tg signal feed: listener crashed — retrying in 30s")
                 try:
                     await asyncio.wait_for(self._stop.wait(), timeout=30.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
 
     async def _listen(self) -> None:
@@ -513,16 +457,16 @@ class TgSignalFeed:
             # Extract forum topic ID
             topic_id = get_topic_id(event.message)
             # Filter by allowed topics (if configured)
-            if self._allowed_topic_ids is not None:
-                if topic_id is None or topic_id not in self._allowed_topic_ids:
-                    return
+            if (self._allowed_topic_ids is not None
+                    and (topic_id is None or topic_id not in self._allowed_topic_ids)):
+                return
             try:
                 await self._handle_message(text, topic_id=topic_id,
                                            parser=cfg["parser"],
                                            callback=cfg["callback"],
                                            min_mc=cfg["min_mc"],
                                            min_liq=cfg["min_liq"])
-            except Exception:  # noqa: BLE001
+            except Exception:
                 self._errors += 1
                 log.exception("tg signal feed: handle failed")
 
@@ -537,7 +481,8 @@ class TgSignalFeed:
                     if hasattr(entity, 'megagroup') or hasattr(entity, 'broadcast'):
                         return int(f"-100{raw_id}"), entity
                     return raw_id, entity
-                except Exception:
+                except Exception as exc:
+                    log.debug("tg resolve %s failed, trying @-form: %s", ch_name, exc)
                     continue
             return None, None
 
@@ -569,7 +514,7 @@ class TgSignalFeed:
         # "connected" throughout).
         try:
             from telethon.tl.functions.channels import JoinChannelRequest
-        except Exception:  # noqa: BLE001
+        except Exception:
             JoinChannelRequest = None  # type: ignore[assignment]
         if JoinChannelRequest is not None:
             for ch_id, ent in entities.items():
@@ -589,7 +534,7 @@ class TgSignalFeed:
             cfg = resolved.get(ch_id) or {}
             try:
                 msgs = await client.get_messages(ent, limit=25)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.warning("tg signal feed: backfill failed for chat_id=%s", ch_id)
                 continue
             msgs = msgs or []
@@ -598,7 +543,8 @@ class TgSignalFeed:
             for m in sorted(msgs, key=lambda x: x.date):
                 try:
                     _age = _now - m.date.timestamp()
-                except Exception:  # noqa: BLE001
+                except Exception as exc:
+                    log.debug("tg backfill: bad timestamp, skipping: %s", exc)
                     continue
                 if _age > _backfill_max_age_s:
                     continue
@@ -608,7 +554,7 @@ class TgSignalFeed:
                         parser=cfg.get("parser"), callback=cfg.get("callback"),
                         min_mc=cfg.get("min_mc"), min_liq=cfg.get("min_liq"))
                     _fresh += 1
-                except Exception:  # noqa: BLE001
+                except Exception:
                     self._errors += 1
                     log.exception("tg signal feed: backfill handle failed")
             log.info("tg signal feed: backfill chat_id=%s fresh=%d/%d",
@@ -628,12 +574,12 @@ class TgSignalFeed:
         async def _safe_listen():
             try:
                 await client.run_until_disconnected()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.warning("tg signal feed: run_until_disconnected raised — will reconnect")
 
         self._connected = True
         try:
-            done, pending = await asyncio.wait(
+            _done, pending = await asyncio.wait(
                 [
                     asyncio.create_task(_safe_listen()),
                     asyncio.create_task(_run()),
@@ -651,8 +597,8 @@ class TgSignalFeed:
 
         try:
             await client.disconnect()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:
+            log.debug("tg disconnect failed (already closed?): %s", exc)
 
     async def _handle_message(self, text: str, topic_id: int | None = None,
                                parser: Callable | None = None,

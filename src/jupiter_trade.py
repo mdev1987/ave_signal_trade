@@ -40,10 +40,11 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
+import aiohttp
 import httpx
+from solana_rpc_resilient import ResilientRPCClient
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
-from solana_rpc_resilient import ResilientRPCClient, Ok, Err
 
 import config
 import logs
@@ -371,7 +372,7 @@ class JupiterSwap:
         try:
             return bool(self._local_ban_list
                         and self._local_ban_list.is_banned(mint))
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
 
     async def token_audit(self, mint: str) -> dict[str, Any]:
@@ -450,9 +451,9 @@ class JupiterSwap:
                 "net_buyers_5m": _fi(s5.get("numNetBuyers")),
                 "traders_5m": _fi(s5.get("numTraders")),
             })
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.debug("jupiter token audit timed out %s", mint[:8])
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.debug("jupiter token audit failed %s: %s", mint[:8], exc)
         if result.get("available"):
             self._audit_cache[mint] = (time.monotonic(), result)
@@ -503,7 +504,7 @@ class JupiterSwap:
             bal = float(result.get("value", 0)) / 1e9
             self._live_balance_sol = bal
             return bal
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning("balance_sol failed: %s", e)
             return None
 
@@ -544,7 +545,7 @@ class JupiterSwap:
                     dec = int(raw_dec)
                     self._decimals_cache[mint] = dec
                     return dec
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             # 429s during quota storms are routine — debug only so they don't
             # spam the log on every entry attempt; real errors still warn.
             if "429" in str(e):
@@ -577,7 +578,7 @@ class JupiterSwap:
                 raw = parsed.get("info", {}).get("tokenAmount", {}).get("amount")
                 if raw is not None:
                     return int(raw)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning("token_balance %s failed: %s", mint, e)
         return None
 
@@ -597,7 +598,7 @@ class JupiterSwap:
             await self._quote_slot()
             order = await self._order(mint, BASE_MINT, amount_raw, slippage_bps)
             return int(order.get("outAmount") or order.get("actualOutAmount") or 0)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning("paper_sell_proceeds %s failed: %s", mint, e)
             return None
 
@@ -692,14 +693,13 @@ class JupiterSwap:
                     await asyncio.sleep(1.0 * (attempt + 1))
                     continue
                 raise jexc from exc
-            if resp.status_code == 503 or (500 <= resp.status_code < 600):
-                if _retry_transient and attempt < max_attempts - 1:
-                    last_exc = JupiterError(
-                        f"order HTTP {resp.status_code}: {resp.text[:200]}",
-                        status=resp.status_code,
-                    )
-                    await asyncio.sleep(1.0 * (attempt + 1))
-                    continue
+            if (resp.status_code == 503 or 500 <= resp.status_code < 600) and _retry_transient and attempt < max_attempts - 1:
+                last_exc = JupiterError(
+                    f"order HTTP {resp.status_code}: {resp.text[:200]}",
+                    status=resp.status_code,
+                )
+                await asyncio.sleep(1.0 * (attempt + 1))
+                continue
             if resp.status_code != 200:
                 raise JupiterError(
                     f"order HTTP {resp.status_code}: {resp.text[:200]}",
@@ -1024,8 +1024,8 @@ class JupiterSwap:
                         bal_lamports, self._live_balance_sol,
                     )
                     return QuoteResult(False, None, amount_raw, 0, 0.0, 0, 0.0, reason)
-            except Exception:
-                pass  # balance check is best-effort; fall through to Jupiter
+            except Exception as exc:
+                log.debug("balance check best-effort failed, falling through: %s", exc)
         await self._quote_slot(min_spacing)
         t0 = time.monotonic()
         try:
@@ -1538,26 +1538,28 @@ class JupiterSwap:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    data = await resp.json()
-                    if resp.status != 200:
-                        error = data.get("error", data.get("message", f"HTTP {resp.status}"))
-                        log.warning("pumpapi buy failed %s: %s", mint[:10], error)
-                        logs.journal("pumpapi_buy_failed", mint=mint, error=error,
-                                     amount_sol=amount_sol)
-                        return SwapResult(False, "", 0, 0, f"pumpapi: {error}")
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp,
+            ):
+                data = await resp.json()
+                if resp.status != 200:
+                    error = data.get("error", data.get("message", f"HTTP {resp.status}"))
+                    log.warning("pumpapi buy failed %s: %s", mint[:10], error)
+                    logs.journal("pumpapi_buy_failed", mint=mint, error=error,
+                                 amount_sol=amount_sol)
+                    return SwapResult(False, "", 0, 0, f"pumpapi: {error}")
 
-                    signature = data.get("signature", "")
-                    confirmed = data.get("confirmed", False)
-                    log.info("pumpapi buy %s: sig=%s confirmed=%s",
-                             mint[:10], signature[:16], confirmed)
-                    logs.journal("pumpapi_buy", mint=mint, signature=signature,
-                                 amount_sol=amount_sol, confirmed=confirmed)
-                    return SwapResult(
-                        True, signature, 0, amount_sol,
-                        f"pumpapi{'_confirmed' if confirmed else '_pending'}",
-                    )
+                signature = data.get("signature", "")
+                confirmed = data.get("confirmed", False)
+                log.info("pumpapi buy %s: sig=%s confirmed=%s",
+                         mint[:10], signature[:16], confirmed)
+                logs.journal("pumpapi_buy", mint=mint, signature=signature,
+                             amount_sol=amount_sol, confirmed=confirmed)
+                return SwapResult(
+                    True, signature, 0, amount_sol,
+                    f"pumpapi{'_confirmed' if confirmed else '_pending'}",
+                )
         except Exception as e:
             log.warning("pumpapi buy error %s: %s", mint[:10], e)
             logs.journal("pumpapi_buy_error", mint=mint, error=str(e))
@@ -1590,25 +1592,27 @@ class JupiterSwap:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    data = await resp.json()
-                    if resp.status != 200:
-                        error = data.get("error", data.get("message", f"HTTP {resp.status}"))
-                        log.warning("pumpapi sell failed %s: %s", mint[:10], error)
-                        logs.journal("pumpapi_sell_failed", mint=mint, error=error)
-                        return SwapResult(False, "", 0, 0, f"pumpapi: {error}")
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp,
+            ):
+                data = await resp.json()
+                if resp.status != 200:
+                    error = data.get("error", data.get("message", f"HTTP {resp.status}"))
+                    log.warning("pumpapi sell failed %s: %s", mint[:10], error)
+                    logs.journal("pumpapi_sell_failed", mint=mint, error=error)
+                    return SwapResult(False, "", 0, 0, f"pumpapi: {error}")
 
-                    signature = data.get("signature", "")
-                    confirmed = data.get("confirmed", False)
-                    log.info("pumpapi sell %s: sig=%s confirmed=%s",
-                             mint[:10], signature[:16], confirmed)
-                    logs.journal("pumpapi_sell", mint=mint, signature=signature,
-                                 confirmed=confirmed)
-                    return SwapResult(
-                        True, signature, 0, 0,
-                        f"pumpapi{'_confirmed' if confirmed else '_pending'}",
-                    )
+                signature = data.get("signature", "")
+                confirmed = data.get("confirmed", False)
+                log.info("pumpapi sell %s: sig=%s confirmed=%s",
+                         mint[:10], signature[:16], confirmed)
+                logs.journal("pumpapi_sell", mint=mint, signature=signature,
+                             confirmed=confirmed)
+                return SwapResult(
+                    True, signature, 0, 0,
+                    f"pumpapi{'_confirmed' if confirmed else '_pending'}",
+                )
         except Exception as e:
             log.warning("pumpapi sell error %s: %s", mint[:10], e)
             logs.journal("pumpapi_sell_error", mint=mint, error=str(e))

@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -78,8 +78,8 @@ class MadeOnSolClient:
             self._task = None
         try:
             await self._client.aclose()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:
+            logger.debug("madeonsol close failed: %s", exc)
 
     async def _loop(self) -> None:
         while not self._stop:
@@ -87,7 +87,7 @@ class MadeOnSolClient:
                 await self._poll_once()
             except asyncio.CancelledError:
                 break
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug("madeonsol poll failed: %s", exc)
             wait = self.poll_s + self._backoff_s
             self._backoff_s = 0.0
@@ -172,5 +172,5 @@ class MadeOnSolClient:
             if r.status_code != 200:
                 return None
             return r.json()
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None

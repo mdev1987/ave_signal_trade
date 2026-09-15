@@ -26,3 +26,19 @@ dependencies = [
 line-length = 100
 
 [tool.ruff.lint]
+# NOTE on BLE001 (blind `except Exception`): this codebase treats broad
+# catches as load-bearing safety architecture, not tech debt. Every entry
+# gate (DBotX, RugCheck, Helius, Vybe, CabalSpy, Jupiter audit) and every
+# feed loop is intentionally fail-open — an unexpected exception type
+# (malformed payload KeyError, transient AttributeError, etc.) must degrade
+# to "allow/skip and continue", never crash the gate or kill the 24/7 loop.
+# Narrowing these catches would convert unfamiliar failures into outages.
+# Companion rule: S110/S112 stay enabled, so every swallowed exception is
+# still LOGGED (debug or higher) — broad catches are allowed, silence is not.
+ignore = ["BLE001"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]

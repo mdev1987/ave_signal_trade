@@ -11,8 +11,8 @@ import asyncio
 import logging
 from typing import Any
 
-from dexscreener import DexScreenerClient as _DsClient
 from dexscreener import DexPairData
+from dexscreener import DexScreenerClient as _DsClient
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,8 @@ class DexScreenerClient:
     async def close(self) -> None:
         try:
             await self._http.aclose()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:
+            logger.debug("dexscreener close failed: %s", exc)
         if self._started:
             await self._client.shutdown()
             self._started = False
@@ -120,10 +120,10 @@ class DexScreenerClient:
 
             return self._pair_to_dict(best)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("dexscreener token-pairs timed out %s", ca[:8])
             return None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("dexscreener token-pairs failed %s: %s %s", ca[:8], type(e).__name__, e)
             return None
 
@@ -185,7 +185,7 @@ class DexScreenerClient:
             if not isinstance(data, list):
                 return []
             return data[:limit]
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("dexscreener token-boosts failed: %s", e)
             return []
 
@@ -206,7 +206,7 @@ class DexScreenerClient:
             if not isinstance(data, list):
                 return []
             return data[:10]
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("dexscreener trending-metas failed: %s", e)
             return []
 
@@ -226,7 +226,7 @@ class DexScreenerClient:
                 return []
             data = r.json()
             return data if isinstance(data, list) else []
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("dexscreener token-orders failed for %s: %s", token_address[:8], e)
             return []
 
@@ -248,6 +248,6 @@ class DexScreenerClient:
             pairs = data.get("pairs") or []
             return [self._dict_to_normalized(p) for p in pairs[:limit]
                     if isinstance(p, dict)]
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug("dexscreener search-pairs failed for %s: %s", query, e)
             return []

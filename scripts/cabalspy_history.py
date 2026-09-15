@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import collections
 import json
 import statistics
 import sys
@@ -24,8 +23,8 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "src"))
 
-import config as cfg  # noqa: E402
-from cabalspy_rest import CabalSpyREST, parse_api_date  # noqa: E402
+import config as cfg
+from cabalspy_rest import CabalSpyREST, parse_api_date
 
 
 async def main() -> int:

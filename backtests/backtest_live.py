@@ -19,11 +19,11 @@ from pathlib import Path
 
 import httpx
 
-
 # ── analyze mode ─────────────────────────────────────────────────────────────
 
 def analyze_trades(book_path: str = "shadow_book.json"):
-    book = json.load(open(book_path))
+    with open(book_path) as f:
+        book = json.load(f)
     closed = book.get("closed", [])
     open_pos = book.get("open", {})
     balance = book.get("balance_sol", 0)
@@ -58,7 +58,7 @@ def analyze_trades(book_path: str = "shadow_book.json"):
     by_source: dict[str, list] = defaultdict(list)
     for t in closed:
         by_source[t.get("source", "unknown")].append(t)
-    print(f"\n  BY SOURCE:")
+    print("\n  BY SOURCE:")
     for src, trades in sorted(by_source.items(), key=lambda x: -sum(t["pnl_sol"] for t in x[1])):
         pnl = sum(t["pnl_sol"] for t in trades)
         w = [t for t in trades if t["pnl_sol"] > 0]
@@ -70,7 +70,7 @@ def analyze_trades(book_path: str = "shadow_book.json"):
     by_reason: dict[str, list] = defaultdict(list)
     for t in closed:
         by_reason[t.get("reason", "unknown")].append(t)
-    print(f"\n  BY EXIT REASON:")
+    print("\n  BY EXIT REASON:")
     for reason, trades in sorted(by_reason.items(), key=lambda x: -len(x[1])):
         pnl = sum(t["pnl_sol"] for t in trades)
         print(f"    {reason.ljust(16)}: {len(trades):2d} trades, PnL={pnl:+.4f}")
@@ -93,7 +93,7 @@ def analyze_trades(book_path: str = "shadow_book.json"):
             buckets["3.0-5.0"].append(t)
         else:
             buckets["5.0+"].append(t)
-    print(f"\n  BY SCORE:")
+    print("\n  BY SCORE:")
     for bucket, trades in buckets.items():
         if trades:
             pnl = sum(t["pnl_sol"] for t in trades)
@@ -102,8 +102,8 @@ def analyze_trades(book_path: str = "shadow_book.json"):
                   f"({100*len(w)/len(trades):.0f}%), PnL={pnl:+.4f}")
 
     # All trades
-    print(f"\n  ALL TRADES:")
-    for t in sorted(closed, key=lambda x: x["ts"] if "ts" in x else 0):
+    print("\n  ALL TRADES:")
+    for t in sorted(closed, key=lambda x: x.get("ts", 0)):
         sc = score_map.get(t["ca"], 0)
         print(f"    {t['symbol']:12} {t.get('source','?'):12} "
               f"score={sc:4.1f} mult={t['mult']:.3f} "
@@ -117,21 +117,22 @@ def analyze_trades(book_path: str = "shadow_book.json"):
         for w in t.get("wallets", []):
             wallet_pnl[w[:10]] += t["pnl_sol"] / max(1, len(t.get("wallets", [])))
             wallet_count[w[:10]] += 1
-    print(f"\n  TOP WALLETS (by shared PnL):")
+    print("\n  TOP WALLETS (by shared PnL):")
     for w, pnl in sorted(wallet_pnl.items(), key=lambda x: -x[1])[:10]:
         print(f"    {w}: {pnl:+.4f} SOL ({wallet_count[w]} trades)")
 
 
 def _load_journal(path: str = "bot_logs/journal.json") -> list[dict]:
     entries = []
-    for line in Path(path).open():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            pass
+    with Path(path).open() as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
     return entries
 
 
@@ -209,7 +210,8 @@ def simulate_signals(
     print(f"Consensus signals: {len(signals)}")
 
     # Already-traded CAs (skip)
-    book = json.load(open("shadow_book.json"))
+    with open("shadow_book.json") as f:
+        book = json.load(f)
     traded_cas = set(book.get("open", {}).keys())
     traded_cas |= {t["ca"] for t in book.get("closed", [])}
 
@@ -273,7 +275,7 @@ def simulate_signals(
         return
 
     # Score distribution
-    print(f"\n  SCORE DISTRIBUTION:")
+    print("\n  SCORE DISTRIBUTION:")
     for r in sorted(results, key=lambda x: -x["score"]):
         print(f"    {r['ca'][:10]} score={r['score']:.1f} "
               f"n={r['n_wallets']} liq=${r['liq_usd']:.0f} "
@@ -291,7 +293,7 @@ def simulate_signals(
             liq_buckets["$5k-20k"].append(r)
         else:
             liq_buckets["$20k+"].append(r)
-    print(f"\n  LIQUIDITY DISTRIBUTION:")
+    print("\n  LIQUIDITY DISTRIBUTION:")
     for bucket, trades in liq_buckets.items():
         if trades:
             avg_h1 = sum(t["h1_pct"] for t in trades) / len(trades)
@@ -299,7 +301,7 @@ def simulate_signals(
 
     # Price action summary
     h1_values = [r["h1_pct"] for r in results]
-    print(f"\n  PRICE ACTION (1h):")
+    print("\n  PRICE ACTION (1h):")
     print(f"    Mean:   {sum(h1_values)/len(h1_values):+.1f}%")
     print(f"    Median: {sorted(h1_values)[len(h1_values)//2]:+.1f}%")
     print(f"    Min:    {min(h1_values):+.1f}%")

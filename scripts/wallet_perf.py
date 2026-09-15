@@ -18,11 +18,9 @@ import sys
 import time
 from pathlib import Path
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:  # noqa: BLE001
-    pass
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def _load_env():
@@ -83,7 +81,7 @@ def fetch(addr: str, retries: int = 8) -> dict:
                 continue
             rec["error"] = f"HTTP {r.status_code}: {r.text[:160]}"
             return rec
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             rec["error"] = str(exc)[:200]
             time.sleep(2)
     return rec

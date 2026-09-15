@@ -27,8 +27,8 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Callable, Awaitable
 
 import websockets
 import websockets.exceptions
@@ -507,7 +507,7 @@ class HeliusWS:
 
             logger.info("helius ws transactionSubscribe confirmed")
             return True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
 
     async def _subscribe_logs(self, ws) -> None:
@@ -536,7 +536,6 @@ class HeliusWS:
             return
 
         # The transaction payload may be nested
-        meta = tx_data.get("meta") or {}
         message = (tx_data.get("transaction") or {}).get("message") or {}
         account_keys = message.get("accountKeys") or []
 
@@ -567,7 +566,7 @@ class HeliusWS:
         This is a no-op on free tier — transactionSubscribe is required
         for proper wallet filtering.
         """
-        pass  # logsSubscribe cannot filter by wallet; use transactionSubscribe
+        # logsSubscribe cannot filter by wallet; use transactionSubscribe
 
     async def _fetch_and_parse_tx(self, signature: str, wallet: str) -> dict | None:
         """Fetch a full transaction via HTTP RPC and parse it for buy events."""
@@ -585,15 +584,17 @@ class HeliusWS:
             ],
         }
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(self._rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status != 200:
-                        return None
-                    data = await resp.json()
-                    tx_data = data.get("result")
-                    if not tx_data:
-                        return None
-                    return parse_helius_tx(wallet, {"transaction": tx_data.get("transaction", {}), "blockTime": tx_data.get("blockTime")})
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(self._rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp,
+            ):
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                tx_data = data.get("result")
+                if not tx_data:
+                    return None
+                return parse_helius_tx(wallet, {"transaction": tx_data.get("transaction", {}), "blockTime": tx_data.get("blockTime")})
         except Exception as exc:
             logger.debug("helius ws HTTP fetch failed for %s: %s", signature[:16], exc)
             return None

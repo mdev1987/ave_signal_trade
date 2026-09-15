@@ -4,17 +4,19 @@ pair scoring, MadeOnSol footprint.
 Covers the live pipeline only — Tatum push was removed 2026-09-12.
 """
 
-import sys
 import pathlib
+import sys
+
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "src"))
 
-from watcher import parse_shyft_buys, WSOL  # noqa: E402 (Shyft polling fallback)
-from helius_ws import parse_helius_tx, WSOL as H_WSOL  # noqa: E402 (primary WS path)
-from pair_perf import pair_multiplier  # noqa: E402 (live scoring)
-from madeonsol import MadeOnSolClient  # noqa: E402 (validator, in-memory)
-from main import build_status        # noqa: E402
+from helius_ws import WSOL as H_WSOL
+from helius_ws import parse_helius_tx
+from madeonsol import MadeOnSolClient
+from main import build_status
+from pair_perf import pair_multiplier
+from watcher import WSOL, parse_shyft_buys
 
 assert WSOL == H_WSOL == "So11111111111111111111111111111111111111112"
 
@@ -25,7 +27,8 @@ def test_pumpapi_paper_mode_no_crash():
     Killed every gate-passing open with AttributeError (ZLOOP, LAUNCH).
     """
     import asyncio
-    from jupiter_trade import JupiterSwap  # noqa: E402
+
+    from jupiter_trade import JupiterSwap
     j = JupiterSwap(dry_run=True)
     assert j._pumpapi_enabled() in (True, False)  # must not raise
     res = asyncio.run(j.buy_via_pumpapi(MINT, 0.025))

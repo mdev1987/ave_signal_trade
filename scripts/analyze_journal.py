@@ -56,7 +56,7 @@ def load_closes(book_path: str | None) -> list[dict]:
 
 
 def fmt_ts(ts: float) -> str:
-    return datetime.datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
+    return datetime.datetime.fromtimestamp(ts, tz=datetime.UTC).strftime("%m-%d %H:%M")
 
 
 def expectancy_row(trades: list[dict], label: str) -> None:

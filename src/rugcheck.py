@@ -187,7 +187,7 @@ class RugCheckClient:
 
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning("rugcheck timeout for %s", mint[:8])
             self._stats["errors"] += 1
             return None
@@ -215,6 +215,4 @@ class RugCheckClient:
             return False
         if self._reject_danger and result.has_danger:
             return False
-        if result.score_normalised > self._max_score:
-            return False
-        return True
+        return result.score_normalised <= self._max_score

@@ -55,10 +55,10 @@ class DexPaprikaClient:
                 logger.debug("dexpaprika %s HTTP %s", path, r.status_code)
                 return None
             return r.json()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("dexpaprika %s timed out", path)
             return None
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("dexpaprika %s failed: %s", path, exc)
             return None
 
@@ -144,7 +144,6 @@ class DexPaprikaClient:
         # Extract token info from pool
         tokens = pool.get("tokens") or []
         base_token = tokens[0] if tokens else {}
-        quote_token = tokens[1] if len(tokens) > 1 else {}
 
         return {
             "symbol": base_token.get("symbol") or pool.get("name"),

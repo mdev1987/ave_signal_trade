@@ -30,9 +30,10 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 
@@ -86,7 +87,7 @@ class DexPaprikaClient:
                 return None
             r.raise_for_status()
             return r.json()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("dexpaprika GET %s failed: %s", path, e)
             return None
 
@@ -318,7 +319,7 @@ class WalletDiscovery:
                      symbols=",".join(c.symbol for c in cands[:12]))
         return cands
 
-    async def _enrich_pumped(self, cands: list["CandidateToken"]) -> None:
+    async def _enrich_pumped(self, cands: list[CandidateToken]) -> None:
         """Mark candidates as pumped from their actual 24h price change.
 
         The details endpoint exposes ``price_change_percentage_24h`` (a true
@@ -332,7 +333,8 @@ class WalletDiscovery:
                 continue
             try:
                 d = await self.paprika.get_token_details(self.chain, c.mint)
-            except Exception:
+            except Exception as exc:
+                logger.debug("discovery enrich failed for %s: %s", c.mint[:10], exc)
                 continue
             if not d:
                 continue

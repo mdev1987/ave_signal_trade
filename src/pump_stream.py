@@ -17,7 +17,7 @@ import json
 import logging
 import random
 import time
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 import websockets
 
@@ -68,7 +68,7 @@ class PumpApiStream:
                 backoff = 1.0  # reset on clean exit
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:                       # noqa: BLE001
+            except Exception as exc:
                 self._connected = False
                 self._reconnect_count += 1
                 log.warning("pumpapi stream dropped: %s (reconnect #%d in %.0fs)",
@@ -92,7 +92,8 @@ class PumpApiStream:
                     break
                 try:
                     ev = json.loads(message)
-                except Exception:
+                except Exception as exc:
+                    log.debug("pumpapi malformed message skipped: %s", exc)
                     continue
                 action = ev.get("action")
                 if action == "create":
@@ -143,8 +144,8 @@ class PumpApiStream:
                 j = r.json()
                 self._sol = float(j["solana"]["usd"])
                 self._sol_t = now
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("coingecko SOL price refresh failed: %s", exc)
         return self._sol
 
     def stop(self) -> None:

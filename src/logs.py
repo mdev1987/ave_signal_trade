@@ -108,7 +108,7 @@ def setup_logging(level: int = logging.INFO, log_file: str | None = None) -> Non
         settings = config.load_settings()
         global _REDACT
         _REDACT = _collect_secrets(settings)
-    except Exception:  # noqa: BLE001
+    except Exception:
         _REDACT = ()
 
     fmt = _RedactFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")

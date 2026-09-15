@@ -21,8 +21,7 @@ Key rotation skips credit-exhausted keys (key1 in .env is dead as of
 from __future__ import annotations
 
 import logging
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -36,12 +35,10 @@ def parse_api_date(s: str) -> datetime:
     """Parse a CabalSpy timestamp as UTC (never local time)."""
     s = (s or "").strip()
     try:
-        if s.endswith("Z"):
-            return datetime.fromisoformat(s.replace("Z", "+00:00"))
         dt = datetime.fromisoformat(s)
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     except ValueError:
-        return datetime.fromtimestamp(0, tz=timezone.utc)
+        return datetime.fromtimestamp(0, tz=UTC)
 
 
 class CabalSpyREST:
@@ -65,8 +62,8 @@ class CabalSpyREST:
     async def close(self) -> None:
         try:
             await self._client.aclose()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:
+            logger.debug("cabalspy_rest close failed: %s", exc)
 
     @property
     def live_keys(self) -> int:
@@ -92,7 +89,7 @@ class CabalSpyREST:
                     params={**params, "api_key": key},
                     headers={"accept": "application/json"},
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug("cabalspy REST %s failed: %s", path, exc)
                 return None
             # Rate-limit visibility (SDK exposes last_rate_limit; we log it)
@@ -109,7 +106,7 @@ class CabalSpyREST:
                 # instead of failing the call.
                 try:
                     data = r.json()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     data = None
                 code = ((data or {}).get("error") or {}).get("code", "")
                 if code == "insufficient_credits":
@@ -122,7 +119,7 @@ class CabalSpyREST:
                 return None
             try:
                 data = r.json()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 return None
             if isinstance(data, dict) and data.get("success") is False:
                 err = (data.get("error") or {})

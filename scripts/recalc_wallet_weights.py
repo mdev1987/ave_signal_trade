@@ -56,8 +56,8 @@ def recalc() -> None:
                         existing[addr] = rec
             elif isinstance(data, dict):
                 existing = data
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"skip corrupt row: {exc}", file=sys.stderr)
 
     # Merge: update win_rate, trades, pnl from journal stats
     updated = 0

@@ -15,8 +15,8 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "src"))
 
-import config as cfg  # noqa: E402
-from cabalspy_rest import CabalSpyREST  # noqa: E402
+import config as cfg
+from cabalspy_rest import CabalSpyREST
 
 
 async def main() -> int:
