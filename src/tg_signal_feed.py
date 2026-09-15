@@ -426,12 +426,15 @@ class TgSignalFeed:
 
         # Health
         self._started_at: float = 0.0
+        self._connected: bool = False  # True only while TG client is live
         self._messages_received: int = 0
         self._signals_parsed: int = 0
         self._signals_forwarded: int = 0
         self._signals_filtered: int = 0
+        self._signals_dup: int = 0  # repeat CAs dropped by dedup
         self._errors: int = 0
         self._last_event_at: float = 0.0
+        self._last_prune_at: float = 0.0
 
     async def run(self) -> None:
         """Main listener loop. Runs until ``stop()``."""
@@ -628,13 +631,17 @@ class TgSignalFeed:
             except Exception:  # noqa: BLE001
                 log.warning("tg signal feed: run_until_disconnected raised — will reconnect")
 
-        done, pending = await asyncio.wait(
-            [
-                asyncio.create_task(_safe_listen()),
-                asyncio.create_task(_run()),
-            ],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+        self._connected = True
+        try:
+            done, pending = await asyncio.wait(
+                [
+                    asyncio.create_task(_safe_listen()),
+                    asyncio.create_task(_run()),
+                ],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            self._connected = False
         for t in pending:
             t.cancel()
             try:
@@ -668,12 +675,15 @@ class TgSignalFeed:
         self._signals_parsed += 1
         ca = signal["ca"]
         now = time.time()
+        self._prune_seen(now)
 
-        # Dedup
+        # Dedup (repeat alerts for a CA we've already actioned)
         if ca in self._seen:
+            self._signals_dup += 1
+            log.debug("tg signal: duplicate %s (seen %ds ago)",
+                      ca[:8], now - self._seen[ca])
             return
         self._seen[ca] = now
-        self._prune_seen(now)
 
         # Quality gates — reject unknown (0) or below minimum
         sig_mc = signal.get("mc", 0)
@@ -714,8 +724,15 @@ class TgSignalFeed:
             log.exception("tg signal: on_signal failed for %s", ca[:8])
 
     def _prune_seen(self, now: float) -> None:
-        """Drop dedup entries older than TTL."""
-        if len(self._seen) > 10_000:
+        """Drop dedup entries older than TTL.
+
+        Runs at most every 5 min (plus an emergency cap at 10k entries):
+        the old code only pruned past 10k, so entries effectively never
+        expired and the same CA stayed muted for the whole process life
+        instead of ``dedup_ttl_s``.
+        """
+        if len(self._seen) > 10_000 or now - self._last_prune_at > 300.0:
+            self._last_prune_at = now
             cutoff = now - self._dedup_ttl_s
             stale = [ca for ca, ts in self._seen.items() if ts < cutoff]
             for ca in stale:
@@ -723,12 +740,16 @@ class TgSignalFeed:
 
     def health(self) -> dict:
         return {
-            "connected": self._started_at > 0 and not self._stop.is_set(),
+            # NOTE: was ``started and not stopped`` — always True after
+            # boot, so the status card showed green through hours of TG
+            # outage. Now tracks the live client session.
+            "connected": self._connected and not self._stop.is_set(),
             "uptime_s": (time.time() - self._started_at) if self._started_at else 0,
             "messages": self._messages_received,
             "parsed": self._signals_parsed,
             "forwarded": self._signals_forwarded,
             "filtered": self._signals_filtered,
+            "duplicates": self._signals_dup,
             "errors": self._errors,
             "last_event_at": self._last_event_at,
         }

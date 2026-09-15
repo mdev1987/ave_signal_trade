@@ -12,15 +12,31 @@ import time
 import pathlib
 from types import SimpleNamespace
 
+import pytest
+
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "src"))
 
+import logs
 from main import ShadowBook  # noqa: E402
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
 CA_A = "CA_A" + "x" * 40
 CA_B = "CA_B" + "x" * 40
+
+
+@pytest.fixture(autouse=True)
+def _isolate_journal(tmp_path, monkeypatch):
+    """Redirect the production journal for every test in this file.
+
+    ShadowBook journals opens/closes via the module-global
+    ``logs.JOURNAL_LOG``; runs on 2026-09-14 leaked synthetic CA_Axxx
+    rows into bot_logs/journal.json, polluting offline paper-stats
+    analysis. Point it at a tmp file instead (still exercises the real
+    journal code path).
+    """
+    monkeypatch.setattr(logs, "JOURNAL_LOG", tmp_path / "journal.json")
 
 
 class FakeDS:
