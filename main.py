@@ -1774,6 +1774,7 @@ async def _run_watch(s: cfg.Settings) -> int:
             # the pullback deferral (confirm-on-hold) instead of being
             # hard-skipped by gates that read missing data as 0.
             _nohist = pc.get("m5") is None and pc.get("h1") is None
+            _bp_ok, _bp_pct = buy_pressure_ok(snap, s.open_min_buy_pressure)
             # Weak pair -> require strong confirmation: every AVAILABLE timeframe
             # positive (m5>0 & h1>0 at minimum) before it may open at all.
             # An empty book (no price history) is NOT confirmation — `all()`
@@ -1832,17 +1833,25 @@ async def _run_watch(s: cfg.Settings) -> int:
                 # Dead-pool filter: liquidity without humans. Missing txn
                 # data fails open (fresh/unindexed tokens keep flowing).
                 reason = f"skip:dead_pool(txns_m5={snap.get('txns_m5')})"
+            elif not _bp_ok:
+                # CVD-lite: sells-dominated flow at entry = distribution into
+                # strength (someone exiting while we would enter).
+                reason = f"skip:distribution(buy_pct={_bp_pct:.2f})"
             elif (pc.get("h1") or 0) < s.open_min_h1_pct and not _nohist:
                 reason = f"skip:no_momentum(h1={pc.get('h1')})"
             elif (pc.get("m5") or 0) < s.open_max_m5_dump_pct and not _nohist:
                 reason = f"skip:dumping(m5={pc.get('m5')})"
             elif (pc.get("m5") or 0) < s.open_min_m5_pct and not _nohist:
                 reason = f"skip:weak_m5(m5={pc.get('m5')})"
-            elif _nohist or (pc.get("m5") or 0) > s.pullback_m5_pct:
+            elif _nohist or (pc.get("m5") or 0) > s.pullback_m5_pct \
+                    or (pc.get("h1") or 0) > s.pullback_h1_pct:
                 # Pullback entry: candle already vertical — don't chase.
                 # Defer; a later signal in [wait, expire] may open if price
                 # held within tol of the defer price. Falls through to the
                 # normal open branch below only on a confirmed hold.
+                # h1 leg (2026-09-16): an extended hourly run (+150%/h) is
+                # the same chase as a vertical m5 — Noiz opened at h1=+258%
+                # for -0.018 while no winner ever entered above h1=+63%.
                 _now_pb = time.time()
                 _ref = snap.get("price_usd") or 0
                 _pend = _pullback.get(ca)
@@ -1856,7 +1865,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                         and _ref / _pend["ref"] >= 1.0 - s.pullback_tol_pct / 100.0):
                     _pullback.pop(ca, None)
                     logs.journal("pullback_hold", ca=ca, symbol=sym,
-                                 m5=pc.get("m5"), held=round(_ref / _pend["ref"], 4),
+                                 m5=pc.get("m5"), h1=pc.get("h1"),
+                                 held=round(_ref / _pend["ref"], 4),
                                  wait_s=int(_age), source=source)
                     last_open["t"] = time.time()
                     last_open["score"] = score
@@ -1874,18 +1884,18 @@ async def _run_watch(s: cfg.Settings) -> int:
                     return
                 if _pend and _age > s.pullback_expire_s:
                     _pullback.pop(ca, None)
-                    reason = f"skip:pullback_expired(m5={pc.get('m5')})"
+                    reason = f"skip:pullback_expired(m5={pc.get('m5')},h1={pc.get('h1')})"
                 elif _pend and _ref > 0 and (_pend.get("ref") or 0) > 0:
                     _held = _ref / _pend["ref"]
                     if _held < 1.0 - s.pullback_tol_pct / 100.0:
                         _pullback.pop(ca, None)
                         reason = f"skip:pullback_failed(held={_held:.3f})"
                     else:
-                        reason = f"skip:vertical_hold(m5={pc.get('m5')},wait={int(_age)}s)"
+                        reason = f"skip:vertical_hold(m5={pc.get('m5')},h1={pc.get('h1')},wait={int(_age)}s)"
                 else:
                     if _ref > 0:
                         _pullback[ca] = {"t": _now_pb, "ref": _ref}
-                    reason = f"skip:vertical_hold(m5={pc.get('m5')})"
+                    reason = f"skip:vertical_hold(m5={pc.get('m5')},h1={pc.get('h1')})"
             else:
                 last_open["t"] = time.time()
                 last_open["score"] = score
@@ -2287,6 +2297,25 @@ def _affordable_size(balance_sol: float, want_sol: float,
         return affordable, (f"downsized {want_sol:.4f} -> {affordable:.4f} SOL "
                             f"(wallet {balance_sol:.4f} SOL incl rent+fees buffer)")
     return want_sol, ""
+
+
+def buy_pressure_ok(snap: dict | None, threshold: float) -> tuple[bool, float]:
+    """CVD-lite distribution check for the entry gate.
+
+    Returns (ok, buy_pct) where buy_pct = buys/(buys+sells) over the 5m
+    window. Fails OPEN (True) when the threshold is off, data is missing,
+    or there is zero activity — dead pools are the dead_pool gate's job,
+    and fresh tokens must keep flowing to the pullback path.
+    """
+    if not threshold or not snap:
+        return True, 0.5
+    buys = snap.get("buys_m5") or 0
+    sells = snap.get("sells_m5") or 0
+    n = buys + sells
+    if n <= 0:
+        return True, 0.5
+    pct = buys / n
+    return pct >= threshold, round(pct, 4)
 
 
 # Human explanations for sell-quote failures (sim output + logs). The raw

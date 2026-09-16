@@ -79,6 +79,11 @@ def test_txn_floor_setting():
     assert s.open_min_txns_m5 == 20.0
 
 
+def test_buy_pressure_setting():
+    s = load_settings()
+    assert s.open_min_buy_pressure == 0.5
+
+
 def test_birdeye_settings():
     s = load_settings()
     assert s.birdeye_enabled is True

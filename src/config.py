@@ -160,7 +160,9 @@ class Settings:
     stable_symbols: str = "USDC,USDT,USD1,PYUSD,USDS,DAI,SOL,WSOL,WETH,WBTC,CBTC,JUP,RAY,ORCA"  # impostor/stable symbols to never open (comma-separated)
     open_min_m5_pct: float = -2.0       # skip if 5m price change < this (don't enter active dumps)
     open_min_txns_m5: float = 20.0      # skip if 5m txn count < this (dead pool filter; missing data = allow)
+    open_min_buy_pressure: float = 0.5  # skip if buys/(buys+sells) < this (distribution = top; missing = allow, 0 = off)
     pullback_m5_pct: float = 15.0        # m5 above this = vertical candle: defer, don't chase
+    pullback_h1_pct: float = 150.0       # h1 above this = extended hourly run: defer too (Noiz +258%/h top-buy 2026-09-16; max winner h1 was +23%)
     pullback_wait_s: float = 60.0        # re-enter only on a signal at least this old
     pullback_expire_s: float = 90.0      # pending pullback expires after this (don't chase late)
     pullback_tol_pct: float = 3.0        # entry proceeds if price held within this % of defer price
@@ -310,7 +312,9 @@ def load_settings(path: str = ".env") -> Settings:
         stable_symbols=get(env, "STABLE_SYMBOLS", _d.stable_symbols),
         open_min_m5_pct=get_float(env, "OPEN_MIN_M5_PCT", _d.open_min_m5_pct),
         open_min_txns_m5=get_float(env, "OPEN_MIN_TXNS_M5", _d.open_min_txns_m5),
+        open_min_buy_pressure=get_float(env, "OPEN_MIN_BUY_PRESSURE", _d.open_min_buy_pressure),
         pullback_m5_pct=get_float(env, "PULLBACK_M5_PCT", _d.pullback_m5_pct),
+        pullback_h1_pct=get_float(env, "PULLBACK_H1_PCT", _d.pullback_h1_pct),
         pullback_wait_s=get_float(env, "PULLBACK_WAIT_S", _d.pullback_wait_s),
         pullback_expire_s=get_float(env, "PULLBACK_EXPIRE_S", _d.pullback_expire_s),
         pullback_tol_pct=get_float(env, "PULLBACK_TOL_PCT", _d.pullback_tol_pct),
