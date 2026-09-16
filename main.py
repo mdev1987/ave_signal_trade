@@ -161,6 +161,38 @@ def blind_open_size(adaptive_size: float | None, cap: float, fallback: float) ->
     return round(size, 4)
 
 
+async def memetracker_executable(jupiter, ca: str, size_lamports: int,
+                                 max_impact_pct: float) -> str | None:
+    """Executability guard for signal-price (MemeTracker) entries.
+
+    Returns None when the token can actually be traded at size, else a
+    ``skip:...`` reason. Requires a live Jupiter buy quote within impact
+    limits plus a working sell quote — the same standard the
+    Jupiter-routed path enforces in ``ShadowBook.open_position``.
+
+    Paper 2026-09-12..16: signal-price entries bypassed every Jupiter gate
+    and the whole catastrophic left tail of memetracker (-0.14/9, exits at
+    0.40-0.89x within 0-4 min) was tokens that were never sellable at
+    entry. Unmigrated bonding-curve tokens (no Jupiter route) sit out.
+    """
+    try:
+        bq = await jupiter.quote(ca, size_lamports, force=True)
+    except Exception:
+        return "skip:no_buy_route(quote_exception)"
+    if bq is None or not bq.success:
+        return f"skip:no_buy_route({bq.reason if bq else 'quote_exception'})"
+    if max_impact_pct > 0 and bq.price_impact_pct > max_impact_pct:
+        return (f"skip:impact({bq.price_impact_pct:.2f}%"
+                f">{max_impact_pct}%)")
+    try:
+        sq = await jupiter.quote_sell(ca, bq.output_amount)
+    except Exception:
+        return "skip:unsellable(quote_exception)"
+    if sq is None or not sq.success:
+        return f"skip:unsellable({sq.reason if sq else 'quote_exception'})"
+    return None
+
+
 # ------------------------------------------------------------- shadow book --
 class ShadowBook:
     """Virtual positions mirroring 'buy what smart money buys'.
@@ -1252,9 +1284,9 @@ async def _run_watch(s: cfg.Settings) -> int:
                 sym or "?", ca[:8], mc, liq, holders, vol, insiders, rug, migrated, price_usd,
             )
             # Vertical-chase guard: a token already up 10x+ in the last hour
-            # is a chase, not an entry (paper: 4/4 such opens lost, -0.050
-            # SOL). Skip before the bypass below — same skip: naming + 5-min
-            # per-CA log throttle as the other gates.
+            # is a chase, not an entry (paper 2026-09-12..16: 4/5 such opens
+            # lost, -0.053 SOL net). Skip before the bypass below — same
+            # skip: naming + 5-min per-CA log throttle as the other gates.
             if memetracker_chase_blocked(pc_1h, s.memetracker_max_pc1h_pct):
                 reason = (f"skip:vertical_chase(1h={pc_1h:+.1f}%"
                           f">{s.memetracker_max_pc1h_pct:.0f}%)")
@@ -1405,10 +1437,11 @@ async def _run_watch(s: cfg.Settings) -> int:
 
         Weak consensus (effective ~threshold) -> size_sol_min.
         Strong consensus (effective ~2x threshold) -> size_sol_max.
-        Per-source multipliers from paper expectancy (2026-09-12, 63 trades):
-          memetracker 1.0x (only profitable source, +0.043/5),
-          kolexplorer 1.0x, cabalspy 1.3x (best hit rate on winners),
-          pumpapi 0.5x (-0.11/19, worst).
+        Per-source multipliers from paper expectancy (2026-09-16, 66 trades):
+          memetracker 1.0x (-0.100/19, worst source — left tail of
+          unsellable chase entries; now gated by memetracker_executable),
+          kolexplorer 1.0x (-0.021/13), cabalspy 1.3x (-0.069/34, best
+          hit rate on winners), pumpapi 0.5x (journal-only).
         """
         score_min = settings.consensus_weight_threshold
         score_max = score_min * 2.0  # strong signal ~2x threshold
@@ -1537,6 +1570,19 @@ async def _run_watch(s: cfg.Settings) -> int:
             if px <= 0:
                 log.info("memetracker skip %s (%s): no price in signal", ca[:10], sym)
                 return
+            # Executability guard: signal-price entries used to bypass every
+            # Jupiter gate (see memetracker_executable). Probe at the actual
+            # open size so the impact check reflects the real fill.
+            if jupiter is not None:
+                _probe = (_adaptive_size(s, score, source)
+                          if s.adaptive_sizing else s.size_sol)
+                reason = await memetracker_executable(
+                    jupiter, ca, int(_probe * 1e9), s.open_max_impact_pct)
+                if reason is not None:
+                    if _skip_log.get(ca, 0) < time.time() - 300:
+                        _skip_log[ca] = time.time()
+                        log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                    return
             last_open["t"] = time.time()
             last_open["score"] = score
             logs.journal("open_signal_momentum", ca=ca, symbol=sym,

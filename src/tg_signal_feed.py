@@ -330,9 +330,9 @@ def memetracker_chase_blocked(pc_1h: float, max_pc1h_pct: float) -> bool:
 
     ``pc_1h`` is the TG-reported 1h move in percent (e.g. 1757.5 = +1757.5%).
     Tokens already up 10x+ in the last hour are deep into the move — paper
-    2026-09-12..15 shows this cohort never wins. Non-positive / missing
-    values (parser default 0.0) never block. A non-positive cap disables
-    the guard entirely.
+    2026-09-12..16 shows 4/5 such opens lost (-0.053 SOL net). Non-positive
+    / missing values (parser default 0.0) never block. A non-positive cap
+    disables the guard entirely.
     """
     if max_pc1h_pct <= 0:
         return False
