@@ -83,18 +83,3 @@ def test_birdeye_settings():
     s = load_settings()
     assert s.birdeye_enabled is True
     assert s.birdeye_min_credits == 0.0
-
-
-def test_memetracker_chase_guard_setting(monkeypatch, tmp_path):
-    # hermetic: empty env file + patched os.environ (repo .env must not leak in)
-    empty = str(tmp_path / "empty.env")
-    monkeypatch.delenv("MEMETRACKER_MAX_PC1H_PCT", raising=False)
-    assert load_settings(empty).memetracker_max_pc1h_pct == 1000.0
-    monkeypatch.setenv("MEMETRACKER_MAX_PC1H_PCT", "500")
-    assert load_settings(empty).memetracker_max_pc1h_pct == 500.0
-    # garbage falls back to default, never crashes the gate
-    monkeypatch.setenv("MEMETRACKER_MAX_PC1H_PCT", "junk")
-    assert load_settings(empty).memetracker_max_pc1h_pct == 1000.0
-    # non-positive disables the guard
-    monkeypatch.setenv("MEMETRACKER_MAX_PC1H_PCT", "0")
-    assert load_settings(empty).memetracker_max_pc1h_pct == 0.0

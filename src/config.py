@@ -192,22 +192,6 @@ class Settings:
     dbotx_base_url: str = "https://api-data-v1.dbotx.com"
     dbotx_safety: bool = True
     dbotx_top10_max: float = 0.25  # skip if top-10 holders own more than this (0.25 = 25%)
-    # --- MemeTracker signal feed (@memetrackersol) ---
-    # TG API credentials needed for Telethon (MemeTracker uses these)
-    tg_api_id: int = 0
-    tg_api_hash: str = ""
-    tg_phone: str = ""
-    memetracker_enabled: bool = False     # enable MemeTracker TG feed
-    memetracker_channel: str = "memetrackersol"  # Telegram channel to listen to
-    memetracker_session: str = "tg_memetracker"  # Telethon session file name
-    memetracker_min_mc: float = 10_000.0  # min market cap to forward signal
-    memetracker_min_liq: float = 5_000.0  # min liquidity to forward signal
-    memetracker_min_holders: int = 50     # min holder count to forward signal
-    memetracker_min_vol: float = 10_000.0 # min 24h volume to forward signal
-    memetracker_max_pc1h_pct: float = 1000.0  # skip TG signals already up more
-    # than this % in the last hour (vertical chase). Paper 2026-09-12..15:
-    # all 4 memetracker entries with 1h>+900% lost (-0.050 SOL combined,
-    # incl. GROYPER -44% in 1 min), while the sub-1000% cohort netted +0.015.
     # --- RugCheck (solana rug detection) ---
     rug_check_api_key: str = ""          # RugCheck API key (free tier works)
     rug_check_base_url: str = "https://api.rugcheck.xyz"
@@ -362,17 +346,6 @@ def load_settings(path: str = ".env") -> Settings:
         dbotx_base_url=get(env, "DBOTX_BASE_URL", _d.dbotx_base_url),
         dbotx_safety=get_bool(env, "DBOTX_SAFETY", _d.dbotx_safety),
         dbotx_top10_max=get_float(env, "DBOTX_TOP10_MAX", _d.dbotx_top10_max),
-        tg_api_id=get_int(env, "TG_API_ID", _d.tg_api_id),
-        tg_api_hash=get(env, "TG_API_HASH", _d.tg_api_hash),
-        tg_phone=get(env, "TG_PHONE", _d.tg_phone),
-        memetracker_enabled=get_bool(env, "MEMETRACKER_ENABLED", _d.memetracker_enabled),
-        memetracker_channel=get(env, "MEMETRACKER_CHANNEL", _d.memetracker_channel),
-        memetracker_session=get(env, "MEMETRACKER_SESSION", _d.memetracker_session),
-        memetracker_min_mc=get_float(env, "MEMETRACKER_MIN_MC", _d.memetracker_min_mc),
-        memetracker_min_liq=get_float(env, "MEMETRACKER_MIN_LIQ", _d.memetracker_min_liq),
-        memetracker_min_holders=get_int(env, "MEMETRACKER_MIN_HOLDERS", _d.memetracker_min_holders),
-        memetracker_min_vol=get_float(env, "MEMETRACKER_MIN_VOL", _d.memetracker_min_vol),
-        memetracker_max_pc1h_pct=get_float(env, "MEMETRACKER_MAX_PC1H_PCT", _d.memetracker_max_pc1h_pct),
         rug_check_api_key=get(env, "RUG_CHECK_API_KEY", _d.rug_check_api_key),
         rug_check_base_url=get(env, "RUG_CHECK_BASE_URL", _d.rug_check_base_url),
         rug_check_max_score=get_int(env, "RUG_CHECK_MAX_SCORE", _d.rug_check_max_score),

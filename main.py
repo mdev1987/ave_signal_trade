@@ -51,11 +51,6 @@ from pair_perf import save as save_pair_perf
 from pair_perf import update as update_pair_perf
 from pump_stream import PumpApiStream
 from rugcheck import RugCheckClient
-from tg_signal_feed import (
-    TgSignalFeed,
-    memetracker_chase_blocked,
-    parse_memetracker_signal,
-)
 from wallet_discovery import WalletDiscovery
 from wallet_weights import build_weights
 from watcher import SmartWalletWatcher
@@ -160,38 +155,6 @@ def blind_open_size(adaptive_size: float | None, cap: float, fallback: float) ->
     if cap and cap > 0:
         size = min(size, cap)
     return round(size, 4)
-
-
-async def memetracker_executable(jupiter, ca: str, size_lamports: int,
-                                 max_impact_pct: float) -> str | None:
-    """Executability guard for signal-price (MemeTracker) entries.
-
-    Returns None when the token can actually be traded at size, else a
-    ``skip:...`` reason. Requires a live Jupiter buy quote within impact
-    limits plus a working sell quote — the same standard the
-    Jupiter-routed path enforces in ``ShadowBook.open_position``.
-
-    Paper 2026-09-12..16: signal-price entries bypassed every Jupiter gate
-    and the whole catastrophic left tail of memetracker (-0.14/9, exits at
-    0.40-0.89x within 0-4 min) was tokens that were never sellable at
-    entry. Unmigrated bonding-curve tokens (no Jupiter route) sit out.
-    """
-    try:
-        bq = await jupiter.quote(ca, size_lamports, force=True)
-    except Exception:
-        return "skip:no_buy_route(quote_exception)"
-    if bq is None or not bq.success:
-        return f"skip:no_buy_route({bq.reason if bq else 'quote_exception'})"
-    if max_impact_pct > 0 and bq.price_impact_pct > max_impact_pct:
-        return (f"skip:impact({bq.price_impact_pct:.2f}%"
-                f">{max_impact_pct}%)")
-    try:
-        sq = await jupiter.quote_sell(ca, bq.output_amount)
-    except Exception:
-        return "skip:unsellable(quote_exception)"
-    if sq is None or not sq.success:
-        return f"skip:unsellable({sq.reason if sq else 'quote_exception'})"
-    return None
 
 
 # ------------------------------------------------------------- shadow book --
@@ -387,8 +350,8 @@ class ShadowBook:
         market_px = 0.0  # DexScreener mid (reference only)
         _size = size_sol if size_sol is not None else self.size_sol
 
-        # Signal price bypass: when entry price comes from the signal itself
-        # (e.g. MemeTracker TG message), skip Jupiter + DexScreener entirely.
+        # Signal price bypass: when entry price comes from the signal itself,
+        # skip Jupiter + DexScreener entirely.
         if signal_price > 0:
             px = signal_price
             snap = None
@@ -741,8 +704,7 @@ class ShadowBook:
             log.info("flat timeout %s (%s): age=%.1fh peak=%.3f",
                      ca[:10], pos["symbol"], age_s / 3600,
                      pos.get("peak_mult", 1.0))
-        elif (pos.get("source") != "memetracker"
-                and not pos.get("tp_taken")):
+        elif not pos.get("tp_taken"):
             peak = pos.get("peak_mult", 1.0)
             # Dead-token kill only: no movement at all after 8 min.
             # Tier-2 ("weak", <3% in 8-45m) REMOVED 2026-09-12: it
@@ -1274,67 +1236,8 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     # Per-CA skip-log throttle (5-min). Initialised before the first signal
     # feed starts: feed callbacks run concurrently once created, so a late
-    # init here would NameError on an early signal (memetracker chase guard).
+    # init here would NameError on an early signal.
     _skip_log = {}
-
-    # MemeTracker signal feed (@memetrackersol) — fresh pump.fun tokens.
-    memetracker_feed = None
-    if s.memetracker_enabled and s.tg_api_id and s.tg_api_hash:
-        async def _on_memetracker_signal(sig: dict) -> None:
-            ca = sig.get("ca", "")
-            sym = sig.get("symbol", "")
-            mc = sig.get("mc", 0)
-            liq = sig.get("liq", 0)
-            holders = sig.get("holders", 0)
-            vol = sig.get("vol", 0)
-            insiders = sig.get("insiders", 0)
-            rug = sig.get("rug_score", 0)
-            migrated = sig.get("migrated", False)
-            price_usd = sig.get("price_usd", 0)
-            pc_1h = sig.get("pc_1h", 0) or 0.0
-            log.info(
-                "memetracker SIGNAL %s (%s) mc=$%.0f liq=$%.0f hold=%d vol=$%.0f ins=%d rug=%d mig=%s px=$%.8f",
-                sym or "?", ca[:8], mc, liq, holders, vol, insiders, rug, migrated, price_usd,
-            )
-            # Vertical-chase guard: a token already up 10x+ in the last hour
-            # is a chase, not an entry (paper 2026-09-12..16: 4/5 such opens
-            # lost, -0.053 SOL net). Skip before the bypass below — same
-            # skip: naming + 5-min per-CA log throttle as the other gates.
-            if memetracker_chase_blocked(pc_1h, s.memetracker_max_pc1h_pct):
-                reason = (f"skip:vertical_chase(1h={pc_1h:+.1f}%"
-                          f">{s.memetracker_max_pc1h_pct:.0f}%)")
-                if _skip_log.get(ca, 0) < time.time() - 300:
-                    _skip_log[ca] = time.time()
-                    log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-                return
-            # TG signal source bypasses consensus gate — channel IS the signal
-            try:
-                await _on_smart_buy(ca, sym, mc, 3.0, ["tg_signal"], tg_liq=liq,
-                                    source="memetracker", signal_price=price_usd)
-            except asyncio.CancelledError:
-                raise  # shutdown/restart — not a signal failure, don't log
-            except Exception:
-                log.exception("memetracker _on_smart_buy failed for %s", ca[:10])
-
-        try:
-            memetracker_feed = TgSignalFeed(
-                on_signal=_on_memetracker_signal,
-                channel=s.memetracker_channel,
-                api_id=s.tg_api_id,
-                api_hash=s.tg_api_hash,
-                phone=s.tg_phone,
-                session_name=s.memetracker_session,
-                min_mc=s.memetracker_min_mc,
-                min_liq=s.memetracker_min_liq,
-                min_holders=s.memetracker_min_holders,
-                parser=parse_memetracker_signal,
-            )
-            _mt_feed_task = asyncio.create_task(memetracker_feed.run())
-            _mt_feed_task.add_done_callback(_log_task_result)
-            log.info("memetracker feed: started (channels=%s)", [s.memetracker_channel])
-        except Exception:
-            log.exception("memetracker feed init failed")
-            memetracker_feed = None
 
     # Kolexplorer monitor feed — pre-computed KOL consensus tokens.
     kolexplorer_feed = None
@@ -1450,9 +1353,8 @@ async def _run_watch(s: cfg.Settings) -> int:
 
         Weak consensus (effective ~threshold) -> size_sol_min.
         Strong consensus (effective ~2x threshold) -> size_sol_max.
-        Per-source multipliers from paper expectancy (2026-09-16, 67 trades):
-          memetracker 1.0x (-0.100/19, worst source — left tail of
-          unsellable chase entries; now gated by memetracker_executable),
+        Per-source multipliers from paper expectancy (2026-09-16, 67 trades).
+        MemeTracker removed 2026-09-16 (worst source, -0.111/20).
           kolexplorer 1.0x (-0.021/13), cabalspy 1.0x (-0.077/35; boost cut
           2026-09-16 — 43% wins but small wins vs full-size losses),
           pumpapi 0.5x (journal-only).
@@ -1463,7 +1365,6 @@ async def _run_watch(s: cfg.Settings) -> int:
         size = settings.size_sol_min + t * (settings.size_sol_max - settings.size_sol_min)
         _src_mult = {
             "cabalspy": 1.0,
-            "memetracker": 1.0,
             "kolexplorer": 1.0,
             "pumpapi": 0.5,
         }
@@ -1554,10 +1455,10 @@ async def _run_watch(s: cfg.Settings) -> int:
             # (weight >= 1) is enough; two mid winners sum to ~1; noise wallets
             # (weight ~0) can never manufacture a signal on their own.
             reason = f"skip:score<{s.consensus_weight_threshold}"
-        elif n < s.open_min_wallets and wallets != ["tg_signal"]:
+        elif n < s.open_min_wallets:
             # TG signals bypass min_wallets — the channel IS the consensus
             reason = f"skip:min_wallets<{s.open_min_wallets}"
-        elif overlap >= s.per_wallet_max_positions and wallets != ["tg_signal"]:
+        elif overlap >= s.per_wallet_max_positions:
             # TG signals bypass per_wallet_cap — each signal is a different token
             reason = f"skip:per_wallet_cap>={s.per_wallet_max_positions}"
         elif usd < s.watch_min_buy_usd:
@@ -1598,39 +1499,6 @@ async def _run_watch(s: cfg.Settings) -> int:
             logs.journal("pumpapi_journal_only", ca=ca, symbol=sym,
                          score=round(score, 2), wallets=n)
             reason = "skip:pumpapi_journal_only"
-        elif source == "memetracker":
-            # MemeTracker bypass: use signal price directly (no Jupiter/DexScreener needed)
-            px = signal_price
-            if px <= 0:
-                log.info("memetracker skip %s (%s): no price in signal", ca[:10], sym)
-                return
-            # Executability guard: signal-price entries used to bypass every
-            # Jupiter gate (see memetracker_executable). Probe at the actual
-            # open size so the impact check reflects the real fill.
-            if jupiter is not None:
-                _probe = (_adaptive_size(s, score, source)
-                          if s.adaptive_sizing else s.size_sol)
-                reason = await memetracker_executable(
-                    jupiter, ca, int(_probe * 1e9), s.open_max_impact_pct)
-                if reason is not None:
-                    if _skip_log.get(ca, 0) < time.time() - 300:
-                        _skip_log[ca] = time.time()
-                        log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
-                    return
-            last_open["t"] = time.time()
-            last_open["score"] = score
-            logs.journal("open_signal_momentum", ca=ca, symbol=sym,
-                         score=score, effective=round(score, 3),
-                         pmult=1.0, align=0, price_change={},
-                         source=source)
-            _open_size = _adaptive_size(s, score, source) if s.adaptive_sizing else None
-            await book.open_position(ca, sym, px, px, n, wallets=wallets, size_sol=_open_size,
-                                     source=source, mc=usd, score=score,
-                                     signal_price=px)
-            if birdeye is not None and ca in book.open:
-                asyncio.get_running_loop().create_task(
-                    _birdeye_enrich(ca, sym)).add_done_callback(_log_task_result)
-            return
         else:
             # Fetch the market snapshot once: it drives both the momentum floor
             # and the multi-timeframe alignment score modifier below.
@@ -2059,8 +1927,7 @@ async def _run_watch(s: cfg.Settings) -> int:
                                   "helius_ws": helius_ok,
                                   "vybe": vybe is not None and vybe.enabled,
                                   "cabalspy": cabalspy_client is not None and cabalspy_client.connected,
-                                  "kolexplorer": kolexplorer_feed is not None and kolexplorer_feed._running,
-                                  "memetracker": memetracker_feed is not None and memetracker_feed.health()["connected"]})
+                                  "kolexplorer": kolexplorer_feed is not None and kolexplorer_feed._running})
             log.info("status: %s", build_status(snap))
             if helius_ws:
                 hs = helius_ws.stats
@@ -2076,15 +1943,6 @@ async def _run_watch(s: cfg.Settings) -> int:
                 log.info("cabalspy: connected=%s signals=%d txs=%d holders=%d bundles=%d reconnects=%d",
                          cs["connected"], cs["total_signals"], cs["total_txs"],
                          cs["total_holders"], cs["total_bundles"], cs["reconnects"])
-            if memetracker_feed is not None:
-                # Flow counters (not just "connected"): a deaf TG listener
-                # reports connected forever — silence must be visible.
-                mh = memetracker_feed.health()
-                _mt_age = (round(time.time() - mh["last_event_at"])
-                           if mh["last_event_at"] else None)
-                log.info("memetracker: msgs=%d parsed=%d forwarded=%d filtered=%d errors=%d last_event_age_s=%s",
-                         mh["messages"], mh["parsed"], mh["forwarded"],
-                         mh["filtered"], mh["errors"], _mt_age)
             if birdeye is not None:
                 bs = birdeye.stats
                 # 1-CU credit check per status cycle (cheap early warning so
@@ -2116,12 +1974,11 @@ async def _run_watch(s: cfg.Settings) -> int:
                              bs["calls"], bs["cached"], bs["errors"])
 
     # Live feeds are push-based (Helius WS, PumpAPI WS, CabalSpy WS,
-    # Kolexplorer poll, MemeTracker TG) — no webhook receiver needed
+    # Kolexplorer poll) — no webhook receiver needed
     # (Tatum push removed 2026-09-12: never configured, dead port :8787).
 
     log.info("bot started: %s", build_status(book.snapshot(
         len(w.wallets), 0, 0, 0, {"dexscreener": True,
-                                   "memetracker": memetracker_feed.health()["connected"] if memetracker_feed else False,
                                     "pumpapi": True,
                                     "vybe": vybe is not None and vybe.enabled})))
     if notifier is not None:
