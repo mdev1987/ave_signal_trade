@@ -227,6 +227,14 @@ class SmartWalletWatcher:
         # Wallet churn tracking: detect wallets that spray many tokens in
         # a short window (noise signal). Maps wallet -> [(ts, ca), ...].
         self._wallet_buys: dict[str, list[tuple[float, str]]] = {}
+        # Outlier journal throttle: one wallet's mispriced feed (e.g. AgmLJ
+        # $500M-$2B decimal slips, 481 outliers in one journal window) must
+        # not rotate the journal on its own. First outlier per wallet per
+        # window journals; the rest only bump a counter that is flushed
+        # with the next journaled line.
+        self._outlier_log_ts: dict[str, float] = {}
+        self._outlier_suppressed: dict[str, int] = {}
+        self._outlier_window_s = 300.0
         self._load_state()
 
     # ------------------------------------------------------------- state io
@@ -369,6 +377,32 @@ class SmartWalletWatcher:
         return hit[1] * amount
 
     # ------------------------------------------------------------- pipeline
+    def _journal_outlier(self, wallet: str, ca: str, usd: float,
+                         fresh: bool, src: str | None = None) -> None:
+        """Journal a mispriced-buy outlier, throttled per wallet.
+
+        Outlier storms from a single mispricing wallet previously wrote one
+        journal line per hit (hundreds per window, ~40% of journal volume).
+        Now only the first outlier per wallet per window journals; suppressed
+        hits are counted and reported on the next journaled line so the
+        forensic signal (which wallet misprices, how often) is preserved.
+        """
+        now = time.time()
+        last = self._outlier_log_ts.get(wallet, 0.0)
+        if now - last < self._outlier_window_s:
+            self._outlier_suppressed[wallet] = \
+                self._outlier_suppressed.get(wallet, 0) + 1
+            return
+        self._outlier_log_ts[wallet] = now
+        suppressed = self._outlier_suppressed.pop(wallet, 0)
+        kw: dict = {"ca": ca, "wallet": wallet[:10],
+                    "usd": round(usd, 2), "fresh": fresh}
+        if src is not None:
+            kw["src"] = src
+        if suppressed:
+            kw["suppressed"] = suppressed
+        logs.journal("smart_buy_outlier", **kw)
+
     async def process_now(self, wallet: str) -> None:
         """Decode a wallet's recent activity now (push entrypoint).
 
@@ -429,9 +463,9 @@ class SmartWalletWatcher:
             # real buy on this CA still counts as fresh). Outlier storms (one
             # wallet mispricing thousands of buys, e.g. AgmLJ $500M-$2B slips
             # on 2026-09-15) previously double-journaled every hit and left an
-            # empty token_hits entry behind.
-            logs.journal("smart_buy_outlier", ca=ca, wallet=wallet[:10],
-                         usd=round(usd, 2), fresh=fresh)
+            # empty token_hits entry behind. Journaling itself is throttled
+            # per wallet (_journal_outlier) so a storm can't rotate the journal.
+            self._journal_outlier(wallet, ca, usd, fresh)
             return
         hit = self.token_hits.setdefault(
             ca, {"symbol": sym, "wallets": [], "first_ts": now, "usd": 0.0})
@@ -605,8 +639,8 @@ class SmartWalletWatcher:
                 if usd < self.min_buy_usd:
                     continue
                 if usd > self.max_buy_usd:
-                    logs.journal("smart_buy_outlier", ca=ca, wallet=wallet[:10],
-                                 usd=round(usd, 2), fresh=True, src="kol_trade_poll")
+                    self._journal_outlier(wallet, ca, usd, True,
+                                          src="kol_trade_poll")
                     continue
                 logger.info("kol_trade_poll: %s bought %s ($%.2f)", wallet[:8], ca[:8], usd)
                 await self._process_buy(wallet, {

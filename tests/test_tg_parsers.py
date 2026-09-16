@@ -16,6 +16,7 @@ sys.path.insert(0, str(_ROOT / "src"))
 from tg_signal_feed import (
     _parse_value,
     extract_mint,
+    memetracker_chase_blocked,
     parse_memetracker_signal,
     parse_tg_signal,
 )
@@ -93,6 +94,22 @@ def test_memetracker_rejects_garbage():
     assert parse_memetracker_signal("") is None
     assert parse_memetracker_signal(None) is None
     assert parse_memetracker_signal("hello world, no mint!!") is None
+
+
+def test_memetracker_chase_blocked():
+    """Vertical-chase guard: tokens already up 10x+/1h are chases, not
+    entries (paper 2026-09-12..15: 4/4 such memetracker opens lost)."""
+    assert memetracker_chase_blocked(1757.5, 1000.0) is True   # GROYPER
+    assert memetracker_chase_blocked(3943.5, 1000.0) is True   # PAID
+    assert memetracker_chase_blocked(1000.01, 1000.0) is True
+    assert memetracker_chase_blocked(1000.0, 1000.0) is False  # boundary: not over
+    assert memetracker_chase_blocked(538.4, 1000.0) is False   # DOOM (winner)
+    assert memetracker_chase_blocked(114.1, 1000.0) is False
+    assert memetracker_chase_blocked(-50.0, 1000.0) is False   # dumps never chase
+    assert memetracker_chase_blocked(0.0, 1000.0) is False     # missing pc never blocks
+    assert memetracker_chase_blocked(None, 1000.0) is False    # garbage never blocks
+    assert memetracker_chase_blocked(99999.0, 0) is False      # cap<=0 disables
+    assert memetracker_chase_blocked(99999.0, -1) is False
 
 
 GMGN_MSG = (

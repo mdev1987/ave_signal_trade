@@ -210,6 +210,61 @@ def test_process_buy_outlier_ignored():
     assert hit2["usd"] == 100.0  # dust did not inflate totals
 
 
+def test_process_buy_outlier_throttled_per_wallet():
+    """Outlier storms (one wallet mispricing hundreds of buys, e.g. AgmLJ
+    481 outliers in one journal window ≈40% of journal volume) must journal
+    once per window per wallet; the rest only bump a suppressed counter
+    that flushes on the next journaled line."""
+    import asyncio
+    import json
+    import os
+    import tempfile
+    import time
+
+    import logs
+    from watcher import SmartWalletWatcher
+
+    tmp = tempfile.mkdtemp()
+    wf = os.path.join(tmp, "wallets.json")
+    with open(wf, "w") as f:
+        json.dump({W: {}}, f)
+    w = SmartWalletWatcher(
+        shyft_key="test",
+        wallets_file=wf,
+        state_file=os.path.join(tmp, "state.json"),
+        tokens_file=os.path.join(tmp, "tok.json"),
+        min_buy_usd=50.0,
+        consensus_weight_threshold=99.0,  # never fire consensus here
+    )
+    w._outlier_window_s = 300.0
+    events = []
+    orig = logs.journal
+    logs.journal = lambda event, **kw: events.append((event, kw))
+    try:
+        mk = lambda i: {"ca": f"{MINT[:20]}{i:024d}", "usd": 50_000_000.0,
+                        "symbol": "T", "ts": time.time()}
+        asyncio.run(w._process_buy(W, mk(1)))
+        asyncio.run(w._process_buy(W, mk(2)))
+        asyncio.run(w._process_buy(W, mk(3)))
+        outliers = [kw for e, kw in events if e == "smart_buy_outlier"]
+        assert len(outliers) == 1, f"storm journaled {len(outliers)}x"
+        assert "suppressed" not in outliers[0]
+        # window expiry flushes the suppressed count on the next line
+        w._outlier_log_ts[W] -= 301.0
+        asyncio.run(w._process_buy(W, mk(4)))
+        outliers = [kw for e, kw in events if e == "smart_buy_outlier"]
+        assert len(outliers) == 2
+        assert outliers[1].get("suppressed") == 2
+        # a different wallet is throttled independently
+        W2 = "W2xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        asyncio.run(w._process_buy(W2, mk(5)))
+        outliers = [kw for e, kw in events if e == "smart_buy_outlier"]
+        assert len(outliers) == 3
+        assert outliers[2]["wallet"] == W2[:10]
+    finally:
+        logs.journal = orig
+
+
 if __name__ == "__main__":
     test_buy_detected_on_balance_increase()
     test_sell_ignored()
@@ -224,4 +279,5 @@ if __name__ == "__main__":
     test_pumpapi_paper_mode_no_crash()
     test_status_card_compact()
     test_process_buy_outlier_ignored()
+    test_process_buy_outlier_throttled_per_wallet()
     print("watcher-core tests passed (live pipeline)")

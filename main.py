@@ -52,6 +52,7 @@ from pump_stream import PumpApiStream
 from rugcheck import RugCheckClient
 from tg_signal_feed import (
     TgSignalFeed,
+    memetracker_chase_blocked,
     parse_memetracker_signal,
 )
 from wallet_discovery import WalletDiscovery
@@ -1224,6 +1225,11 @@ async def _run_watch(s: cfg.Settings) -> int:
             log.exception("cabalspy init failed — disabled")
             cabalspy_client = None
 
+    # Per-CA skip-log throttle (5-min). Initialised before the first signal
+    # feed starts: feed callbacks run concurrently once created, so a late
+    # init here would NameError on an early signal (memetracker chase guard).
+    _skip_log = {}
+
     # MemeTracker signal feed (@memetrackersol) — fresh pump.fun tokens.
     memetracker_feed = None
     if s.memetracker_enabled and s.tg_api_id and s.tg_api_hash:
@@ -1238,10 +1244,22 @@ async def _run_watch(s: cfg.Settings) -> int:
             rug = sig.get("rug_score", 0)
             migrated = sig.get("migrated", False)
             price_usd = sig.get("price_usd", 0)
+            pc_1h = sig.get("pc_1h", 0) or 0.0
             log.info(
                 "memetracker SIGNAL %s (%s) mc=$%.0f liq=$%.0f hold=%d vol=$%.0f ins=%d rug=%d mig=%s px=$%.8f",
                 sym or "?", ca[:8], mc, liq, holders, vol, insiders, rug, migrated, price_usd,
             )
+            # Vertical-chase guard: a token already up 10x+ in the last hour
+            # is a chase, not an entry (paper: 4/4 such opens lost, -0.050
+            # SOL). Skip before the bypass below — same skip: naming + 5-min
+            # per-CA log throttle as the other gates.
+            if memetracker_chase_blocked(pc_1h, s.memetracker_max_pc1h_pct):
+                reason = (f"skip:vertical_chase(1h={pc_1h:+.1f}%"
+                          f">{s.memetracker_max_pc1h_pct:.0f}%)")
+                if _skip_log.get(ca, 0) < time.time() - 300:
+                    _skip_log[ca] = time.time()
+                    log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                return
             # TG signal source bypasses consensus gate — channel IS the signal
             try:
                 await _on_smart_buy(ca, sym, mc, 3.0, ["tg_signal"], tg_liq=liq,
@@ -1374,7 +1392,6 @@ async def _run_watch(s: cfg.Settings) -> int:
     last_open = {"t": 0.0, "score": 0.0}
     open_gap_s = s.open_gap_s
 
-    _skip_log = {}
     _pullback: dict[str, dict] = {}  # ca -> {t, ref} pending vertical-breakout holds
 
     def _adaptive_size(settings, effective_score: float, source: str = "") -> float:

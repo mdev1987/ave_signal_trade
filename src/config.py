@@ -203,6 +203,10 @@ class Settings:
     memetracker_min_liq: float = 5_000.0  # min liquidity to forward signal
     memetracker_min_holders: int = 50     # min holder count to forward signal
     memetracker_min_vol: float = 10_000.0 # min 24h volume to forward signal
+    memetracker_max_pc1h_pct: float = 1000.0  # skip TG signals already up more
+    # than this % in the last hour (vertical chase). Paper 2026-09-12..15:
+    # all 4 memetracker entries with 1h>+900% lost (-0.050 SOL combined,
+    # incl. GROYPER -44% in 1 min), while the sub-1000% cohort netted +0.015.
     # --- RugCheck (solana rug detection) ---
     rug_check_api_key: str = ""          # RugCheck API key (free tier works)
     rug_check_base_url: str = "https://api.rugcheck.xyz"
@@ -362,6 +366,7 @@ def load_settings(path: str = ".env") -> Settings:
         memetracker_min_liq=get_float(env, "MEMETRACKER_MIN_LIQ", _d.memetracker_min_liq),
         memetracker_min_holders=get_int(env, "MEMETRACKER_MIN_HOLDERS", _d.memetracker_min_holders),
         memetracker_min_vol=get_float(env, "MEMETRACKER_MIN_VOL", _d.memetracker_min_vol),
+        memetracker_max_pc1h_pct=get_float(env, "MEMETRACKER_MAX_PC1H_PCT", _d.memetracker_max_pc1h_pct),
         rug_check_api_key=get(env, "RUG_CHECK_API_KEY", _d.rug_check_api_key),
         rug_check_base_url=get(env, "RUG_CHECK_BASE_URL", _d.rug_check_base_url),
         rug_check_max_score=get_int(env, "RUG_CHECK_MAX_SCORE", _d.rug_check_max_score),
