@@ -33,6 +33,7 @@ from solders.keypair import Keypair
 
 import config as cfg
 import logs
+from birdeye import BirdeyeClient
 from cabalspy import CabalSpyClient, HolderCache
 from cabalspy_rest import CabalSpyREST
 from dbotx import DBotXClient
@@ -1034,6 +1035,18 @@ async def _run_watch(s: cfg.Settings) -> int:
         except Exception:
             log.exception("vybe init failed — disabled")
 
+    # Birdeye Data API (holder cohorts + smart money, journal-only Phase 1).
+    # Enrichment is journaled per open and never gates entries.
+    birdeye = None
+    birdeye_key = (cfg.get(env, "BIRDEYE_API_KEY") or "").strip()
+    if birdeye_key and s.birdeye_enabled:
+        try:
+            birdeye = BirdeyeClient(api_key=birdeye_key)
+            log.info("birdeye: enabled (journal-only enrichment)")
+        except Exception:
+            log.exception("birdeye init failed — disabled")
+            birdeye = None
+
     # CabalSpy client (real-time KOL/SM/Whale data streams)
     cabalspy_key = (cfg.get(env, "CABALSPY_API_KEY") or "").strip()
     cabalspy_keys = [k.strip() for k in cabalspy_key.split(",") if k.strip()]
@@ -1437,18 +1450,19 @@ async def _run_watch(s: cfg.Settings) -> int:
 
         Weak consensus (effective ~threshold) -> size_sol_min.
         Strong consensus (effective ~2x threshold) -> size_sol_max.
-        Per-source multipliers from paper expectancy (2026-09-16, 66 trades):
+        Per-source multipliers from paper expectancy (2026-09-16, 67 trades):
           memetracker 1.0x (-0.100/19, worst source — left tail of
           unsellable chase entries; now gated by memetracker_executable),
-          kolexplorer 1.0x (-0.021/13), cabalspy 1.3x (-0.069/34, best
-          hit rate on winners), pumpapi 0.5x (journal-only).
+          kolexplorer 1.0x (-0.021/13), cabalspy 1.0x (-0.077/35; boost cut
+          2026-09-16 — 43% wins but small wins vs full-size losses),
+          pumpapi 0.5x (journal-only).
         """
         score_min = settings.consensus_weight_threshold
         score_max = score_min * 2.0  # strong signal ~2x threshold
         t = max(0.0, min(1.0, (effective_score - score_min) / (score_max - score_min)))
         size = settings.size_sol_min + t * (settings.size_sol_max - settings.size_sol_min)
         _src_mult = {
-            "cabalspy": 1.3,
+            "cabalspy": 1.0,
             "memetracker": 1.0,
             "kolexplorer": 1.0,
             "pumpapi": 0.5,
@@ -1457,6 +1471,24 @@ async def _run_watch(s: cfg.Settings) -> int:
         return round(min(size, settings.size_sol_max), 4)
 
     _stable_syms = {x.strip().upper() for x in (s.stable_symbols or "").split(",") if x.strip()}
+
+    async def _birdeye_enrich(ca: str, symbol: str) -> None:
+        """Journal-only Birdeye enrichment for an opened position.
+
+        Phase 1 measures only: holder cohorts (bundler/insider/sniper/dev
+        vs smart_trader/kol supply shares) + top-trader flow (exited
+        fraction, tags) are journaled as ``birdeye_enrich`` and never gate
+        entries. Promotion to gate comes only with journal evidence.
+        """
+        if birdeye is None:
+            return
+        try:
+            data = await birdeye.enrich(ca)
+        except Exception as exc:
+            log.debug("birdeye enrich failed for %s: %s", ca[:10], exc)
+            return
+        if data:
+            logs.journal("birdeye_enrich", ca=ca, symbol=symbol, **data)
 
     _SIGNAL_TIMEOUT_S = 150.0  # hung-signal watchdog (see below)
 
@@ -1471,7 +1503,9 @@ async def _run_watch(s: cfg.Settings) -> int:
         try:
             await asyncio.wait_for(asyncio.shield(inner), _SIGNAL_TIMEOUT_S)
         except TimeoutError:
-            frames = [f"{f.filename.split('/')[-1]}:{f.lineno} in {f.name}"
+            # Task.get_stack() returns raw frame objects (not
+            # traceback.FrameSummary), so use f_code/f_lineno.
+            frames = [f"{f.f_code.co_filename.split('/')[-1]}:{f.f_lineno} in {f.f_code.co_name}"
                       for f in inner.get_stack(limit=8)]
             log.error("WATCHDOG hung signal %s (%s) src=%s lock=%s frames=%s",
                       ca[:10], sym, source, book._lock.locked(), " <- ".join(frames))
@@ -1593,6 +1627,9 @@ async def _run_watch(s: cfg.Settings) -> int:
             await book.open_position(ca, sym, px, px, n, wallets=wallets, size_sol=_open_size,
                                      source=source, mc=usd, score=score,
                                      signal_price=px)
+            if birdeye is not None and ca in book.open:
+                asyncio.get_running_loop().create_task(
+                    _birdeye_enrich(ca, sym)).add_done_callback(_log_task_result)
             return
         else:
             # Fetch the market snapshot once: it drives both the momentum floor
@@ -1899,6 +1936,9 @@ async def _run_watch(s: cfg.Settings) -> int:
                 await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
                                          source=source,
                                          mc=(snap or {}).get("mcap") or 0, score=score)
+                if birdeye is not None and ca in book.open:
+                    asyncio.get_running_loop().create_task(
+                        _birdeye_enrich(ca, sym)).add_done_callback(_log_task_result)
                 return
             elif (snap.get("liq") or tg_liq or 0) < s.open_min_liq_usd:
                 reason = "skip:low_liq"
@@ -1938,6 +1978,9 @@ async def _run_watch(s: cfg.Settings) -> int:
                     await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
                                              source=source,
                                              mc=(snap or {}).get("mcap") or 0, score=score)
+                    if birdeye is not None and ca in book.open:
+                        asyncio.get_running_loop().create_task(
+                            _birdeye_enrich(ca, sym)).add_done_callback(_log_task_result)
                     return
                 if _pend and _age > s.pullback_expire_s:
                     _pullback.pop(ca, None)
@@ -1964,6 +2007,9 @@ async def _run_watch(s: cfg.Settings) -> int:
                 await book.open_position(ca, sym, usd, usd, n, wallets=wallets, size_sol=_open_size,
                                          source=source,
                                          mc=(snap or {}).get("mcap") or 0, score=score)
+                if birdeye is not None and ca in book.open:
+                    asyncio.get_running_loop().create_task(
+                        _birdeye_enrich(ca, sym)).add_done_callback(_log_task_result)
                 return
             if reason and _skip_log.get(ca, 0) < time.time() - 300:
                 _skip_log[ca] = time.time()
@@ -2033,6 +2079,10 @@ async def _run_watch(s: cfg.Settings) -> int:
                 log.info("memetracker: msgs=%d parsed=%d forwarded=%d filtered=%d errors=%d last_event_age_s=%s",
                          mh["messages"], mh["parsed"], mh["forwarded"],
                          mh["filtered"], mh["errors"], _mt_age)
+            if birdeye is not None:
+                bs = birdeye.stats
+                log.info("birdeye: calls=%d cached=%d errors=%d",
+                         bs["calls"], bs["cached"], bs["errors"])
 
     # Live feeds are push-based (Helius WS, PumpAPI WS, CabalSpy WS,
     # Kolexplorer poll, MemeTracker TG) — no webhook receiver needed
@@ -2202,6 +2252,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             await helius.close()
         if vybe is not None:
             await vybe.close()
+        if birdeye is not None:
+            await birdeye.close()
         if cabalspy_client is not None:
             await cabalspy_client.stop()
         if cabalspy_rest is not None:
