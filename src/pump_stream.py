@@ -82,8 +82,12 @@ class PumpApiStream:
                 backoff = min(backoff * 2, 30.0)
 
     async def _loop(self) -> None:
+        # ping_timeout 60s: the server routinely pongs late under load
+        # (observed 2026-09-16: 5x "keepalive ping timeout" drops in 12 min
+        # with ping_timeout=20). Reconnects are handled, but each one costs
+        # a handshake + 289-wallet resubscribe window with missed signals.
         async with websockets.connect(WS_URL, ping_interval=20,
-                                      ping_timeout=20) as ws:
+                                      ping_timeout=60) as ws:
             self._connected = True
             self._connected_since = time.time()
             log.info("pumpapi ws connected (%d wallets)", len(self.wallets))

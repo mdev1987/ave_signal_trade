@@ -42,6 +42,16 @@ def test_classify_error_table():
     assert j._classify_error(
         JupiterError('order HTTP 400: {"error":"Invalid outputMint"}', status=400)
     ) == "quote_invalid_response"
+    # _order wraps httpx timeouts as JupiterError("order timed out after
+    # 20s: ...", status=0) — must be retryable timeout, not invalid
+    # (live 2026-09-16: GROK sell timeouts logged as quote_invalid_response
+    # and gave up after 1 attempt instead of retrying x3).
+    assert j._classify_error(
+        JupiterError("order timed out after 20s: ", status=0)
+    ) == "quote_timeout"
+    assert j._classify_error(
+        JupiterError("order timed out after 20s: TimeoutException", status=None)
+    ) == "quote_timeout"
 
 
 def _with_balance(j, bal):
@@ -108,6 +118,24 @@ def test_sell_retries_transient_then_succeeds():
         return dict(_OK_ORDER)
 
     j._order = flaky
+    res = asyncio.run(j._do_quote_sell("MINT", 100, 300))
+    assert res.success and len(calls) == 3
+    assert j._qstats["ok"] == 1
+
+
+def test_sell_retries_jupiter_timeout_error_then_succeeds():
+    # Production timeout path: _order raises JupiterError("order timed out
+    # ...", status=0), not httpx.TimeoutException. Must retry x3.
+    j = _jup()
+    calls = []
+
+    async def flaky_order(*a, **k):
+        calls.append(1)
+        if len(calls) < 3:
+            raise JupiterError("order timed out after 20s: ", status=0)
+        return dict(_OK_ORDER)
+
+    j._order = flaky_order
     res = asyncio.run(j._do_quote_sell("MINT", 100, 300))
     assert res.success and len(calls) == 3
     assert j._qstats["ok"] == 1

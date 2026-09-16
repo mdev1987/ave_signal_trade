@@ -968,6 +968,14 @@ class JupiterSwap:
         """Map a Jupiter order failure to a skip-taxonomy reason."""
         st = exc.status
         msg = str(exc).lower()
+        if "timed out" in msg or "timeout" in msg:
+            # _order wraps httpx timeouts as JupiterError("order timed out
+            # after 20s: ...", status=0). Must classify as retryable timeout —
+            # falling through to quote_invalid_response (the old behavior)
+            # made the sell-side retry gate treat it as deterministic and
+            # give up after 1 attempt (observed: GROK 3x
+            # "quote_invalid_response ... order timed out after 20s").
+            return "quote_timeout"
         if "insufficient" in msg:
             return "quote_insufficient_funds"
         if st == 429:

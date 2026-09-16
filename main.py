@@ -1132,6 +1132,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                 try:
                     await _on_smart_buy(mint, sym, mc_usd, score, wallet_addresses,
                                         source="cabalspy")
+                except asyncio.CancelledError:
+                    raise  # shutdown/restart — not a signal failure, don't log
                 except Exception:
                     log.exception("cabalspy _on_smart_buy failed for %s", mint[:10])
 
@@ -1264,6 +1266,8 @@ async def _run_watch(s: cfg.Settings) -> int:
             try:
                 await _on_smart_buy(ca, sym, mc, 3.0, ["tg_signal"], tg_liq=liq,
                                     source="memetracker", signal_price=price_usd)
+            except asyncio.CancelledError:
+                raise  # shutdown/restart — not a signal failure, don't log
             except Exception:
                 log.exception("memetracker _on_smart_buy failed for %s", ca[:10])
 
@@ -1318,6 +1322,8 @@ async def _run_watch(s: cfg.Settings) -> int:
                 )
             try:
                 await _on_smart_buy(ca, sym, mc, score, wallets, source=source)
+            except asyncio.CancelledError:
+                raise  # shutdown/restart — not a signal failure, don't log
             except Exception:
                 log.exception("kolexplorer _on_smart_buy failed for %s", ca[:10])
 
