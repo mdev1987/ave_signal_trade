@@ -1348,6 +1348,14 @@ async def _run_watch(s: cfg.Settings) -> int:
 
     _pullback: dict[str, dict] = {}  # ca -> {t, ref} pending vertical-breakout holds
 
+    # Sticky rugcheck rejects: ca -> ts of last block. A token rejected once
+    # stays blocked for RUG_REJECT_TTL_S unless a later check returns an
+    # explicitly SAFE report. Fail-open (no report / rate-limit / timeout)
+    # must never override a prior reject — INUTILITY (2026-09-16) was
+    # REJECTed (score=61 DANGER lp_locked=0%) then opened 80 min later
+    # through a fail-open/bypass flip for -0.015 SOL (sl, 0.749x).
+    _rug_reject_cache: dict[str, float] = {}
+
     def _adaptive_size(settings, effective_score: float, source: str = "") -> float:
         """Scale position size linearly between min/max based on consensus quality.
 
@@ -1568,26 +1576,56 @@ async def _run_watch(s: cfg.Settings) -> int:
                         return
                     logs.journal("open_safety_ok", ca=ca, symbol=sym,
                                  safety=info)
-            # RugCheck safety gate (fail-open): reject rug/high-risk tokens
-            # Skip DANGER filter (mint/freeze) for tokens with MC > threshold
-            # OR with high volume (real organic trading = not a rug)
+            # RugCheck safety gate (fail-open): reject rug/high-risk tokens.
+            # DANGER bypass (high-MC/volume tokens with real organic trading)
+            # is deliberately narrow: unlocked-LP reports NEVER bypass —
+            # INUTILITY (2026-09-16) pumped to $80M MC on lp_locked=0% then
+            # dumped -25% through the old MC-only bypass. See
+            # rugcheck_danger_bypass_ok() for the exact rule.
             if rugcheck is not None:
                 rc = await rugcheck.check(ca)
+                if rc is None and ca in _rug_reject_cache and \
+                        time.time() - _rug_reject_cache[ca] < RUG_REJECT_TTL_S:
+                    # Sticky reject: a previous REJECT stands — this no-report
+                    # (rate-limit/timeout/too-new) is fail-open, not exoneration.
+                    reason = "skip:rugcheck_cached(no_report_after_reject)"
+                    logs.journal("rugcheck_cached_block", ca=ca, symbol=sym,
+                                 age_s=int(time.time() - _rug_reject_cache[ca]))
+                    if _skip_log.get(ca, 0) < time.time() - 300:
+                        _skip_log[ca] = time.time()
+                        log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                    return
+                # Opportunistic prune so the cache can't grow unbounded.
+                if len(_rug_reject_cache) > 5000:
+                    _now_rc = time.time()
+                    for _k in [k for k, v in _rug_reject_cache.items()
+                               if _now_rc - v > RUG_REJECT_TTL_S]:
+                        _rug_reject_cache.pop(_k, None)
                 if not rugcheck.is_safe(rc):
                     mc = (snap or {}).get("mcap") or 0
                     vol24 = float((snap or {}).get("vol_h24") or 0)
-                    # DANGER on mint/freeze only blocks low-MC, low-volume tokens
-                    has_danger = rc.has_danger if rc else False
-                    only_danger = has_danger and rc.score_normalised <= s.rug_check_max_score and not rc.rugged
-                    if only_danger and (mc > s.rug_check_min_mc_for_danger or vol24 > 100_000):
-                        log.info("rugcheck DANGER ignored %s (%s): mc=$%.0f vol=$%.0f",
-                                 ca[:10], sym, mc, vol24)
+                    _bypass_ok, _bypass_why = rugcheck_danger_bypass_ok(
+                        rc, mc, vol24, s.rug_check_max_score,
+                        s.rug_check_min_mc_for_danger)
+                    if _bypass_ok:
+                        logs.journal("rugcheck_danger_ignored", ca=ca, symbol=sym,
+                                     mc=round(mc), vol24=round(vol24),
+                                     lp_locked=(rc.lp_locked_pct if rc else None),
+                                     score=(rc.score_normalised if rc else None),
+                                     why=_bypass_why)
+                        log.info("rugcheck DANGER ignored %s (%s): mc=$%.0f vol=$%.0f lp=%.0f%% (%s)",
+                                 ca[:10], sym, mc, vol24,
+                                 (rc.lp_locked_pct if rc else 0), _bypass_why)
                     else:
-                        reason = f"skip:rugcheck({rc.summary() if rc else 'error'})"
+                        _rug_reject_cache[ca] = time.time()
+                        reason = f"skip:rugcheck({rc.summary() if rc else 'error'}:{_bypass_why})"
                         if _skip_log.get(ca, 0) < time.time() - 300:
                             _skip_log[ca] = time.time()
                             log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
                         return
+                elif rc is not None and ca in _rug_reject_cache:
+                    # Explicitly clean report clears the sticky reject.
+                    _rug_reject_cache.pop(ca, None)
             # Helius: deployer rugger check + top-10 holder concentration
             # Quota guard (2026-09-14): while the WS is in 429 circuit-breaker
             # backoff the Helius RPC quota is exhausted too (token_decimals
@@ -2316,6 +2354,37 @@ def buy_pressure_ok(snap: dict | None, threshold: float) -> tuple[bool, float]:
         return True, 0.5
     pct = buys / n
     return pct >= threshold, round(pct, 4)
+
+
+RUG_REJECT_TTL_S = 24 * 3600.0  # sticky rugcheck reject window (see _rug_reject_cache)
+RUG_BYPASS_MIN_LP_LOCKED_PCT = 50.0  # DANGER bypass requires >=50% LP locked
+RUG_BYPASS_MIN_VOL24_USD = 100_000.0  # …or 24h volume above this (with high MC)
+
+
+def rugcheck_danger_bypass_ok(rc, mc: float, vol24: float,
+                              max_score: float,
+                              min_mc_for_danger: float) -> tuple[bool, str]:
+    """Whether a RugCheck DANGER report may be bypassed on size/volume grounds.
+
+    Returns (allowed, why). High-MC, high-volume tokens with locked LP and an
+    otherwise clean report may pass (mint/freeze DANGER is normal for
+    pre-graduation pump.fun tokens); everything else stays blocked —
+    including unlocked-LP runners at any market cap (INUTILITY, 2026-09-16:
+    $80M MC, lp_locked=0%, -25% through the old MC-only bypass).
+    """
+    if rc is None:
+        return False, "no_report"
+    if getattr(rc, "rugged", False):
+        return False, "rugged"
+    if not getattr(rc, "has_danger", False):
+        return False, "not_danger"
+    if rc.score_normalised > max_score:
+        return False, f"score={rc.score_normalised}>{max_score:g}"
+    if mc <= min_mc_for_danger and vol24 <= RUG_BYPASS_MIN_VOL24_USD:
+        return False, "low_mc_vol"
+    if (rc.lp_locked_pct or 0) < RUG_BYPASS_MIN_LP_LOCKED_PCT:
+        return False, f"lp_locked={rc.lp_locked_pct:.0f}%<50%"
+    return True, "high_mc_or_vol_with_locked_lp"
 
 
 # Human explanations for sell-quote failures (sim output + logs). The raw
