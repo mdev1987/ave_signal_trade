@@ -1942,6 +1942,11 @@ async def _run_watch(s: cfg.Settings) -> int:
                 return
             elif (snap.get("liq") or tg_liq or 0) < s.open_min_liq_usd:
                 reason = "skip:low_liq"
+            elif (s.open_min_txns_m5 > 0 and snap.get("txns_m5") is not None
+                    and snap.get("txns_m5") < s.open_min_txns_m5):
+                # Dead-pool filter: liquidity without humans. Missing txn
+                # data fails open (fresh/unindexed tokens keep flowing).
+                reason = f"skip:dead_pool(txns_m5={snap.get('txns_m5')})"
             elif (pc.get("h1") or 0) < s.open_min_h1_pct and not _nohist:
                 reason = f"skip:no_momentum(h1={pc.get('h1')})"
             elif (pc.get("m5") or 0) < s.open_max_m5_dump_pct and not _nohist:

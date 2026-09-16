@@ -74,6 +74,11 @@ def test_helius_ws_toggle_defaults_off():
     assert s.helius_ws_enabled is False
 
 
+def test_txn_floor_setting():
+    s = load_settings()
+    assert s.open_min_txns_m5 == 20.0
+
+
 def test_memetracker_chase_guard_setting(monkeypatch, tmp_path):
     # hermetic: empty env file + patched os.environ (repo .env must not leak in)
     empty = str(tmp_path / "empty.env")

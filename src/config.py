@@ -155,6 +155,7 @@ class Settings:
     flat_timeout_peak: float = 1.10     # peak multiple below which a position counts as "flat" (0=disable via flat_timeout_h=0)
     stable_symbols: str = "USDC,USDT,USD1,PYUSD,USDS,DAI,SOL,WSOL,WETH,WBTC,CBTC,JUP,RAY,ORCA"  # impostor/stable symbols to never open (comma-separated)
     open_min_m5_pct: float = -2.0       # skip if 5m price change < this (don't enter active dumps)
+    open_min_txns_m5: float = 20.0      # skip if 5m txn count < this (dead pool filter; missing data = allow)
     pullback_m5_pct: float = 15.0        # m5 above this = vertical candle: defer, don't chase
     pullback_wait_s: float = 60.0        # re-enter only on a signal at least this old
     pullback_expire_s: float = 90.0      # pending pullback expires after this (don't chase late)
@@ -318,6 +319,7 @@ def load_settings(path: str = ".env") -> Settings:
         flat_timeout_peak=get_float(env, "FLAT_TIMEOUT_PEAK", _d.flat_timeout_peak),
         stable_symbols=get(env, "STABLE_SYMBOLS", _d.stable_symbols),
         open_min_m5_pct=get_float(env, "OPEN_MIN_M5_PCT", _d.open_min_m5_pct),
+        open_min_txns_m5=get_float(env, "OPEN_MIN_TXNS_M5", _d.open_min_txns_m5),
         pullback_m5_pct=get_float(env, "PULLBACK_M5_PCT", _d.pullback_m5_pct),
         pullback_wait_s=get_float(env, "PULLBACK_WAIT_S", _d.pullback_wait_s),
         pullback_expire_s=get_float(env, "PULLBACK_EXPIRE_S", _d.pullback_expire_s),
