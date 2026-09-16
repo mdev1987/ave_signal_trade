@@ -231,6 +231,7 @@ class Settings:
     # --- Birdeye Data API (holder cohorts + smart money, journal-only) ---
     # Phase 1 measures only: enrichment is journaled per open, never gates.
     birdeye_enabled: bool = True          # enable Birdeye enrichment calls
+    birdeye_min_credits: float = 0.0      # alert when remaining CU < this (0 = off)
     # --- CabalSpy (real-time KOL/SM/Whale data streams) ---
     cabalspy_api_key: str = ""              # CabalSpy API key
     cabalspy_enabled: bool = True           # enable CabalSpy streams
@@ -390,6 +391,7 @@ def load_settings(path: str = ".env") -> Settings:
         vybe_max_top_holder_pct=get_float(env, "VYBE_MAX_TOP_HOLDER_PCT", _d.vybe_max_top_holder_pct),
         vybe_min_buy_sell_ratio=get_float(env, "VYBE_MIN_BUY_SELL_RATIO", _d.vybe_min_buy_sell_ratio),
         birdeye_enabled=get_bool(env, "BIRDEYE_ENABLED", _d.birdeye_enabled),
+        birdeye_min_credits=get_float(env, "BIRDEYE_MIN_CREDITS", _d.birdeye_min_credits),
         cabalspy_api_key=get(env, "CABALSPY_API_KEY", _d.cabalspy_api_key),
         cabalspy_enabled=get_bool(env, "CABALSPY_ENABLED", _d.cabalspy_enabled),
         cabalspy_signal_min_buy=get_float(env, "CABALSPY_SIGNAL_MIN_BUY", _d.cabalspy_signal_min_buy),

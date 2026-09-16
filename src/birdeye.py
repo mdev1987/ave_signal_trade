@@ -224,6 +224,44 @@ class BirdeyeClient:
             "flow": summarize_top_traders(traders),
         }
 
+    @staticmethod
+    def summarize_credits(data: dict) -> dict:
+        """Compress a credits-usage payload to {used, remaining, overage}.
+
+        Pure function (unit-tested). Nulls (out-of-cycle ranges) degrade to
+        None, never zero — zero remaining would false-trigger low-credit
+        alerts.
+        """
+        out = {"used": None, "remaining": None, "overage": None}
+        if not isinstance(data, dict):
+            return out
+        try:
+            usage = data.get("usage") or {}
+            if usage.get("total") is not None:
+                out["used"] = int(usage["total"])
+        except (TypeError, ValueError):
+            pass
+        try:
+            remaining = data.get("remaining") or {}
+            if remaining.get("total") is not None:
+                out["remaining"] = int(remaining["total"])
+        except (TypeError, ValueError):
+            pass
+        try:
+            overage = data.get("overage_usage") or {}
+            if overage.get("total") is not None:
+                out["overage"] = int(overage["total"])
+        except (TypeError, ValueError):
+            pass
+        return out
+
+    async def credits(self) -> dict | None:
+        """Current-cycle credit usage (1 CU; no cache — numbers must be live)."""
+        data = await self._get("/utils/v1/credits", {})
+        if data is None:
+            return None
+        return self.summarize_credits(data)
+
     async def close(self) -> None:
         if self._client is not None:
             try:

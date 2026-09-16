@@ -154,3 +154,39 @@ async def _enrich_with_helpers():
     c.holder_profile = _none
     c.top_traders = _list
     return await c.enrich("MINT")
+
+
+def _credits_body(**over):
+    body = {"start_time": 1, "end_time": 2,
+            "usage": {"api": 100, "ws": 0, "total": 100},
+            "remaining": {"api": 900, "ws": 0, "total": 900},
+            "overage_usage": {"api": 0, "ws": 0, "total": 0},
+            "overage_cost": {"api": 0, "ws": 0, "total": 0}}
+    body.update(over)
+    return body
+
+
+def test_summarize_credits_full():
+    assert BirdeyeClient.summarize_credits(_credits_body()) == {
+        "used": 100, "remaining": 900, "overage": 0}
+
+
+def test_summarize_credits_nulls_stay_null():
+    nulls = {"used": None, "remaining": None, "overage": None}
+    assert BirdeyeClient.summarize_credits(
+        {"usage": None, "remaining": None, "overage_usage": None}) == nulls
+    assert BirdeyeClient.summarize_credits({}) == nulls
+    assert BirdeyeClient.summarize_credits(None) == nulls
+    assert BirdeyeClient.summarize_credits("junk") == nulls
+
+
+def test_credits_method_live_shape():
+    c = _client(_Resp(body={"success": True, "data": _credits_body()}))
+    out = asyncio.run(c.credits())
+    assert out == {"used": 100, "remaining": 900, "overage": 0}
+    assert c.calls == 1
+
+
+def test_credits_none_on_failure():
+    c = _client(_Resp(status=500, body={}))
+    assert asyncio.run(c.credits()) is None

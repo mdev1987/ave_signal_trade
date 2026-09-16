@@ -2044,6 +2044,7 @@ async def _run_watch(s: cfg.Settings) -> int:
     started = time.time()
     alerts = {"n": 0}
     last_detection_ts = {"t": started}  # updated on any consensus event
+    _low_credit_alerted = {"fired": False}  # birdeye quota alert latch
 
     async def status_loop() -> None:
         while not stop.is_set():
@@ -2086,8 +2087,33 @@ async def _run_watch(s: cfg.Settings) -> int:
                          mh["filtered"], mh["errors"], _mt_age)
             if birdeye is not None:
                 bs = birdeye.stats
-                log.info("birdeye: calls=%d cached=%d errors=%d",
-                         bs["calls"], bs["cached"], bs["errors"])
+                # 1-CU credit check per status cycle (cheap early warning so
+                # enrichment quota can never die silently mid-cycle).
+                cred = await birdeye.credits()
+                if cred:
+                    log.info("birdeye: calls=%d cached=%d errors=%d "
+                             "credits_used=%s remaining=%s overage=%s",
+                             bs["calls"], bs["cached"], bs["errors"],
+                             cred["used"], cred["remaining"], cred["overage"])
+                    _thr = s.birdeye_min_credits
+                    _rem = cred["remaining"]
+                    if (_thr > 0 and _rem is not None and _rem < _thr
+                            and not _low_credit_alerted["fired"]):
+                        _low_credit_alerted["fired"] = True
+                        log.warning("birdeye low credits: %s remaining < %.0f",
+                                    _rem, _thr)
+                        if notifier is not None:
+                            asyncio.get_running_loop().create_task(
+                                notifier.send_alert(
+                                    "birdeye low credits",
+                                    f"{_rem} CU remaining (< {_thr:.0f}) — "
+                                    f"enrichment will fail open")).add_done_callback(
+                                        _log_task_result)
+                    elif _rem is None or (_thr > 0 and _rem >= _thr):
+                        _low_credit_alerted["fired"] = False
+                else:
+                    log.info("birdeye: calls=%d cached=%d errors=%d credits=?",
+                             bs["calls"], bs["cached"], bs["errors"])
 
     # Live feeds are push-based (Helius WS, PumpAPI WS, CabalSpy WS,
     # Kolexplorer poll, MemeTracker TG) — no webhook receiver needed
