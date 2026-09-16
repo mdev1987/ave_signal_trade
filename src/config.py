@@ -104,7 +104,11 @@ class Settings:
     # snapshot): paper 2026-09-12..15, 40 trades — blind entries went 11W/10L
     # for -0.060 SOL incl. every catastrophic loss (oracle_fail full loss +
     # five instant -25..-38% rugs), while data-confirmed entries netted +0.020.
-    # Blind flow stays open (early-entry edge) but at capped risk.
+    # 2026-09-16 review (71 paper closes): the 0.02 cap did NOT fix expectancy —
+    # blind went 28 closes for -0.097 (-0.0035/trade, 15 SL), capped era 8 for
+    # -0.038 with 1 win, while non-blind cabalspy sat at -0.006/10. Blind flow
+    # is journal-only by default; the cap below applies when re-enabled.
+    liq_unchecked_journal_only: bool = True  # blind signals journal only, never open
     # Take-profit ladder (moonshot-optimized). Each (mult, frac, trail_pct)
     # banks `frac` of the ORIGINAL position at level's multiple (paper).
     # trail_pct = trailing stop % from peak AFTER that level fires.
@@ -277,6 +281,7 @@ def load_settings(path: str = ".env") -> Settings:
         size_sol_min=get_float(env, "SIZE_SOL_MIN", _d.size_sol_min),
         size_sol_max=get_float(env, "SIZE_SOL_MAX", _d.size_sol_max),
         liq_unchecked_max_sol=get_float(env, "LIQ_UNCHECKED_MAX_SOL", _d.liq_unchecked_max_sol),
+        liq_unchecked_journal_only=get_bool(env, "LIQ_UNCHECKED_JOURNAL_ONLY", _d.liq_unchecked_journal_only),
         tp_ladder=parse_ladder(env, "TP_LADDER", "1.5:0.30:0.15,3.0:0.20:0.25,5.0:0.15:0.30,10.0:0.10:0.35,20.0:0.08:0.40,50.0:0.05:0.40,100.0:0.05:0.45,200.0:0.04:0.50,500.0:0.03:0.55"),
         trail_retrace_pct=get_float(env, "TRAIL_RETRACE_PCT", _d.trail_retrace_pct),
         hard_stop_pct=get_float(env, "HARD_STOP_PCT", _d.hard_stop_pct),

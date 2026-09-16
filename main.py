@@ -1785,6 +1785,23 @@ async def _run_watch(s: cfg.Settings) -> int:
                 reason = (f"skip:eff_score={effective:.2f}<{s.consensus_weight_threshold}"
                           f"(pmult={pmult:.2f},align={align})")
             elif not snap:
+                # Blind entries (no DexScreener/DexPaprika snapshot) bypass
+                # every market-structure gate (liq floor, dead-pool txn
+                # floor, momentum). Paper 2026-09-12..16: 28 blind closes
+                # for -0.097 SOL (-0.0035/trade, 15 SL) vs non-blind
+                # cabalspy -0.006/10 — and the 0.02 size cap did not fix
+                # expectancy (capped era: 8 closes, -0.038, 1 win). So
+                # journal-only by default (same pattern as
+                # pumpapi_journal_only); re-enable with
+                # LIQ_UNCHECKED_JOURNAL_ONLY=false.
+                if s.liq_unchecked_journal_only:
+                    logs.journal("liq_unchecked_journal_only", ca=ca, symbol=sym,
+                                   score=round(score, 2), wallets=n)
+                    reason = "skip:liq_unchecked_journal_only"
+                    if _skip_log.get(ca, 0) < time.time() - 300:
+                        _skip_log[ca] = time.time()
+                        log.info("open deferred %s (%s): %s", ca[:10], sym, reason)
+                    return
                 # DexScreener blip with a genuine consensus: open flagged as
                 # liq-unchecked rather than discarding the signal — but at
                 # CAPPED size. Blind entries carried every catastrophic paper

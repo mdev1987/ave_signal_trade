@@ -91,7 +91,8 @@ uv run python -c "from src.jupiter_trade import JupiterSwap; ..."
 | `HARD_STOP_PCT` | 0.25 | Max loss per trade |
 | `TRAIL_RETRACE_PCT` | 0.15 | Trail sensitivity |
 | `ADAPTIVE_SIZING` | true | Scale size by wallet quality |
-| `LIQ_UNCHECKED_MAX_SOL` | 0.02 | Cap for blind opens (no DexScreener/DexPaprika snapshot; -0.060/21 paper 2026-09-12..15) |
+| `LIQ_UNCHECKED_JOURNAL_ONLY` | true | Blind opens journal-only (28 closes -0.097 paper 2026-09-12..16; cap didn't fix expectancy) |
+| `LIQ_UNCHECKED_MAX_SOL` | 0.02 | Cap for blind opens when journal-only is false |
 | `JUP_AUDIT_ENABLED` | true | Jupiter token audit pre-trade |
 
 ## API Keys Required

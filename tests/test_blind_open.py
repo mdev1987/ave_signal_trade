@@ -1,10 +1,16 @@
-"""Tests: blind (liq-unchecked) open size cap.
+"""Tests: blind (liq-unchecked) open gating.
 
 Regression cover for the 2026-09-15 review: over 2026-09-12..15, blind
 entries (no DexScreener/DexPaprika snapshot, pc={}) went 11W/10L for
 -0.060 SOL and carried every catastrophic loss (oracle_fail full loss +
 five instant -25..-38% rugs), while data-confirmed entries netted +0.020.
-Blind flow stays open but at capped risk via LIQ_UNCHECKED_MAX_SOL.
+Blind flow stayed open but at capped risk via LIQ_UNCHECKED_MAX_SOL.
+
+2026-09-16 follow-up (71 paper closes): the cap did NOT fix expectancy —
+blind went 28 closes for -0.097 (-0.0035/trade, 15 SL; capped era 8 for
+-0.038 with 1 win) vs non-blind cabalspy -0.006/10. Blind flow is now
+journal-only by default via LIQ_UNCHECKED_JOURNAL_ONLY (same pattern as
+pumpapi_journal_only); the cap below applies only when re-enabled.
 """
 
 import pathlib
@@ -57,3 +63,22 @@ def test_blind_cap_env_garbage_falls_back(tmp_path, monkeypatch):
     monkeypatch.delenv("LIQ_UNCHECKED_MAX_SOL", raising=False)
     s = load_settings(str(env_file))
     assert s.liq_unchecked_max_sol == Settings().liq_unchecked_max_sol
+
+
+def test_blind_journal_only_default_true():
+    assert Settings().liq_unchecked_journal_only is True
+
+
+def test_blind_journal_only_env_false(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("LIQ_UNCHECKED_JOURNAL_ONLY=false\n")
+    monkeypatch.delenv("LIQ_UNCHECKED_JOURNAL_ONLY", raising=False)
+    assert load_settings(str(env_file)).liq_unchecked_journal_only is False
+
+
+def test_blind_journal_only_env_garbage_is_falsy(tmp_path, monkeypatch):
+    # get_bool treats anything not in (1/true/yes/on) as False.
+    env_file = tmp_path / ".env"
+    env_file.write_text("LIQ_UNCHECKED_JOURNAL_ONLY=junk\n")
+    monkeypatch.delenv("LIQ_UNCHECKED_JOURNAL_ONLY", raising=False)
+    assert load_settings(str(env_file)).liq_unchecked_journal_only is False
